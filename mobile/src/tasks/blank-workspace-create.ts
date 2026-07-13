@@ -14,6 +14,7 @@ export async function createBlankWorkspace(args: {
   repoId: string
   baseName: string
   createdWithAgentId: TuiAgent | undefined
+  launchParams?: Record<string, unknown>
   comment: string | undefined
   setupDecision: WorkspaceCreateSetupDecision
   /** True when `baseName` is a generated creature name rather than one the user typed; only then
@@ -27,12 +28,13 @@ export async function createBlankWorkspace(args: {
     nameWasGenerated: args.nameWasGenerated,
     supportsIdempotentCutoverRetry: args.supportsIdempotentCutoverRetry,
     buildParams: (name) => {
+      const launchParams = args.launchParams ?? agentLaunchCreateFields(args.createdWithAgentId)
       const params: Record<string, unknown> = {
         repo: `id:${args.repoId}`,
         setupDecision: args.setupDecision,
         name,
         ...(args.nameWasGenerated ? { nameWasGenerated: true } : {}),
-        ...agentLaunchCreateFields(args.createdWithAgentId)
+        ...launchParams
       }
       if (args.comment) {
         params.comment = args.comment
