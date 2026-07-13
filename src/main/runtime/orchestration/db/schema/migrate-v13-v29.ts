@@ -1,5 +1,6 @@
 import { migrateMutationReceiptCapacity } from '../../mutation-receipt-capacity'
 import { DISPATCH_PANE_KEY_MATCH_SUFFIX_SQL } from '../pane-key-match'
+import { CURRENT_CONTRACT_VERSION, LEGACY_RUN_ID } from '../contract-constants'
 import type { OrchestrationDb } from '../orchestration-db'
 
 export function applySchemaMigrationsV13ToV29(this: OrchestrationDb, current: number): void {
@@ -159,13 +160,60 @@ export function applySchemaMigrationsV13ToV29(this: OrchestrationDb, current: nu
   }
   if (current < 29) {
     if (!this.hasColumn('dispatch_contexts', 'requested_agent')) {
-      this.db.exec('ALTER TABLE dispatch_contexts ADD COLUMN requested_agent TEXT')
-    }
-    if (!this.hasColumn('dispatch_contexts', 'base_agent')) {
-      this.db.exec('ALTER TABLE dispatch_contexts ADD COLUMN base_agent TEXT')
-    }
-    if (!this.hasColumn('dispatch_contexts', 'agent_launch_failure')) {
-      this.db.exec('ALTER TABLE dispatch_contexts ADD COLUMN agent_launch_failure TEXT')
+      // SQLite cannot widen the existing status CHECK in place. Rebuild the
+      // dispatch table so v6/v28 databases preserve pane and ownership data
+      // while gaining the forgotten disposition and launch identity columns.
+      this.db.exec(`
+        CREATE TABLE dispatch_contexts_new (
+          id                    TEXT PRIMARY KEY,
+          run_id                TEXT NOT NULL DEFAULT '${LEGACY_RUN_ID}',
+          task_id               TEXT NOT NULL,
+          contract_version      INTEGER NOT NULL DEFAULT ${CURRENT_CONTRACT_VERSION},
+          launch_token_hash     TEXT,
+          assignee_handle       TEXT,
+          assignee_pane_key     TEXT,
+          capability_hash       TEXT,
+          process_incarnation   TEXT,
+          capability_revoked_at TEXT,
+          status                TEXT NOT NULL DEFAULT 'pending'
+            CHECK(status IN ('pending', 'dispatched', 'completed', 'failed', 'circuit_broken', 'forgotten')),
+          failure_count         INTEGER NOT NULL DEFAULT 0,
+          last_failure          TEXT,
+          dispatched_at         TEXT,
+          completed_at          TEXT,
+          created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+          last_heartbeat_at     TEXT,
+          requested_agent       TEXT,
+          base_agent            TEXT,
+          agent_launch_failure  TEXT
+        );
+        INSERT INTO dispatch_contexts_new (
+          id, run_id, task_id, contract_version, launch_token_hash,
+          assignee_handle, assignee_pane_key, capability_hash,
+          process_incarnation, capability_revoked_at, status, failure_count,
+          last_failure, dispatched_at, completed_at, created_at,
+          last_heartbeat_at
+        )
+        SELECT
+          id, run_id, task_id, contract_version, launch_token_hash,
+          assignee_handle, assignee_pane_key, capability_hash,
+          process_incarnation, capability_revoked_at, status, failure_count,
+          last_failure, dispatched_at, completed_at, created_at,
+          last_heartbeat_at
+        FROM dispatch_contexts;
+        DROP TABLE dispatch_contexts;
+        ALTER TABLE dispatch_contexts_new RENAME TO dispatch_contexts;
+        CREATE INDEX idx_dispatch_task ON dispatch_contexts(task_id);
+        CREATE INDEX idx_dispatch_status ON dispatch_contexts(status);
+        CREATE INDEX idx_dispatch_assignee_handle ON dispatch_contexts(assignee_handle);
+      `)
+    } else {
+      if (!this.hasColumn('dispatch_contexts', 'base_agent')) {
+        this.db.exec('ALTER TABLE dispatch_contexts ADD COLUMN base_agent TEXT')
+      }
+      if (!this.hasColumn('dispatch_contexts', 'agent_launch_failure')) {
+        this.db.exec('ALTER TABLE dispatch_contexts ADD COLUMN agent_launch_failure TEXT')
+      }
     }
   }
   this.db.exec(`
