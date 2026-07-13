@@ -1,6 +1,6 @@
 import { Terminal } from 'lucide-react'
-import type { GlobalSettings } from '../../../../shared/global-settings-types'
-import type { TuiAgent } from '../../../../shared/tui-agent'
+import type { GlobalSettings, TuiAgent } from '../../../../shared/types'
+import { toLegacyAutoPreference } from '../../../../shared/tui-agent-selection'
 import type { CustomAgentId } from '../../../../shared/commit-message-agent-spec'
 import { CUSTOM_AGENT_ID, isCustomAgentId } from '../../../../shared/commit-message-agent-spec'
 import {
@@ -49,7 +49,9 @@ function resolveAgentArgsPlaceholderAgent(
   if (selectedAgent && !isCustomAgentId(selectedAgent)) {
     return selectedAgent
   }
-  return defaultTuiAgent && defaultTuiAgent !== 'blank' ? defaultTuiAgent : null
+  // 'auto' (migrated legacy null) pins no fixed agent, so it resolves to null.
+  const normalizedDefault = toLegacyAutoPreference(defaultTuiAgent)
+  return normalizedDefault && normalizedDefault !== 'blank' ? normalizedDefault : null
 }
 
 export function SourceControlActionRecipeRow({

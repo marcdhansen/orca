@@ -17,19 +17,21 @@ import { rendererAgentStatusObservations } from '../../lib/renderer-agent-status
 import {
   agentProviderSessionsEqual,
   getAgentResumeArgv,
+  getAgentSessionOwnershipKey,
   isResumableTuiAgent,
   type AgentProviderSessionMetadata,
   type ResumableTuiAgent,
   type SleepingAgentLaunchConfig,
   type SleepingAgentSessionRecord
 } from '../../../../shared/agent-session-resume'
+import { resolveTuiAgentBaseAgent } from '../../../../shared/custom-tui-agents'
+import { isCommandCodeNewTurnWhileWorking } from '../../../../shared/command-code-turn-boundary'
 import {
   resolveAgentStatusIdentity,
   shouldSuppressInheritedTerminalStatus
 } from '../../../../shared/agent-status-identity'
-import { isCommandCodeNewTurnWhileWorking } from '../../../../shared/command-code-turn-boundary'
 import { agentEntryCompletionAt } from '../../../../shared/agent-completion-time'
-import type { TerminalPaneLayoutNode, TerminalTab } from '../../../../shared/terminal-tab-types'
+import type { TerminalPaneLayoutNode, TerminalTab, TuiAgent } from '../../../../shared/types'
 import {
   getRepoExecutionHostId,
   getWorktreeExecutionHostId
@@ -209,7 +211,6 @@ export type AgentStatusSlice = {
     paneKey: string,
     options?: { preserveSleepingAgentSession?: boolean }
   ) => void
-  /** Lift a pane's retirement fence once a live PTY re-attaches to it. Closed tabs stay retired. */
   restoreAgentPaneAuthority: (paneKey: string) => void
   transferAgentPaneAuthority: (args: {
     fromPaneKey: string
@@ -561,9 +562,37 @@ function retainedAgentEntryFromLive(
   }
 }
 
+// Provider-session ownership key ({baseAgent, providerSessionId}, §579) for a
+// retained/live row, or null when the row has no session id or no resumable base
+// (e.g. the 'unknown' hook type). Sharing getAgentSessionOwnershipKey keeps this
+// renderer dedupe aligned with the host/persistence ownership key.
+function providerOwnershipKeyForEntry(
+  entry: RetainedAgentEntry,
+  settings: AppState['settings']
+): string | null {
+  const sessionId = entry.entry.providerSession?.id
+  if (!sessionId) {
+    return null
+  }
+  const base = resolveTuiAgentBaseAgent(
+    entry.agentType as TuiAgent,
+    settings?.customTuiAgents,
+    settings?.deletedCustomTuiAgents
+  )
+  if (!base || !isResumableTuiAgent(base)) {
+    return null
+  }
+  return getAgentSessionOwnershipKey({
+    worktreeId: entry.worktreeId,
+    baseAgent: base,
+    providerSessionId: sessionId
+  })
+}
+
 function shouldReplaceRetainedWithLive(
   retained: RetainedAgentEntry | undefined,
-  live: RetainedAgentEntry
+  live: RetainedAgentEntry,
+  settings: AppState['settings']
 ): boolean {
   if (!retained) {
     return true
@@ -573,8 +602,18 @@ function shouldReplaceRetainedWithLive(
   }
   const retainedSessionId = retained.entry.providerSession?.id
   const liveSessionId = live.entry.providerSession?.id
-  if (retainedSessionId && liveSessionId && retainedSessionId !== liveSessionId) {
-    return live.entry.updatedAt >= retained.entry.updatedAt
+  if (retainedSessionId && liveSessionId) {
+    // A genuinely new provider-session owner replaces even on an updatedAt tie.
+    // Key on {baseAgent, providerSessionId} when both bases resolve so two custom
+    // ids on one base+session stay one owner (§579); otherwise fall back to the
+    // raw session id so non-resumable rows keep their prior distinct-session rule.
+    const retainedKey = providerOwnershipKeyForEntry(retained, settings)
+    const liveKey = providerOwnershipKeyForEntry(live, settings)
+    const differentOwner =
+      retainedKey && liveKey ? retainedKey !== liveKey : retainedSessionId !== liveSessionId
+    if (differentOwner) {
+      return live.entry.updatedAt >= retained.entry.updatedAt
+    }
   }
   return live.entry.updatedAt > retained.entry.updatedAt
 }
@@ -586,6 +625,27 @@ function normalizePaneKeySet(
     return null
   }
   return paneKeys instanceof Set ? paneKeys : new Set(paneKeys)
+}
+
+// Why: preserve the ORIGINALLY requested identity (a custom id, or a built-in)
+// on the record so a resume re-applies that custom config and the resumed tab
+// re-displays it. The tab's launchAgent holds the requested id the host receipt
+// echoed at launch; accept it only when it resolves to the captured resumable
+// base, so a stale/mismatched tab id can never repoint the ownership key.
+function resolveCapturedRequestedAgent(
+  state: AppState,
+  baseAgent: ResumableTuiAgent,
+  tab: TerminalTab | undefined
+): TuiAgent {
+  const requested = tab?.launchAgent
+  return requested &&
+    resolveTuiAgentBaseAgent(
+      requested,
+      state.settings?.customTuiAgents,
+      state.settings?.deletedCustomTuiAgents
+    ) === baseAgent
+    ? requested
+    : baseAgent
 }
 
 function sleepingRecordFromEntry(args: {
@@ -610,6 +670,8 @@ function sleepingRecordFromEntry(args: {
     ...(tab ? { tabId: tab.id } : {}),
     worktreeId: args.worktreeId,
     agent,
+    requestedAgent: resolveCapturedRequestedAgent(args.state, agent, tab),
+    baseAgent: agent,
     providerSession: args.entry.providerSession,
     prompt: args.entry.prompt,
     state: args.entry.state,
@@ -1555,43 +1617,27 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
       }
     },
 
-    // Why: the tombstone claims this pane is gone; a live PTY binding to it proves
-    // otherwise. Lift the fence on that proof rather than on the next hook event —
-    // a pane re-attached mid-turn or while idle emits no new-turn event, so a
-    // turn-triggered revival leaves exactly the reported permanent suppression
-    // (STA-4114). This deliberately does NOT restore the rows retirement dropped;
-    // those are genuinely stale. It only re-opens the pane to future status.
     restoreAgentPaneAuthority: (paneKey) => {
       const ownerPaneKey = resolveAgentPaneAuthorityKey(paneKey)
-      // Why: a closed tab is a stronger, separate claim — re-attach must not undo it.
+      const tabId = getTabIdFromPaneKey(ownerPaneKey)
       if (
-        isRecentlyClosedAgentStatusTab(
-          get().recentlyClosedAgentStatusTabIds,
-          getTabIdFromPaneKey(ownerPaneKey)
-        )
+        !ownerPaneKey ||
+        (tabId && isRecentlyClosedAgentStatusTab(get().recentlyClosedAgentStatusTabIds, tabId))
       ) {
         return
       }
+      const retired = get().recentlyRetiredAgentStatusPaneKeys
+      if (!(ownerPaneKey in retired)) {
+        return
+      }
       set((s) => {
-        const restorable = [paneKey, ownerPaneKey].filter(
-          (key) => key in s.recentlyRetiredAgentStatusPaneKeys
-        )
-        if (restorable.length === 0) {
+        if (!(ownerPaneKey in s.recentlyRetiredAgentStatusPaneKeys)) {
           return s
         }
         const next = { ...s.recentlyRetiredAgentStatusPaneKeys }
-        for (const key of restorable) {
-          delete next[key]
-        }
+        delete next[ownerPaneKey]
         return { recentlyRetiredAgentStatusPaneKeys: next }
       })
-      // Why: deliberately OUTSIDE the guard above, and not gated on having cleared
-      // anything here. This map is not a mirror of main's — main fences panes the
-      // renderer never hears about (retirePtyAgentLaunchAuthority on command-finished
-      // and PTY exit calls the hook server directly, and nothing pushes that back), and
-      // this map is per-window and non-persisted, so a renderer reload empties it while
-      // main's survives. Gating the send on a local tombstone reintroduces STA-4114 for
-      // exactly those panes. The send is idempotent and main refuses closed tabs itself.
       if (typeof window !== 'undefined') {
         window.api?.agentStatus?.restorePaneAuthority?.(ownerPaneKey)
       }
@@ -2858,7 +2904,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           if (
             retained.entry.paneKey === paneKey &&
             !liveEntry &&
-            shouldReplaceRetainedWithLive(retainedEvidence.get(paneKey), retained)
+            shouldReplaceRetainedWithLive(retainedEvidence.get(paneKey), retained, s.settings)
           ) {
             retainedEvidence.set(paneKey, retained)
           }
@@ -2912,7 +2958,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           delete nextRetained[paneKey]
         }
         for (const [key, retained] of retainedEvidence) {
-          if (shouldReplaceRetainedWithLive(nextRetained[key], retained)) {
+          if (shouldReplaceRetainedWithLive(nextRetained[key], retained, s.settings)) {
             nextRetained[key] = retained
           }
         }
@@ -2984,7 +3030,11 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
             if (
               allowedPaneKeys.has(retained.entry.paneKey) &&
               !liveEntryByPaneKey.has(retained.entry.paneKey) &&
-              shouldReplaceRetainedWithLive(retainedEvidence.get(retained.entry.paneKey), retained)
+              shouldReplaceRetainedWithLive(
+                retainedEvidence.get(retained.entry.paneKey),
+                retained,
+                s.settings
+              )
             ) {
               retainedEvidence.set(retained.entry.paneKey, retained)
             }
@@ -3058,7 +3108,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           }
         }
         for (const [paneKey, retained] of retainedEvidence) {
-          if (shouldReplaceRetainedWithLive(nextRetained[paneKey], retained)) {
+          if (shouldReplaceRetainedWithLive(nextRetained[paneKey], retained, s.settings)) {
             nextRetained[paneKey] = retained
           }
         }

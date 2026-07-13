@@ -43,6 +43,13 @@ import type {
 import { getRepoIdFromWorktreeId } from '../../../../shared/worktree/id'
 import type { AppState } from '../types'
 import type { WorktreeRefreshAllOptions } from './worktree-refresh-options'
+import type {
+  RetryAgentLaunchAction,
+  WorktreeRetryAgentLaunchResult,
+  ForgetUnknownAgentLaunchResult
+} from '../../../../shared/agent-launch-worktree-recovery'
+import type { PendingAgentLaunchSummary } from '../../../../shared/agent-launch-pending-summary'
+import type { RuntimeClientTarget } from '@/runtime/runtime-rpc-client'
 export { getRepoIdFromWorktreeId } from '../../../../shared/worktree/id'
 
 export type WorktreeDeleteState = {
@@ -221,8 +228,41 @@ export type WorktreeSlice = {
         executionHostId: ExecutionHostId
         expectedPath: string
       }
+      /** Host-resolved two-stage agent launch for worktree creation. */
+      agentLaunch?: CreateWorktreeArgs['agentLaunch']
+      /** Surface-owned telemetry for a host-emitted interactive launch. */
+      agentLaunchTelemetry?: CreateWorktreeArgs['agentLaunchTelemetry']
     }
   ) => Promise<CreateWorktreeResult>
+  retryWorktreeAgentLaunch: (args: {
+    worktreeId: string
+    expectedFailureId: string
+    action: RetryAgentLaunchAction
+  }) => Promise<WorktreeRetryAgentLaunchResult>
+  forgetWorktreeAgentLaunch: (args: {
+    worktreeId: string
+    expectedOperationId: string
+  }) => Promise<ForgetUnknownAgentLaunchResult>
+  retryBackgroundAgentLaunch: (args: {
+    attemptId: string
+    worktreeId: string
+    expectedFailureId: string
+    action: RetryAgentLaunchAction
+  }) => Promise<WorktreeRetryAgentLaunchResult>
+  forgetBackgroundAgentLaunch: (args: {
+    attemptId: string
+    worktreeId: string
+    expectedOperationId: string
+  }) => Promise<ForgetUnknownAgentLaunchResult>
+  unknownAgentLaunchSiblingPreflight: (args: {
+    worktreeId: string
+  }) => Promise<{ count: number; hostName: string }>
+  forgetUnknownAgentLaunchSiblings: (args: {
+    worktreeId: string
+  }) => Promise<{ forgottenCount: number }>
+  fetchPendingAgentLaunchSummary: (
+    target?: RuntimeClientTarget
+  ) => Promise<PendingAgentLaunchSummary>
   /** Register an in-flight background creation and make it the active surface. */
   beginPendingWorktreeCreation: (entry: PendingWorktreeCreation) => void
   /** Merge a status patch into an existing pending entry. */

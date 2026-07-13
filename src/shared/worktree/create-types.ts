@@ -3,6 +3,14 @@ import type { WorkspaceSource } from '../workspace-source'
 import type { TaskSourceContext } from '../task-source-context'
 import type { WorkspaceKey } from '../folder-workspace-types'
 import type { TuiAgent } from '../tui-agent'
+import type { AgentLaunchSpawnRequest } from '../agent-launch-spawn-request'
+import type {
+  AgentLaunchFailure,
+  AgentLaunchReceipt,
+  AgentLaunchRequestError,
+  PersistedAgentLaunchFailure
+} from '../agent-launch-contract'
+import type { LaunchSource, RequestKind } from '../telemetry-events'
 import type {
   AutomationWorkspaceProvenanceRequest,
   GitPushTarget,
@@ -117,6 +125,10 @@ export type CreateWorktreeArgs = {
   creationId?: string
   /** Authorizes the host to mint system-owned automation provenance. */
   automationProvenanceRequest?: AutomationWorkspaceProvenanceRequest
+  /** Host-resolved two-stage agent launch. */
+  agentLaunch?: AgentLaunchSpawnRequest
+  /** Surface-owned telemetry for an interactive host-emitted launch. */
+  agentLaunchTelemetry?: { launch_source: LaunchSource; request_kind: RequestKind }
 }
 
 export type AdoptProvisionedRootArgs = CreateWorktreeArgs & {
@@ -126,7 +138,8 @@ export type AdoptProvisionedRootArgs = CreateWorktreeArgs & {
   expectedRefHead?: string
 }
 
-export type CreateWorktreeResult = {
+export type CreatedWorktreeResult = {
+  created?: true
   worktree: Worktree & {
     parentWorktreeId?: string | null
     childWorktreeIds?: string[]
@@ -160,7 +173,21 @@ export type CreateWorktreeResult = {
     surface?: 'visible' | 'background'
   }
   timing?: WorktreeCreateTiming
+  agentLaunchResult?:
+    | { status: 'launched'; receipt: AgentLaunchReceipt }
+    | { status: 'failed'; failure: PersistedAgentLaunchFailure }
 }
+
+export type WorktreeAgentLaunchRejection =
+  | { status: 'failed'; failure: AgentLaunchFailure }
+  | { status: 'rejected'; requestError: AgentLaunchRequestError }
+
+export type NotCreatedWorktreeResult = {
+  created: false
+  agentLaunchResult: WorktreeAgentLaunchRejection
+}
+
+export type CreateWorktreeResult = CreatedWorktreeResult | NotCreatedWorktreeResult
 
 export type WorktreeCreateBaseFallback = {
   requestedRef: string

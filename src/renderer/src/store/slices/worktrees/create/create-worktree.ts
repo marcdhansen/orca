@@ -60,6 +60,8 @@ export function createCreateWorktree(
     const linkedTaskSourceContext = options?.linkedTaskSourceContext
     const startupDraft = options?.startupDraft
     const provisionedRoot = options?.provisionedRoot
+    const agentLaunch = options?.agentLaunch
+    const agentLaunchTelemetry = options?.agentLaunchTelemetry
     try {
       for (let attempt = 0; attempt < CLIENT_WORKTREE_CREATE_MAX_ATTEMPTS; attempt += 1) {
         const candidateName = options?.nameWasGenerated
@@ -114,7 +116,9 @@ export function createCreateWorktree(
             ...(linkedTaskSourceContext !== undefined ? { linkedTaskSourceContext } : {}),
             ...(startup ? { startup } : {}),
             ...(creationId ? { creationId } : {}),
-            ...(automationProvenanceRequest ? { automationProvenanceRequest } : {})
+            ...(automationProvenanceRequest ? { automationProvenanceRequest } : {}),
+            ...(agentLaunch ? { agentLaunch } : {}),
+            ...(agentLaunchTelemetry ? { agentLaunchTelemetry } : {})
           }
           const target = getActiveRuntimeTarget(settingsForRepoOwner(get(), repoId))
           if (
@@ -191,10 +195,17 @@ export function createCreateWorktree(
                             : {}),
                           activate: true
                         }
-                      : {})
+                      : {}),
+                    ...(agentLaunch ? { agentLaunch } : {}),
+                    ...(agentLaunchTelemetry ? { agentLaunchTelemetry } : {})
                   },
                   { timeoutMs: 10 * 60_000 }
                 )
+          // A pre-create launch rejection creates no worktree and must be returned
+          // in-band so the composer can preserve its draft and recovery hints.
+          if (result.created === false) {
+            return result
+          }
           // Why: worktrees.onChanged can add this worktree before this callback runs; appending blindly would duplicate it (React key clash).
           set((s) => {
             const hostId = repoHostId(s, repoId)

@@ -6,6 +6,7 @@ import type { DiffComment, MobileDiffReviewState } from '../diff-comment-types'
 import type { EphemeralVmCheckoutMode } from '../orca-yaml-hook-types'
 import type { BuiltInWorktreeVisibilitySourceId } from '../repo-types'
 import type { PersistedAgentLaunchFailure } from '../agent-launch-contract'
+import type { BackgroundAgentLaunchAttempt } from '../background-agent-launch'
 import type { PendingAgentLaunch } from './meta-types'
 
 export type WorkspaceLinkedItem = {
@@ -138,6 +139,7 @@ export type Worktree = {
   cliProvenance?: CliWorkspaceProvenance
   pendingAgentLaunch?: PendingAgentLaunch
   agentLaunchFailure?: PersistedAgentLaunchFailure
+  backgroundAgentLaunches?: BackgroundAgentLaunchAttempt[]
 } & GitWorktreeInfo
 
 /** Provenance for workspaces created through `orca worktree create`. Absent on

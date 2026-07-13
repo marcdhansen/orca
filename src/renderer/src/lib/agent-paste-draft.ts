@@ -1,6 +1,6 @@
 import type { GlobalSettings } from '../../../shared/global-settings-types'
 import type { TuiAgent } from '../../../shared/tui-agent'
-import { TUI_AGENT_CONFIG } from '../../../shared/tui-agent-config'
+import { resolveTuiAgentConfig } from '../../../shared/custom-tui-agents'
 import { resolveDraftPasteReadyTimeoutMs } from '../../../shared/draft-paste-ready-timeout'
 import { useAppStore } from '@/store'
 import {
@@ -89,7 +89,10 @@ export async function pasteDraftWhenAgentReady(args: {
 }): Promise<boolean> {
   const { tabId, content, agent, submit, forcePaste, timeoutMs, onTimeout } = args
 
-  const agentConfig = agent ? TUI_AGENT_CONFIG[agent] : null
+  const settings = getSettingsForAgentTabRuntimeOwner(tabId)
+  const agentConfig = agent
+    ? resolveTuiAgentConfig(agent, settings?.customTuiAgents, settings?.deletedCustomTuiAgents)
+    : null
 
   // Why: agents with a native draft prefill mechanism (flag or env var)
   // launch with the URL already in their input box. Pasting again would
@@ -101,7 +104,6 @@ export async function pasteDraftWhenAgentReady(args: {
   }
 
   const readySignal = agentConfig?.draftPasteReadySignal ?? 'render-quiet-after-bracketed-paste'
-  const settings = getSettingsForAgentTabRuntimeOwner(tabId)
   const readinessTimeoutMs = resolveDraftPasteReadyTimeoutMs(agent, timeoutMs)
   const readiness = await waitForAgentDraftInputReadyOnTab({
     tabId,
@@ -149,13 +151,15 @@ export async function pasteDraftToAgentPtyWhenReady(args: {
   onTimeout?: () => void
 }): Promise<boolean> {
   const { tabId, ptyId, content, agent, submit, forcePaste, timeoutMs, onTimeout } = args
-  const agentConfig = agent ? TUI_AGENT_CONFIG[agent] : null
+  const settings = getSettingsForAgentTabRuntimeOwner(tabId)
+  const agentConfig = agent
+    ? resolveTuiAgentConfig(agent, settings?.customTuiAgents, settings?.deletedCustomTuiAgents)
+    : null
 
   if (agentDeliversDraftViaNativePrefill(agent, forcePaste)) {
     return false
   }
 
-  const settings = getSettingsForAgentTabRuntimeOwner(tabId)
   const readySignal = agentConfig?.draftPasteReadySignal ?? 'render-quiet-after-bracketed-paste'
   const budget = resolveDraftPasteReadyTimeoutMs(agent, timeoutMs)
   const ready = await waitForAgentDraftInputReady(ptyId, budget, readySignal, settings)

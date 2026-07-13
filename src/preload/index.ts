@@ -85,6 +85,30 @@ import type { GitHubAssignableUser, GitHubOwnerRepo } from '../shared/github/pul
 import type { GetRateLimitResult } from '../shared/github/rate-limit-types'
 import type { GitHubWorkItem, ListWorkItemsResult } from '../shared/github/work-item-types'
 import type { GhosttyImportPreview } from '../shared/global-settings-types'
+import type {
+  AgentCatalogMutationRequest,
+  AgentCatalogMutationResult,
+  LocalAgentCatalogSnapshot,
+  LocalCustomAgentDraftResult
+} from '../shared/agent-catalog-snapshot'
+import type {
+  AgentReferenceMutationRequest,
+  AgentReferenceMutationResult,
+  BaseDisableImpact,
+  LocalAgentReferenceSnapshot,
+  AgentReferenceSummary
+} from '../shared/agent-reference-snapshot'
+import type {
+  AgentLaunchVaultResumeCopyResult,
+  AgentLaunchVaultResumeDetailsResult,
+  AgentLaunchVaultResumeEntry
+} from '../shared/agent-launch-spawn-request'
+import type { AgentLaunchNoticeCode } from '../shared/agent-launch-contract'
+import type {
+  ForgetUnknownAgentLaunchResult,
+  WorktreeRetryAgentLaunchResult
+} from '../shared/agent-launch-worktree-recovery'
+import type { PendingAgentLaunchSummary } from '../shared/agent-launch-pending-summary'
 import type { GitHubCreateIssueResult } from '../shared/issue-mutation-types'
 import type { JiraProjectStatusOrder } from '../shared/jira-types'
 import type { LinearProjectDetail } from '../shared/linear/project-types'
@@ -890,6 +914,21 @@ const api = {
     getBranchRenameFailureOutput: (args) =>
       ipcRenderer.invoke('worktrees:getBranchRenameFailureOutput', args),
 
+    retryAgentLaunch: (args): Promise<WorktreeRetryAgentLaunchResult> =>
+      ipcRenderer.invoke('worktrees:retryAgentLaunch', args),
+    forgetAgentLaunch: (args): Promise<ForgetUnknownAgentLaunchResult> =>
+      ipcRenderer.invoke('worktrees:forgetAgentLaunch', args),
+    retryBackgroundAgentLaunch: (args): Promise<WorktreeRetryAgentLaunchResult> =>
+      ipcRenderer.invoke('worktrees:retryBackgroundAgentLaunch', args),
+    forgetBackgroundAgentLaunch: (args): Promise<ForgetUnknownAgentLaunchResult> =>
+      ipcRenderer.invoke('worktrees:forgetBackgroundAgentLaunch', args),
+    pendingAgentLaunchSummary: (): Promise<PendingAgentLaunchSummary> =>
+      ipcRenderer.invoke('worktrees:pendingAgentLaunchSummary'),
+    unknownAgentLaunchSiblingCount: (args): Promise<{ count: number }> =>
+      ipcRenderer.invoke('worktrees:unknownAgentLaunchSiblingCount', args),
+    forgetUnknownAgentLaunchSiblings: (args): Promise<{ forgottenCount: number }> =>
+      ipcRenderer.invoke('worktrees:forgetUnknownAgentLaunchSiblings', args),
+
     onChanged: (
       callback: (data: {
         repoId: string
@@ -1054,6 +1093,13 @@ const api = {
     },
     writeAccepted: (id: string, data: string): Promise<boolean> =>
       ipcRenderer.invoke('pty:writeAccepted', { id, data }),
+    dismissLaunchNotice: (args: {
+      worktreeId: string
+      tabId: string
+      launchToken: string
+      code: AgentLaunchNoticeCode
+    }): Promise<{ ok: boolean; changed: boolean }> =>
+      ipcRenderer.invoke('pty:dismissLaunchNotice', args),
     onWriteUnavailable: (callback: (payload: { id: string }) => void): (() => void) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: { id: string }): void =>
         callback(payload)
@@ -2142,6 +2188,29 @@ const api = {
       ): void => callback(updates)
       ipcRenderer.on('settings:changed', listener)
       return () => ipcRenderer.removeListener('settings:changed', listener)
+    },
+    agentCatalog: {
+      getLocal: (): Promise<LocalAgentCatalogSnapshot> =>
+        ipcRenderer.invoke('settings:agentCatalog:getLocal'),
+      mutate: (request: AgentCatalogMutationRequest): Promise<AgentCatalogMutationResult> =>
+        ipcRenderer.invoke('settings:mutateAgentCatalog', request),
+      getLocalDraft: (args: {
+        locator: { id?: unknown; repairToken?: unknown }
+        expectedRevision?: number
+      }): Promise<LocalCustomAgentDraftResult | { status: 'stale' }> =>
+        ipcRenderer.invoke('settings:agentCatalog:getLocalDraft', args),
+      referenceSummary: (args: { id?: unknown }): Promise<AgentReferenceSummary[]> =>
+        ipcRenderer.invoke('settings:agentCatalog:referenceSummary', args),
+      baseDisableImpact: (args: { base?: unknown }): Promise<BaseDisableImpact> =>
+        ipcRenderer.invoke('settings:agentCatalog:baseDisableImpact', args)
+    },
+    agentReferences: {
+      getLocal: (): Promise<LocalAgentReferenceSnapshot> =>
+        ipcRenderer.invoke('settings:agentReferences:getLocal'),
+      mutate: (
+        request: AgentReferenceMutationRequest
+      ): Promise<AgentReferenceMutationResult<LocalAgentReferenceSnapshot>> =>
+        ipcRenderer.invoke('settings:mutateAgentReferences', request)
     }
   },
 
@@ -4449,6 +4518,14 @@ const api = {
       ipcRenderer.invoke('aiVault:getFirstUserPrompt', args),
     deleteSession: (args: AiVaultDeleteSessionArgs): Promise<AiVaultDeleteSessionResult> =>
       ipcRenderer.invoke('aiVault:deleteSession', args),
+    resumeCommand: (
+      entry: AgentLaunchVaultResumeEntry
+    ): Promise<AgentLaunchVaultResumeCopyResult> =>
+      ipcRenderer.invoke('aiVault:resumeCommand', entry),
+    resumeDetails: (
+      entry: AgentLaunchVaultResumeEntry
+    ): Promise<AgentLaunchVaultResumeDetailsResult> =>
+      ipcRenderer.invoke('aiVault:resumeDetails', entry),
     onWindowFocused: (callback: () => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent) => callback()
       ipcRenderer.on('aiVault:windowFocused', listener)
@@ -4863,6 +4940,8 @@ const api = {
       ipcRenderer.invoke('automations:runPrecheck', args),
     markDispatchResult: (result: AutomationDispatchResult): Promise<AutomationRun> =>
       ipcRenderer.invoke('automations:markDispatchResult', result),
+    forgetRun: (args: { runId: string }): Promise<AutomationRun> =>
+      ipcRenderer.invoke('automations:forgetRun', args),
     snapshotWorkspaceName: (args: { workspaceId: string; displayName: string }): Promise<number> =>
       ipcRenderer.invoke('automations:snapshotWorkspaceName', args),
     rendererReady: (): Promise<void> => ipcRenderer.invoke('automations:rendererReady'),
@@ -5033,6 +5112,9 @@ const api = {
     },
     retirePaneAuthority: (paneKey: string): void => {
       ipcRenderer.send('agentStatus:retirePaneAuthority', paneKey)
+    },
+    restorePaneAuthority: (paneKey: string): void => {
+      ipcRenderer.send('agentStatus:restorePaneAuthority', paneKey)
     },
     restorePaneAuthority: (paneKey: string): void => {
       ipcRenderer.send('agentStatus:restorePaneAuthority', paneKey)

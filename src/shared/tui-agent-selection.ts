@@ -46,6 +46,14 @@ export const TUI_AGENT_AUTO_PICK_ORDER = [
 // persistence migration separately preserves the old hidden default for legacy profiles.
 export const DEFAULT_DISABLED_TUI_AGENTS = [] as const satisfies readonly TuiAgent[]
 
+/** Preserve the legacy null-as-auto contract for renderer surfaces that still
+ * use the pre-catalog picker props while the catalog migration is additive. */
+export function toLegacyAutoPreference(
+  value: TuiAgent | 'auto' | 'blank' | null | undefined
+): TuiAgent | 'blank' | null | undefined {
+  return value === 'auto' ? null : value
+}
+
 export function pickTuiAgent(
   preferred: TuiAgent | 'blank' | null | undefined,
   detected: Iterable<TuiAgent>,

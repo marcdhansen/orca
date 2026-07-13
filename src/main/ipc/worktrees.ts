@@ -1869,6 +1869,13 @@ export function registerWorktreeHandlers(
   ipcMain.removeHandler('worktrees:updateLineage')
   ipcMain.removeHandler('worktrees:persistSortOrder')
   ipcMain.removeHandler('worktrees:getBranchRenameFailureOutput')
+  ipcMain.removeHandler('worktrees:retryAgentLaunch')
+  ipcMain.removeHandler('worktrees:forgetAgentLaunch')
+  ipcMain.removeHandler('worktrees:retryBackgroundAgentLaunch')
+  ipcMain.removeHandler('worktrees:forgetBackgroundAgentLaunch')
+  ipcMain.removeHandler('worktrees:pendingAgentLaunchSummary')
+  ipcMain.removeHandler('worktrees:unknownAgentLaunchSiblingCount')
+  ipcMain.removeHandler('worktrees:forgetUnknownAgentLaunchSiblings')
   ipcMain.removeHandler('hooks:check')
   ipcMain.removeHandler('hooks:inspectSetupScriptImports')
   ipcMain.removeHandler('hooks:createIssueCommandRunner')
@@ -3363,6 +3370,64 @@ export function registerWorktreeHandlers(
       }
       return meta
     }
+  )
+
+  ipcMain.handle(
+    'worktrees:retryAgentLaunch',
+    (_event, args: {
+      worktreeId: string
+      expectedFailureId: string
+      clientMutationId: string
+      action: import('../../shared/agent-launch-worktree-recovery').RetryAgentLaunchAction
+    }) =>
+      runtime.retryWorktreeAgentLaunch(
+        `id:${args.worktreeId}`,
+        {
+          expectedFailureId: args.expectedFailureId,
+          clientMutationId: args.clientMutationId,
+          action: args.action
+        },
+        undefined
+      )
+  )
+  ipcMain.handle(
+    'worktrees:forgetAgentLaunch',
+    (_event, args: { worktreeId: string; expectedOperationId: string; clientMutationId: string }) =>
+      runtime.forgetUnknownWorktreeAgentLaunch(
+        `id:${args.worktreeId}`,
+        {
+          expectedOperationId: args.expectedOperationId,
+          clientMutationId: args.clientMutationId
+        },
+        undefined
+      )
+  )
+  ipcMain.handle(
+    'worktrees:retryBackgroundAgentLaunch',
+    (_event, args: {
+      attemptId: string
+      expectedFailureId: string
+      clientMutationId: string
+      action: import('../../shared/agent-launch-worktree-recovery').RetryAgentLaunchAction
+    }) => runtime.retryBackgroundAgentLaunch(args, undefined)
+  )
+  ipcMain.handle(
+    'worktrees:forgetBackgroundAgentLaunch',
+    (_event, args: { attemptId: string; expectedOperationId: string; clientMutationId: string }) =>
+      runtime.forgetBackgroundAgentLaunch(args, undefined)
+  )
+  ipcMain.handle('worktrees:pendingAgentLaunchSummary', () =>
+    runtime.pendingAgentLaunchSummary(undefined)
+  )
+  ipcMain.handle(
+    'worktrees:unknownAgentLaunchSiblingCount',
+    (_event, args: { worktreeId: string }) =>
+      runtime.unknownWorktreeAgentLaunchSiblingCount(`id:${args.worktreeId}`, undefined).then((count) => ({ count }))
+  )
+  ipcMain.handle(
+    'worktrees:forgetUnknownAgentLaunchSiblings',
+    (_event, args: { worktreeId: string }) =>
+      runtime.forgetUnknownWorktreeAgentLaunchSiblings(`id:${args.worktreeId}`, undefined)
   )
 
   ipcMain.handle('worktrees:listLineage', async () => {
