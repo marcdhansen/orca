@@ -3496,11 +3496,23 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
           note,
           quickAgent: agent,
           autoRenameBranchFromWork: settings?.autoRenameBranchFromWork,
-          agentCmdOverrides: settings?.agentCmdOverrides,
+          agentCmdOverrides: settings?.agentCmdOverrides
+            ? Object.fromEntries(
+                Object.entries(settings.agentCmdOverrides).filter(
+                  (entry): entry is [string, string] => entry[1] !== undefined
+                )
+              )
+            : undefined,
           agentArgs: agent
             ? resolveTuiAgentLaunchArgs(agent, settings?.agentDefaultArgs)
             : undefined,
-          agentEnv: agent ? resolveTuiAgentLaunchEnv(agent, settings?.agentDefaultEnv) : undefined,
+          agentEnv: agent
+            ? Object.fromEntries(
+                Object.entries(resolveTuiAgentLaunchEnv(agent, settings?.agentDefaultEnv) ?? {}).filter(
+                  (entry): entry is [string, string] => entry[1] !== undefined
+                )
+              )
+            : undefined,
           sessionOptions: agent
             ? resolveInitialNativeChatSessionOptions(
                 {

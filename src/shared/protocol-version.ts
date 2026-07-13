@@ -109,6 +109,9 @@ export const WORKTREE_VISIBILITY_DEFAULTS_RUNTIME_CAPABILITY =
   'worktree.visibility-defaults.v1' as const
 export const WORKTREE_VISIBILITY_SOURCE_DEFAULTS_RUNTIME_CAPABILITY =
   'worktree.visibility-source-defaults.v1' as const
+// Host-owned identity-only agent launches require this negotiated capability
+// before paired clients omit command and environment assembly.
+export const AGENT_LAUNCH_IDENTITY_RUNTIME_CAPABILITY = 'agent-launch.identity.v1' as const
 
 export const RUNTIME_CAPABILITIES = [
   'runtime.status.compat.v1',
@@ -149,6 +152,7 @@ export const RUNTIME_CAPABILITIES = [
   WORKTREE_VISIBILITY_SOURCE_DEFAULTS_RUNTIME_CAPABILITY,
   ACCOUNT_IMPORT_RUNTIME_CAPABILITY,
   CODEX_RESET_CREDIT_RUNTIME_CAPABILITY,
+  AGENT_LAUNCH_IDENTITY_RUNTIME_CAPABILITY,
   SKILL_INSTALL_CAPABILITY,
   SKILL_BUNDLE_INSTALL_CAPABILITY,
   SKILL_INSTALL_CANCEL_CAPABILITY,

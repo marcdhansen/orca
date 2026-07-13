@@ -290,6 +290,8 @@ import { AutomationService } from './automations/service'
 import { createHeadlessAutomationOutputSnapshotBuffer } from './automations/headless-dispatch'
 import { buildHeadlessAutomationWorktreeCreateArgs } from './automations/headless-workspace-create'
 import { AgentAwakeService } from './agent-awake-service'
+import { initHostAgentLaunchOperationStorePersistence } from './agent-launch/agent-launch-operation-store-persistence'
+import { initHostAgentSessionRecordStorePersistence } from './agent-launch/agent-session-record-store-persistence'
 import { normalizeComputerAwakeMode } from '../shared/computer-awake-mode'
 import { registerSystemResumeBroadcast } from './system-resume-broadcast'
 import { settleTeardownWithinDeadline } from './quit-teardown-deadline'
@@ -2273,6 +2275,9 @@ void app.whenReady().then(async () => {
   }
   wslHookRelayManager.setManagedHookSettingsResolver(() => store?.getSettings() ?? null)
   logStartupMilestone('store-loaded')
+  // Rehydrate launch ledgers before any IPC or runtime launch surface can use them.
+  initHostAgentLaunchOperationStorePersistence(app.getPath('userData'))
+  initHostAgentSessionRecordStorePersistence(app.getPath('userData'))
   // Why: apply initial fallback WSL distro from store settings for global git/CLI calls.
   setDefaultWslDistroOverride(store.getSettings().terminalWindowsWslDistro ?? null)
   store.onSettingsChanged((updates, settings) => {
@@ -2621,6 +2626,7 @@ void app.whenReady().then(async () => {
       )
   }
   const runtimeService = new OrcaRuntimeService(store, stats, {
+    agentCatalogStore: store ?? undefined,
     agentSessionClaimSigner: loadAgentSessionClaimSigner(
       getProfileUserDataPath(),
       getProfileUserDataPath()

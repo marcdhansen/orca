@@ -5,7 +5,7 @@ import {
   type DashboardCard,
   type DashboardWorkspace
 } from '../../../../shared/dashboard-snapshot'
-import { isTuiAgent } from '../../../../shared/tui-agent-config'
+import { isBuiltInTuiAgent, isTuiAgent } from '../../../../shared/tui-agent-config'
 import {
   filterEnabledTuiAgents,
   TUI_AGENT_AUTO_PICK_ORDER
@@ -119,7 +119,7 @@ export function buildDashboardWorktreeLaunchOptions(
     )
     const preferred = state.settings?.defaultTuiAgent
     result[worktreeId] =
-      preferred && preferred !== 'blank' && enabled.includes(preferred)
+      preferred && preferred !== 'blank' && isBuiltInTuiAgent(preferred) && enabled.includes(preferred)
         ? [preferred, ...enabled.filter((agent) => agent !== preferred)]
         : enabled
   }

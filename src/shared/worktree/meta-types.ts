@@ -12,6 +12,13 @@ import type {
 import type { TuiAgent } from '../tui-agent'
 import type { OrcaWorkspaceLayout } from '../global-settings-types'
 import type { DiffComment, MobileDiffReviewState } from '../diff-comment-types'
+import type { PersistedAgentLaunchFailure } from '../agent-launch-contract'
+
+export type PendingAgentLaunch = {
+  operationId: string
+  requestedAgent: TuiAgent
+  priorFailureId?: string
+}
 
 // ─── Worktree metadata (persisted user-authored fields only) ─────────
 export type WorktreeMeta = {
@@ -61,6 +68,8 @@ export type WorktreeMeta = {
   pendingFirstAgentMessageRename?: boolean
   /** See {@link Worktree.firstAgentMessageRenameError}. */
   firstAgentMessageRenameError?: string | null
+  pendingAgentLaunch?: PendingAgentLaunch
+  agentLaunchFailure?: PersistedAgentLaunchFailure
   sparseDirectories?: string[]
   sparseBaseRef?: string
   sparsePresetId?: string

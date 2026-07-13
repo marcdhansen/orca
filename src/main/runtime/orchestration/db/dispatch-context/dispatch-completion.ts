@@ -1,4 +1,5 @@
 import type { TaskStatus, DispatchContextRow } from '../../types'
+import type { PersistedAgentLaunchFailure } from '../../../../../shared/agent-launch-contract'
 import { OrchestrationError } from '../../orchestration-error'
 import { DISPATCH_CIRCUIT_BREAK_FAILURES } from './dispatch-circuit-breaker'
 import type { OrchestrationDb } from '../orchestration-db'
@@ -77,8 +78,14 @@ export function failDispatch(
   this: OrchestrationDb,
   ctxId: string,
   error: string,
-  options: { workerProcessExited?: boolean; terminationReason?: string } = {}
+  options:
+    | { workerProcessExited?: boolean; terminationReason?: string }
+    | PersistedAgentLaunchFailure = {}
 ): DispatchContextRow | undefined {
+  const workerProcessExited =
+    'workerProcessExited' in options && options.workerProcessExited === true
+  const terminationReason = 'terminationReason' in options ? options.terminationReason : undefined
+  const launchFailure = 'code' in options ? options : undefined
   this.db.exec(`SAVEPOINT ${FAIL_DISPATCH_SAVEPOINT}`)
   try {
     const result = this.db
@@ -99,9 +106,9 @@ export function failDispatch(
       .run(
         DISPATCH_CIRCUIT_BREAK_FAILURES,
         error,
-        options.terminationReason ?? null,
+        terminationReason ?? null,
         ctxId,
-        options.workerProcessExited ? 1 : 0
+        workerProcessExited ? 1 : 0
       )
     const ctx = this.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(ctxId) as
       | DispatchContextRow
@@ -112,7 +119,7 @@ export function failDispatch(
         ctx &&
         worker &&
         !['failed', 'succeeded', 'stopped', 'abandoned'].includes(worker.state) &&
-        !options.workerProcessExited
+        !workerProcessExited
       ) {
         throw new OrchestrationError(
           'task_not_startable',
@@ -123,7 +130,12 @@ export function failDispatch(
       this.db.exec(`RELEASE ${FAIL_DISPATCH_SAVEPOINT}`)
       return ctx
     }
-    if (worker && options.workerProcessExited) {
+    if (launchFailure) {
+      this.db
+        .prepare('UPDATE dispatch_contexts SET agent_launch_failure = ? WHERE id = ?')
+        .run(JSON.stringify(launchFailure), ctxId)
+    }
+    if (worker && workerProcessExited) {
       this.db
         .prepare(
           `UPDATE worker_dispatches

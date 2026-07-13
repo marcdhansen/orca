@@ -9,9 +9,9 @@ import type { OrchestrationDb } from '../orchestration-db'
 export const DISPATCH_CONTEXT_CLAIM_SQL = `INSERT INTO dispatch_contexts (
   id, run_id, task_id, contract_version, launch_token_hash,
   assignee_handle, assignee_pane_key, process_incarnation,
-  status, failure_count, dispatched_at
+  status, failure_count, dispatched_at, requested_agent, base_agent
 )
-SELECT ?, run_id, id, ?, ?, ?, ?, ?, 'dispatched', ?, datetime('now')
+SELECT ?, run_id, id, ?, ?, ?, ?, ?, 'dispatched', ?, datetime('now'), ?, ?
 FROM tasks
 WHERE id = ? AND status = 'ready'
   AND NOT EXISTS (
@@ -42,9 +42,14 @@ export function createDispatchContext(
   assigneeHandle: string,
   // Why: pane key is the remint-stable identity behind the handle — lets worker_done ownership survive handle reissue.
   assigneePaneKey?: string,
-  launchTokenHash?: string,
-  processIncarnation?: string
+  launchTokenHashOrIdentity?: string | { requestedAgent: string | null; baseAgent: string | null },
+  processIncarnation?: string,
+  identityOverride?: { requestedAgent: string | null; baseAgent: string | null }
 ): DispatchContextRow {
+  const launchTokenHash =
+    typeof launchTokenHashOrIdentity === 'string' ? launchTokenHashOrIdentity : undefined
+  const identity =
+    typeof launchTokenHashOrIdentity === 'object' ? launchTokenHashOrIdentity : identityOverride
   const task = this.getTask(taskId)
   if (!task) {
     throw new Error(`Task not found: ${taskId}`)
@@ -83,6 +88,8 @@ export function createDispatchContext(
         assigneePaneKey ?? null,
         processIncarnation ?? null,
         priorFailures,
+        identity?.requestedAgent ?? null,
+        identity?.baseAgent ?? null,
         taskId,
         assigneeHandle,
         assigneePaneKey ?? null,

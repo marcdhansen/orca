@@ -15,6 +15,7 @@ import type { GlobalSettings } from '../../shared/global-settings-types'
 import type { Repo } from '../../shared/repo-types'
 import type { TuiAgent } from '../../shared/tui-agent'
 import type { GitPushTarget, GitWorktreeInfo, Worktree } from '../../shared/worktree/types'
+import { resolveTuiAgentBaseAgent } from '../../shared/custom-tui-agents'
 import type { CommitMessageDraftContext } from '../../shared/commit-message-generation'
 import { assertGitDiffWithinTransportBudget } from '../../shared/git-diff-transport-budget'
 import { getCommitMessageModelDiscoveryHostKey } from '../../shared/commit-message-host-key'
@@ -856,9 +857,16 @@ export class RuntimeGitCommands {
   ): Promise<DiscoverCommitMessageModelsResult> {
     const target = await this.host.resolveRuntimeGitTarget(worktreeSelector)
     const typedAgentId = agentId as TuiAgent
+    const runtimeSettings = this.host.getRuntimeSettings()
+    const overrideAgentId =
+      resolveTuiAgentBaseAgent(
+        typedAgentId,
+        runtimeSettings.customTuiAgents,
+        runtimeSettings.deletedCustomTuiAgents
+      ) ?? typedAgentId
     const agentCommandOverride =
-      settingsOverride?.agentCmdOverrides?.[typedAgentId] ??
-      this.host.getRuntimeSettings().agentCmdOverrides?.[typedAgentId]
+      settingsOverride?.agentCmdOverrides?.[overrideAgentId] ??
+      runtimeSettings.agentCmdOverrides?.[overrideAgentId]
     if (target.connectionId) {
       const provider = getSshGitProvider(target.connectionId)
       if (!provider) {

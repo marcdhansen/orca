@@ -157,6 +157,17 @@ export function applySchemaMigrationsV13ToV29(this: OrchestrationDb, current: nu
   if (current < 29 && !this.hasColumn('dispatch_contexts', 'termination_reason')) {
     this.db.exec('ALTER TABLE dispatch_contexts ADD COLUMN termination_reason TEXT')
   }
+  if (current < 29) {
+    if (!this.hasColumn('dispatch_contexts', 'requested_agent')) {
+      this.db.exec('ALTER TABLE dispatch_contexts ADD COLUMN requested_agent TEXT')
+    }
+    if (!this.hasColumn('dispatch_contexts', 'base_agent')) {
+      this.db.exec('ALTER TABLE dispatch_contexts ADD COLUMN base_agent TEXT')
+    }
+    if (!this.hasColumn('dispatch_contexts', 'agent_launch_failure')) {
+      this.db.exec('ALTER TABLE dispatch_contexts ADD COLUMN agent_launch_failure TEXT')
+    }
+  }
   this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_dispatch_assignee_pane_leaf
         ON dispatch_contexts(${DISPATCH_PANE_KEY_MATCH_SUFFIX_SQL})

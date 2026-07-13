@@ -5,6 +5,8 @@ import type { TuiAgent } from '../tui-agent'
 import type { DiffComment, MobileDiffReviewState } from '../diff-comment-types'
 import type { EphemeralVmCheckoutMode } from '../orca-yaml-hook-types'
 import type { BuiltInWorktreeVisibilitySourceId } from '../repo-types'
+import type { PersistedAgentLaunchFailure } from '../agent-launch-contract'
+import type { PendingAgentLaunch } from './meta-types'
 
 export type WorkspaceLinkedItem = {
   provider: 'github' | 'gitlab' | 'linear' | 'jira'
@@ -134,6 +136,8 @@ export type Worktree = {
   mobileDiffReview?: MobileDiffReviewState
   automationProvenance?: AutomationWorkspaceProvenance
   cliProvenance?: CliWorkspaceProvenance
+  pendingAgentLaunch?: PendingAgentLaunch
+  agentLaunchFailure?: PersistedAgentLaunchFailure
 } & GitWorktreeInfo
 
 /** Provenance for workspaces created through `orca worktree create`. Absent on

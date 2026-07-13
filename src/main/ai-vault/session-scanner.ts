@@ -18,6 +18,7 @@ import {
 } from './session-scanner-antigravity-history'
 import { antigravityHistoryPathForBrainDir } from './session-scanner-antigravity-paths'
 import { codexHomeForSessionsDir } from './session-scanner-codex-paths'
+import { createAiVaultResumeLocator } from './ai-vault-resume-locator'
 import {
   ensureSessionParseCacheLoaded,
   scheduleSessionParseCachePersist
@@ -292,7 +293,7 @@ async function parseSessionCandidate(
       session = await antigravityWorkspaceResolver.enrich(session, candidate.antigravityHistoryPath)
     }
     return {
-      session: session ? withSessionExecutionHost(session, executionHostId) : null,
+      session: session ? withSessionExecutionHost(session, executionHostId, platform) : null,
       issue: null
     }
   } catch (err) {
@@ -310,7 +311,8 @@ async function parseSessionCandidate(
 
 function withSessionExecutionHost(
   session: AiVaultSession,
-  executionHostId: ExecutionHostId
+  executionHostId: ExecutionHostId,
+  platform: NodeJS.Platform
 ): AiVaultSession {
   if (session.executionHostId === executionHostId) {
     return session
@@ -318,7 +320,14 @@ function withSessionExecutionHost(
   return {
     ...session,
     executionHostId,
-    id: `${executionHostId}:${session.agent}:${session.sessionId}:${session.filePath}`
+    id: `${executionHostId}:${session.agent}:${session.sessionId}:${session.filePath}`,
+    resumeLocator: createAiVaultResumeLocator({
+      executionHostId,
+      agent: session.agent,
+      sessionId: session.sessionId,
+      transcriptPath: session.filePath,
+      platform
+    })
   }
 }
 

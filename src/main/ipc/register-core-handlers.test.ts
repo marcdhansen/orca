@@ -59,6 +59,7 @@ const {
   registerTerminalPreviewHandlersMock,
   registerSpeechHandlersMock,
   registerSkillsHandlersMock,
+  registerAgentCatalogHandlersMock,
   registerWorkspaceSpaceHandlersMock,
   registerWorkspacePortHandlersMock,
   registerLocalhostWorktreeLabelHandlersMock,
@@ -124,6 +125,7 @@ const {
   registerTerminalPreviewHandlersMock: vi.fn(),
   registerSpeechHandlersMock: vi.fn(),
   registerSkillsHandlersMock: vi.fn(),
+  registerAgentCatalogHandlersMock: vi.fn(),
   registerWorkspaceSpaceHandlersMock: vi.fn(),
   registerWorkspacePortHandlersMock: vi.fn(),
   registerLocalhostWorktreeLabelHandlersMock: vi.fn(),
@@ -224,6 +226,10 @@ vi.mock('./settings', () => ({
 
 vi.mock('./skills', () => ({
   registerSkillsHandlers: registerSkillsHandlersMock
+}))
+
+vi.mock('./agent-catalog', () => ({
+  registerAgentCatalogHandlers: registerAgentCatalogHandlersMock
 }))
 
 vi.mock('./workspace-space', () => ({
@@ -441,6 +447,7 @@ describe('registerCoreHandlers', () => {
     registerTerminalPreviewHandlersMock.mockReset()
     registerSpeechHandlersMock.mockReset()
     registerSkillsHandlersMock.mockReset()
+    registerAgentCatalogHandlersMock.mockReset()
     registerWorkspaceSpaceHandlersMock.mockReset()
     registerWorkspacePortHandlersMock.mockReset()
     registerLocalhostWorktreeLabelHandlersMock.mockReset()
@@ -527,6 +534,7 @@ describe('registerCoreHandlers', () => {
     expect(registerDashboardPopoutHandlersMock).toHaveBeenCalledWith(store, undefined)
     expect(registerTerminalPreviewHandlersMock).toHaveBeenCalledWith(runtime)
     expect(registerSettingsHandlersMock).toHaveBeenCalledWith(store, agentAwakeService)
+    expect(registerAgentCatalogHandlersMock).toHaveBeenCalledWith(store)
     expect(registerSkillsHandlersMock).toHaveBeenCalledWith(store, runtime)
     expect(registerWorkspaceSpaceHandlersMock).toHaveBeenCalledWith(store)
     expect(registerWorkspacePortHandlersMock).toHaveBeenCalledWith(store)

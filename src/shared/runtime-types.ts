@@ -16,7 +16,10 @@ import type { BaseRefSearchResult, Repo } from './repo-types'
 import type { TabGroupLayoutNode } from './tab-types'
 import type { TerminalColorOverrides } from './terminal-color-overrides'
 import type { TerminalLayoutSnapshot, TerminalPaneLayoutNode } from './terminal-tab-types'
-import type { TuiAgent } from './tui-agent'
+import type { BuiltInTuiAgent, TuiAgent } from './tui-agent'
+import type { CreatedWorktreeResult, NotCreatedWorktreeResult } from './types'
+import type { AgentLaunchSpawnOutcome } from './agent-launch-spawn-request'
+import type { PersistedLaunchNoticeState } from './agent-launch-contract'
 import type { CreateWorktreeResult, RemoveWorktreeResult } from './worktree/create-types'
 import type {
   WorkspaceLineage,
@@ -185,6 +188,7 @@ export type RuntimeMobileSessionTerminalTab = {
   /** Event-only lead-turn end time for paired clients; never persisted in AgentStatusEntry. */
   turnCompletedAt?: number
   launchAgent?: TuiAgent
+  launchNotices?: PersistedLaunchNoticeState
   startupCwd?: string
   parentLayout?: TerminalLayoutSnapshot
   /** Tab-level color/pin (per parentTabId), host-persisted for remote servers. */
@@ -359,6 +363,11 @@ export type RuntimeMobileSessionCreateTerminalResult = {
   tab: RuntimeMobileSessionTerminalClientTab
   publicationEpoch: string
   snapshotVersion: number
+  agentLaunch?: Extract<AgentLaunchSpawnOutcome, { status: 'launched' }>
+}
+
+export type RuntimeMobileSessionCreateTerminalAgentLaunchFailure = {
+  agentLaunch: Extract<AgentLaunchSpawnOutcome, { status: 'failed' | 'rejected' }>
 }
 
 export type RuntimeMobileSessionTabsRemovedResult = RuntimeMobileSessionTabsResult & {
@@ -474,6 +483,9 @@ export type RuntimeTerminalSummary = {
   /** Where this terminal actually runs. Absent when the host predates the field
    *  or could not name the host — never read an absent value as local. */
   executionHostId?: ExecutionHostId
+  /** Validated agent attribution used for orchestration grouping. */
+  requestedAgent?: TuiAgent
+  baseAgent?: BuiltInTuiAgent
 }
 
 export type RuntimeTerminalVisualTerminalNode = {
@@ -683,6 +695,8 @@ type RuntimeTerminalCreateBaseRequestPayload = {
   resumeProviderSession?: AgentProviderSessionMetadata
   launchToken?: string
   launchAgent?: TuiAgent
+  agentLaunch?: import('./agent-launch-spawn-request').AgentLaunchInput
+  clientKind?: 'mobile' | 'runtime'
   viewMode?: 'terminal' | 'chat'
   startupCommandDelivery?: StartupCommandDelivery
   title?: string
@@ -722,6 +736,11 @@ export type RuntimeTerminalCreate = {
   agentSessionDisposition?: 'created' | 'adopted'
   /** The host attached this request to the existing stable pane owner. */
   isReattach?: true
+  agentLaunch?: Extract<AgentLaunchSpawnOutcome, { status: 'launched' }>
+}
+
+export type RuntimeTerminalCreateAgentLaunchFailure = {
+  agentLaunch: Extract<AgentLaunchSpawnOutcome, { status: 'failed' | 'rejected' }>
 }
 
 export type RuntimeTerminalSplit = {
@@ -905,6 +924,7 @@ export type RuntimeWorktreeRecord = Worktree & {
 }
 
 export type RuntimeWorktreeCreateResult = {
+  created?: true
   worktree: RuntimeWorktreeRecord
   lineage: WorktreeLineage | null
   workspaceLineage?: WorkspaceLineage | null
@@ -912,7 +932,10 @@ export type RuntimeWorktreeCreateResult = {
   warning?: string
   startupTerminal?: CreateWorktreeResult['startupTerminal']
   agentTerminalHandle?: string
-}
+  agentLaunchResult?: CreatedWorktreeResult['agentLaunchResult'] | NotCreatedWorktreeResult['agentLaunchResult']
+} | NotCreatedWorktreeResult
+
+export type CreatedRuntimeWorktreeCreateResult = Exclude<RuntimeWorktreeCreateResult, { created: false }>
 
 export type RuntimeWorktreeRemoveResult = RemoveWorktreeResult & {
   removed: boolean

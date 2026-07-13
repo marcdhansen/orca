@@ -358,6 +358,10 @@ import {
 import { hydrateRepo as hydrateRepoOperation } from '../tracking-repos/repo-hydration'
 import { RepoUpdatePersistenceOperations } from '../tracking-repos/repo-update-operations'
 import { ProjectHostSetupPersistenceOperations } from '../tracking-repos/project-host-setup-update'
+import {
+  createPinnedPreV1Backup,
+  migrateAgentCatalogSchema
+} from '../../agent-launch/agent-catalog-schema-migration'
 
 // Why (issue #1158): keep 5 rolling backups at >=1h spacing so a corrupt/empty write leaves an earlier copy recoverable.
 const BACKUP_COUNT = 5
@@ -538,6 +542,7 @@ export class Store {
   private readonly gitUsernameCache = new Map<string, string>()
   private readonly protectedSecrets = new ProtectedSecretPersistence()
   private loadNeedsSave = false
+  private agentCatalogMigrationError: string | null = null
   private settingsChangeListeners = new Set<
     (
       updates: Partial<GlobalSettings>,
@@ -824,6 +829,20 @@ export class Store {
         logPersistenceStartupMilestone('persistence-json-parse-start')
         const parsed = JSON.parse(raw) as PersistedState
         logPersistenceStartupMilestone('persistence-json-parse-done')
+
+        const agentCatalogMigration = migrateAgentCatalogSchema({
+          settings: parsed.settings,
+          preV1RawContents: raw,
+          createBackup: () => createPinnedPreV1Backup(dataFile, raw)
+        })
+        if (agentCatalogMigration.didMigrate || agentCatalogMigration.backupError) {
+          this.loadNeedsSave = this.loadNeedsSave || agentCatalogMigration.didMigrate
+          this.agentCatalogMigrationError = agentCatalogMigration.backupError ?? null
+          parsed.settings = {
+            ...parsed.settings,
+            ...agentCatalogMigration.settingsPatch
+          }
+        }
 
         // Why: secrets are stored encrypted via safeStorage; decrypt at the load boundary so the app sees plaintext.
         if (parsed.settings?.opencodeSessionCookie) {
@@ -2627,6 +2646,10 @@ export class Store {
 
   getSettings(): GlobalSettings {
     return this.state.settings
+  }
+
+  getAgentCatalogMigrationError(): string | null {
+    return this.agentCatalogMigrationError
   }
 
   onSettingsChanged(

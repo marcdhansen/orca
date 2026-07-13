@@ -4,10 +4,13 @@ import {
   resolveAutomationWorkspaceProvenance
 } from '../../../automations/workspace-provenance'
 import { buildCliWorkspaceProvenance } from '../../../../shared/cli-workspace-provenance'
+import { WorktreeAgentLaunchPreCreateError } from '../../../agent-launch/agent-launch-worktree-resolution'
+import { shouldRejectLegacyCustomAgentLaunch } from '../../../agent-launch/legacy-launch-custom-agent-guard'
 import { defineMethod, type RpcMethod } from '../core'
 import { buildManagedWorktreeCreateArgs } from './worktree-create-args'
 import { resolveRuntimeNavigationTarget } from '../../../../shared/runtime-navigation'
 import { resolveRpcWorkspaceCreatorProvenance } from '../workspace-creator-context'
+import { WORKTREE_AGENT_LAUNCH_RECOVERY_METHODS } from './worktree-agent-launch-recovery-methods'
 import {
   WorktreeCreate,
   WorktreeActivate,
@@ -74,12 +77,21 @@ export const WORKTREE_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'worktree.create',
     params: WorktreeCreate,
-    handler: async (params, context) =>
-      // Why: a mobile create interrupted by a connection migration is retried with
-      // the same clientMutationId; dedupe so the host returns the in-flight/created
-      // worktree instead of spawning a duplicate. No key (desktop/CLI) runs plainly.
-      context.runtime.dedupeWorktreeCreate(params.repo, params.clientMutationId, async () => {
+    handler: async (params, context) => {
+      const create = async () => {
         const { runtime } = context
+        if (
+          shouldRejectLegacyCustomAgentLaunch({
+            hasAgentLaunch: params.agentLaunch !== undefined,
+            requestClientKind: context.clientKind,
+            requestedAgentId: params.startupAgent ?? params.createdWithAgent
+          })
+        ) {
+          return {
+            created: false,
+            agentLaunchResult: { status: 'rejected', requestError: { code: 'untrusted_reference' } }
+          }
+        }
         const repo = await runtime.showRepo(params.repo)
         const automationProvenance = resolveAutomationWorkspaceProvenance({
           authority: runtime,
@@ -93,6 +105,7 @@ export const WORKTREE_METHODS: RpcMethod[] = [
           const result = await runtime.createManagedWorktree(
             buildManagedWorktreeCreateArgs(params, {
               automationProvenance,
+              agentLaunchClientKind: context.clientKind,
               cliProvenance: buildCliWorkspaceProvenance(params.cliProvenanceRequest, {
                 startupAgent: params.startupAgent ?? params.createdWithAgent,
                 createdAt: Date.now()
@@ -108,10 +121,25 @@ export const WORKTREE_METHODS: RpcMethod[] = [
             : result
         } catch (error) {
           releaseAutomationWorkspaceProvenanceRequest(params.automationProvenanceRequest)
+          if (error instanceof WorktreeAgentLaunchPreCreateError && error.failure) {
+            return { created: false, agentLaunchResult: { status: 'failed', failure: error.failure } }
+          }
+          if (error instanceof WorktreeAgentLaunchPreCreateError && error.requestError) {
+            return {
+              created: false,
+              agentLaunchResult: { status: 'rejected', requestError: error.requestError }
+            }
+          }
           throw error
         }
-      })
+      }
+      // Older runtime test doubles and mixed-version hosts do not expose dedupe yet.
+      return context.runtime.dedupeWorktreeCreate
+        ? context.runtime.dedupeWorktreeCreate(params.repo, params.clientMutationId, create)
+        : create()
+    }
   }),
+  ...WORKTREE_AGENT_LAUNCH_RECOVERY_METHODS,
   defineMethod({
     name: 'worktree.prefetchCreateBase',
     params: WorktreePrefetchCreateBase,

@@ -2,7 +2,11 @@
 import type { OrchestrationDb } from './db'
 import type { TaskRow } from './types'
 import { buildDispatchPreamble } from './preamble'
-import type { CoordinatorRuntime, WorktreeDrift } from './coordinator-runtime-contract'
+import type {
+  CoordinatorRuntime,
+  DispatchAgentIdentity,
+  WorktreeDrift
+} from './coordinator-runtime-contract'
 import {
   DISPATCH_STALE_THRESHOLD,
   parseAllowStaleBaseFromSpec
@@ -68,6 +72,7 @@ export async function dispatchTaskToWorker(params: {
   onLog: (msg: string) => void
   // Why: the coordinator owns the failed-task list, so a circuit break is reported back instead of mutated here.
   onCircuitBroken: (taskId: string) => void
+  resolveDispatchIdentity?: (task: TaskRow, targetHandle: string) => DispatchAgentIdentity | null
 }): Promise<TaskDispatchResult> {
   const { db, runtime, task, targetHandle, baseDrift, onLog } = params
   // Why (§3.1): drift check runs before createDispatchContext so a refusal doesn't bump failure_count (carried forward as MAX in db.ts:301-306) and burn the circuit-breaker budget; the task stays `ready` and retries next tick.
@@ -95,13 +100,27 @@ export async function dispatchTaskToWorker(params: {
     dispatchAuthority?.paneKey && dispatchAuthority.processIncarnation
       ? dispatchAuthority.processIncarnation
       : undefined
+  const identity = params.resolveDispatchIdentity?.(task, targetHandle) ?? undefined
   const dispatch = db.createDispatchContext(
     task.id,
     targetHandle,
     assigneePaneKey,
     dispatchAuthority?.launchTokenHash ?? undefined,
-    processIncarnation
+    processIncarnation,
+    identity
   )
+
+  if (identity && runtime.validateDispatchAgentLaunch) {
+    const validation = await runtime.validateDispatchAgentLaunch(identity)
+    if (!validation.ok) {
+      const updated = db.failDispatch(dispatch.id, validation.error, validation.launchFailure)
+      if (updated?.status === 'circuit_broken') {
+        params.onCircuitBroken(task.id)
+      }
+      onLog(`Dispatch of ${task.id} failed launch validation (${validation.launchFailure.code})`)
+      return 'dispatched'
+    }
+  }
 
   // Why: dispatched agents use orca-dev in dev mode to reach the dev runtime's socket, not production (Section 6.4).
   const preamble = buildDispatchPreamble({

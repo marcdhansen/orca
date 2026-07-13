@@ -1,8 +1,14 @@
 import { z } from 'zod'
 import { isTuiAgent } from '../../../../shared/tui-agent-config'
 import type { TuiAgent } from '../../../../shared/tui-agent'
-import { workspaceSourceSchema } from '../../../../shared/telemetry-events'
+import {
+  launchSourceSchema,
+  requestKindSchema,
+  workspaceSourceSchema
+} from '../../../../shared/telemetry-events'
 import { sleepingAgentLaunchConfigSchema } from '../../../../shared/workspace-session-sleeping-agents'
+import { AgentLaunchSpawnRequestSchema } from './agent-launch-spawn-schema'
+import { isCanonicalLowercaseUuid } from '../../../agent-launch/agent-launch-operation-store'
 import { RUNTIME_NAVIGATION_TARGETS } from '../../../../shared/runtime-navigation'
 import {
   OptionalBoolean,
@@ -201,6 +207,11 @@ export const WorktreeCreate = z
       .unknown()
       .transform((value) => (isTuiAgent(value) ? value : undefined))
       .optional(),
+    // The host owns resolution for this sanctioned launch path.
+    agentLaunch: AgentLaunchSpawnRequestSchema.optional(),
+    agentLaunchTelemetry: z
+      .object({ launch_source: launchSourceSchema, request_kind: requestKindSchema })
+      .optional(),
     // Why: mobile retries a create interrupted by a connection migration with the
     // same key so the host dedupes instead of spawning a duplicate worktree.
     clientMutationId: z.string().min(1).max(128).optional(),
@@ -340,3 +351,45 @@ export const WorktreeResolveMrBase = z.object({
   targetBranch: OptionalString,
   isCrossRepository: OptionalBoolean
 })
+
+export const WorktreeRetryAgentLaunch = WorktreeSelector.extend({
+  expectedFailureId: z.string().min(1).max(256),
+  clientMutationId: z.string().refine(isCanonicalLowercaseUuid, {
+    message: 'clientMutationId must be a canonical lowercase UUID'
+  }),
+  action: z.union([
+    z.object({ kind: z.literal('retry-same') }),
+    z.object({ kind: z.literal('change-agent'), agent: z.custom<TuiAgent>(isTuiAgent) })
+  ])
+})
+
+export const WorktreeForgetAgentLaunch = WorktreeSelector.extend({
+  expectedOperationId: z.string().min(1).max(256),
+  clientMutationId: z.string().refine(isCanonicalLowercaseUuid, {
+    message: 'clientMutationId must be a canonical lowercase UUID'
+  })
+})
+
+export const WorktreeRetryBackgroundAgentLaunch = z.object({
+  attemptId: z.string().min(1).max(256),
+  expectedFailureId: z.string().min(1).max(256),
+  clientMutationId: z.string().refine(isCanonicalLowercaseUuid, {
+    message: 'clientMutationId must be a canonical lowercase UUID'
+  }),
+  action: z.union([
+    z.object({ kind: z.literal('retry-same') }),
+    z.object({ kind: z.literal('change-agent'), agent: z.custom<TuiAgent>(isTuiAgent) })
+  ])
+})
+
+export const WorktreeForgetBackgroundAgentLaunch = z.object({
+  attemptId: z.string().min(1).max(256),
+  expectedOperationId: z.string().min(1).max(256),
+  clientMutationId: z.string().refine(isCanonicalLowercaseUuid, {
+    message: 'clientMutationId must be a canonical lowercase UUID'
+  })
+})
+
+export const WorktreePendingAgentLaunchSummary = z.object({})
+export const WorktreeUnknownAgentLaunchSiblingCount = WorktreeSelector
+export const WorktreeForgetUnknownAgentLaunchSiblings = WorktreeSelector

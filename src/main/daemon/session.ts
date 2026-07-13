@@ -7,6 +7,7 @@ import {
   IMMEDIATE_KILL_PHYSICAL_EXIT_TIMEOUT_MS
 } from './session-termination-controller'
 import { nudgePowerShellPromptRepaint } from './session-powershell-prompt-repaint'
+export type { SubprocessHandle } from './session-subprocess-handle'
 import type { SubprocessHandle } from './session-subprocess-handle'
 import type { SessionOptions } from './session-options'
 import type { TuiAgent } from '../../shared/tui-agent'
@@ -27,6 +28,7 @@ export class Session {
   readonly incarnationId = randomUUID()
   readonly terminalHandle: string | null
   readonly launchAgent: TuiAgent | null
+  readonly launchToken: string | null
   readonly wslDistro: string | null
   private _state: SessionState = 'running'
   private _exitCode: number | null = null
@@ -43,6 +45,7 @@ export class Session {
     this.sessionId = opts.sessionId
     this.terminalHandle = opts.terminalHandle ?? null
     this.launchAgent = opts.launchAgent ?? null
+    this.launchToken = opts.launchToken ?? null
     this.wslDistro = opts.wslDistro ?? null
     this.subprocess = opts.subprocess
     this.onSessionExit = opts.onExit

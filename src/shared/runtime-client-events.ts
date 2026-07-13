@@ -31,6 +31,8 @@ export type RuntimeClientEvent =
       identifier: string
       workspaceId: string
     }
+  | { type: 'agentCatalogChanged'; revision: number }
+  | { type: 'agentReferencesChanged'; revision: number }
   | {
       type: 'activateWorktree'
       repoId: string

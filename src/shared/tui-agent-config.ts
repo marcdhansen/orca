@@ -1,4 +1,4 @@
-import type { TuiAgent } from './tui-agent'
+import type { BuiltInTuiAgent, TuiAgent } from './tui-agent'
 import { getOrcaCliCommandNameForPlatform } from './orca-cli-command-name'
 
 export type AgentPromptInjectionMode =
@@ -26,6 +26,9 @@ export type TuiAgentConfig = {
   /** Detection runtimes where this launch mode is not available as a detected agent. */
   detectUnsupportedRuntimes?: readonly TuiAgentDetectionRuntime[]
   launchCmd: string
+  /** Structured executable argv for integrations that must avoid shell reparsing. */
+  launchArgv?: readonly [string, ...string[]]
+  launchArgvByPlatform?: Partial<Record<NodeJS.Platform, readonly [string, ...string[]]>>
   /** Platform-specific launch command when the public binary name differs. */
   launchCmdByPlatform?: Partial<Record<NodeJS.Platform, string>>
   expectedProcess: string
@@ -50,7 +53,7 @@ export type TuiAgentConfig = {
   ctrlEnterEncoding?: 'csi-u'
 }
 
-export const TUI_AGENT_CONFIG: Record<TuiAgent, TuiAgentConfig> = {
+export const TUI_AGENT_CONFIG: Record<BuiltInTuiAgent, TuiAgentConfig> = {
   claude: {
     detectCmd: 'claude',
     launchCmd: 'claude',
@@ -136,6 +139,7 @@ export const TUI_AGENT_CONFIG: Record<TuiAgent, TuiAgentConfig> = {
   pi: {
     detectCmd: 'pi',
     launchCmd: 'pi',
+    launchArgv: ['pi'],
     expectedProcess: 'pi',
     promptInjectionMode: 'argv',
     // Why: pi has no `--prefill` and paste-after-ready races its long startup; the orca-prefill extension seeds this env var instead.
@@ -146,6 +150,7 @@ export const TUI_AGENT_CONFIG: Record<TuiAgent, TuiAgentConfig> = {
   omp: {
     detectCmd: 'omp',
     launchCmd: 'omp',
+    launchArgv: ['omp'],
     expectedProcess: 'omp',
     promptInjectionMode: 'argv',
     draftPromptEnvVar: 'ORCA_OMP_PREFILL'
@@ -153,6 +158,7 @@ export const TUI_AGENT_CONFIG: Record<TuiAgent, TuiAgentConfig> = {
   'prime-agent': {
     detectCmd: 'prime-agent',
     launchCmd: 'prime-agent',
+    launchArgv: ['prime-agent'],
     expectedProcess: 'prime-agent',
     // Why: `prime-agent [options] [@files...] [message...]` takes the task as positional argv.
     promptInjectionMode: 'argv',
@@ -337,7 +343,19 @@ export const TUI_AGENT_CONFIG: Record<TuiAgent, TuiAgentConfig> = {
 }
 
 export function isTuiAgent(value: unknown): value is TuiAgent {
+  return isBuiltInTuiAgent(value) || isWellFormedCustomTuiAgentId(value)
+}
+
+export function isBuiltInTuiAgent(value: unknown): value is BuiltInTuiAgent {
   return typeof value === 'string' && Object.hasOwn(TUI_AGENT_CONFIG, value)
+}
+
+export function isWellFormedCustomTuiAgentId(value: unknown): value is `custom-agent:${BuiltInTuiAgent}:${string}` {
+  if (typeof value !== 'string') {
+    return false
+  }
+  const match = /^custom-agent:([^:]+):([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/.exec(value)
+  return Boolean(match && isBuiltInTuiAgent(match[1]))
 }
 
 export function getTuiAgentDetectCommands(config: TuiAgentConfig): string[] {
@@ -354,4 +372,16 @@ export function getTuiAgentLaunchCommand(
     return config.launchCmd
   }
   return config.launchCmdByPlatform?.[platform] ?? config.launchCmd
+}
+
+export function getTuiAgentLaunchArgv(
+  config: TuiAgentConfig,
+  platform: NodeJS.Platform,
+  opts?: { isRemote?: boolean }
+): string[] {
+  const argv =
+    opts?.isRemote && platform === 'linux'
+      ? config.launchArgv
+      : (config.launchArgvByPlatform?.[platform] ?? config.launchArgv)
+  return argv ? [...argv] : (config.launchCmdByPlatform?.[platform] ?? config.launchCmd).split(/\s+/)
 }
