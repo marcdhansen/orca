@@ -1,15 +1,20 @@
-// Single shared RpcClient per host, collapsing the old per-screen WebSocket connections.
-// Design: docs/mobile-shared-client-per-host.md.
+// Why: collapses the per-screen WebSocket connection model into a single
+// shared RpcClient per host. Implements the design in
+// docs/mobile-shared-client-per-host.md.
+//
+// Lifecycle rules:
+// - First request for a host opens its client lazily.
+// - Refcount tracks active subscribers; when it drops to zero we schedule
+//   a 30-second idle close timer. If a new subscriber arrives within that
+//   window we cancel and reuse the same client.
+// - removeHost() forces an immediate close so re-pairing gets a fresh
+//   transport.
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode
-} from 'react'
+  HostClientContext,
+  useHostClientContext as useRpcClientContext,
+  type HostClientContextValue
+} from './host-client-context-contract'
 import type { RpcClient } from './rpc-client'
 import { subscribeConnectionRevivalTriggers } from './connection-revival-triggers'
 import { HostClientOpenRegistry } from './host-client-open-registry'
@@ -31,13 +36,10 @@ import {
 } from './host-client-context-state'
 import { mountAgentSync } from './agent-sync-connection'
 import type { ConnectionState, HostProfile } from './types'
-import type { RpcClientContextValue } from './rpc-client-context-contract'
-
 type StoreEntry = HostClientStoreEntry
 export type { HostClientAcquisition } from './host-client-acquisition-registry'
-export type { RpcClientContextValue } from './rpc-client-context-contract'
-
-const Ctx = createContext<RpcClientContextValue | null>(null)
+export { useRpcClientContext }
+export type RpcClientContextValue = HostClientContextValue
 
 export function RpcClientProvider({ children }: { children: ReactNode }) {
   // Why: entries in a ref so state changes don't re-render the whole tree; propagation goes through per-host listener Sets.
@@ -316,7 +318,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  const value = useMemo<RpcClientContextValue>(
+  const value = useMemo<HostClientContextValue>(
     () => ({
       acquire,
       release,
@@ -349,15 +351,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
     ]
   )
 
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>
-}
-
-export function useRpcClientContext(): RpcClientContextValue {
-  const ctx = useContext(Ctx)
-  if (!ctx) {
-    throw new Error('useHostClient must be used inside <RpcClientProvider>')
-  }
-  return ctx
+  return <HostClientContext.Provider value={value}>{children}</HostClientContext.Provider>
 }
 
 // Primary hook for screens: acquires the shared client on mount, releases on unmount, re-renders on state change.
