@@ -159,6 +159,15 @@ export function applySchemaMigrationsV13ToV29(this: OrchestrationDb, current: nu
     this.db.exec('ALTER TABLE dispatch_contexts ADD COLUMN termination_reason TEXT')
   }
   if (current < 29) {
+    // Some pre-rebase v6 databases stamped the U6 identity columns without
+    // running main's pane-identity step. Make the pane columns available
+    // before the dispatch-table rebuild/copy below.
+    if (!this.hasColumn('dispatch_contexts', 'assignee_pane_key')) {
+      this.db.exec('ALTER TABLE dispatch_contexts ADD COLUMN assignee_pane_key TEXT')
+    }
+    if (!this.hasColumn('messages', 'sender_pane_key')) {
+      this.db.exec('ALTER TABLE messages ADD COLUMN sender_pane_key TEXT')
+    }
     if (!this.hasColumn('dispatch_contexts', 'requested_agent')) {
       // SQLite cannot widen the existing status CHECK in place. Rebuild the
       // dispatch table so v6/v28 databases preserve pane and ownership data

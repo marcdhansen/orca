@@ -10047,7 +10047,9 @@ export class OrcaRuntimeService {
     worktreeSelector: string,
     args: { tabId: string; launchToken: string; code: AgentLaunchNoticeCode }
   ): Promise<{ ok: boolean; changed: boolean }> {
-    const explicitWorktreeId = getExplicitWorktreeIdSelector(worktreeSelector)
+    // Why: match main's tightened selector contract — a bare registered repo-id
+    // (no `::`) must be rejected, not mis-scoped as a worktree id.
+    const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
     const worktreeId =
       explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
     const snapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
@@ -24757,6 +24759,11 @@ export class OrcaRuntimeService {
           )
           agentLaunchResult = this.toWorktreeAgentLaunchResult(outcome)
           didSpawnStartup = outcome.status === 'launched'
+          if (outcome.status === 'launched') {
+            // Why: agent callers read agentTerminalHandle off the create result
+            // on every path; without this the folder path drops the handle.
+            startupTerminal = { spawned: true, handle: outcome.terminalId, surface: 'background' }
+          }
         } catch (err) {
           agentLaunchFinish.release()
           throw err
@@ -24855,6 +24862,7 @@ export class OrcaRuntimeService {
       // convert the reservation and spawn the single agent terminal through the
       // same createTerminal path (which routes to the remote provider).
       let remoteAgentLaunchResult: CreatedWorktreeResult['agentLaunchResult']
+      let remoteStartupTerminal: CreatedWorktreeResult['startupTerminal']
       if (agentLaunchFinish) {
         try {
           const outcome = await agentLaunchFinish.finish(
@@ -24872,6 +24880,15 @@ export class OrcaRuntimeService {
               )
           )
           remoteAgentLaunchResult = this.toWorktreeAgentLaunchResult(outcome)
+          if (outcome.status === 'launched') {
+            // Why: agent callers read agentTerminalHandle off the create result
+            // on every path; without this the SSH path drops the handle.
+            remoteStartupTerminal = {
+              spawned: true,
+              handle: outcome.terminalId,
+              surface: 'background'
+            }
+          }
         } catch (err) {
           agentLaunchFinish.release()
           throw err
@@ -24900,6 +24917,7 @@ export class OrcaRuntimeService {
               warnings: recordedLineage.warnings
             }
           : {}),
+        ...(remoteStartupTerminal ? { startupTerminal: remoteStartupTerminal } : {}),
         ...(remoteAgentLaunchResult ? { agentLaunchResult: remoteAgentLaunchResult } : {})
       }
     }
