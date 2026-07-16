@@ -86,8 +86,15 @@ export function failDispatch(
     'workerProcessExited' in options && options.workerProcessExited === true
   const terminationReason = 'terminationReason' in options ? options.terminationReason : undefined
   const launchFailure = 'code' in options ? options : undefined
+  const ctx = this.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(ctxId) as
+    | DispatchContextRow
+    | undefined
+  if (!ctx || (ctx.status !== 'pending' && ctx.status !== 'dispatched')) {
+    return ctx
+  }
   this.db.exec(`SAVEPOINT ${FAIL_DISPATCH_SAVEPOINT}`)
   try {
+
     const result = this.db
       .prepare(
         `UPDATE dispatch_contexts
@@ -110,11 +117,11 @@ export function failDispatch(
         ctxId,
         workerProcessExited ? 1 : 0
       )
-    const ctx = this.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(ctxId) as
+    const updatedCtx = this.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(ctxId) as
       | DispatchContextRow
       | undefined
     const worker = this.getWorkerDispatch(ctxId)
-    if (result.changes !== 1 || !ctx) {
+    if (result.changes !== 1 || !updatedCtx) {
       if (
         ctx &&
         worker &&
@@ -128,7 +135,7 @@ export function failDispatch(
         )
       }
       this.db.exec(`RELEASE ${FAIL_DISPATCH_SAVEPOINT}`)
-      return ctx
+      return updatedCtx ?? ctx
     }
     if (launchFailure) {
       this.db
@@ -147,7 +154,7 @@ export function failDispatch(
     }
 
     // Why: back to 'ready' not 'pending' — 'pending' would strand it since promoteReadyTasks only runs when a dep completes.
-    const taskStatus: TaskStatus = ctx.status === 'circuit_broken' ? 'failed' : 'ready'
+    const taskStatus: TaskStatus = updatedCtx.status === 'circuit_broken' ? 'failed' : 'ready'
     // Why: the status guard keeps a late failure from reopening a task that already completed or was retried elsewhere.
     this.db
       .prepare(

@@ -4118,8 +4118,23 @@ export function connectPanePty(
   // pre-existing session when a late reattach resolves, so a remount racing
   // a slow-but-alive connect costs a wasted view rebuild, not a shell.
   const TRANSPORT_CONNECT_SETTLE_GRACE_MS = 60_000
+  const resolveCurrentRecoveryPtyId = (): string | null =>
+    transport.getPtyId() ?? useAppStore.getState().ptyIdsByTabId?.[deps.tabId]?.[0] ?? null
+  // Mirrors the detector's own gates so recovery can re-validate after async
+  // gaps (liveness probe, window-cap retry) instead of replaying a stale
+  // verdict against a healed, settling, or disposed pane.
+  const isInputStillUndeliverable = (providerRejected = false): boolean => {
+    const connectStillSettling =
+      transportConnectInFlightSince !== null &&
+      Date.now() - transportConnectInFlightSince < TRANSPORT_CONNECT_SETTLE_GRACE_MS
+    return (
+      !disposed &&
+      !connectStillSettling &&
+      (providerRejected || !(transport.isConnected?.() && transport.getPtyId() !== null))
+    )
+  }
   const requestRecoveryForUndeliverableInput = (providerRejected = false): void => {
-    if (!providerRejected && transport.isConnected?.() && transport.getPtyId() !== null) {
+    if (!isInputStillUndeliverable(providerRejected)) {
       return
     }
     // Why: input rejected while a connect/reattach is still settling is "not
@@ -4135,8 +4150,7 @@ export function connectPanePty(
     if (connectStillSettling || disposed) {
       return
     }
-    const storePtyId = useAppStore.getState().ptyIdsByTabId?.[deps.tabId]?.[0] ?? null
-    const undeliverablePtyId = transport.getPtyId() ?? storePtyId
+    const undeliverablePtyId = resolveCurrentRecoveryPtyId()
     // Why the split: for a local (daemon/app-SSH) id main's registry can answer,
     // and a `false` there means the shell really died — the dead-session
     // reconcile owns that teardown and a remount would race it. For a `remote:`
@@ -4150,6 +4164,8 @@ export function connectPanePty(
       reason: hostRejectedRemoteInput ? 'input-rejected-by-host' : 'input-undeliverable',
       terminalRecoveryGeneration,
       terminalRecoveryInstanceId: terminalRecoveryInstance.id,
+      resolveCurrentPtyId: resolveCurrentRecoveryPtyId,
+      isStillUndeliverable: () => isInputStillUndeliverable(providerRejected),
       // Why: pty:hasPty answers null for ids the local registry doesn't own,
       // and a disconnected remote pane would otherwise remount-churn on every
       // cooldown window while typing. Local panes keep the lenient gate.
@@ -4171,13 +4187,13 @@ export function connectPanePty(
       // Certification can arrive while this terminal still owns queued or
       // detached scheduler work; release its delivery credits immediately.
       discardTerminalOutput(pane.terminal)
-      const storePtyId = useAppStore.getState().ptyIdsByTabId?.[deps.tabId]?.[0] ?? null
       void requestTerminalPaneRecovery({
         tabId: deps.tabId,
-        ptyId: transport.getPtyId() ?? storePtyId,
+        ptyId: resolveCurrentRecoveryPtyId(),
         reason,
         terminalRecoveryGeneration,
-        terminalRecoveryInstanceId: terminalRecoveryInstance.id
+        terminalRecoveryInstanceId: terminalRecoveryInstance.id,
+        resolveCurrentPtyId: resolveCurrentRecoveryPtyId
       })
     }
   )

@@ -32,9 +32,24 @@ export function markDispatchLaunchUnknown(
   ctxId: string,
   failure: PersistedAgentLaunchFailure
 ): DispatchContextRow | undefined {
+  let persisted = failure
+  const ctx = this.getDispatchContextById(ctxId)
+  if (!ctx) {
+    return undefined
+  }
+  if (ctx.agent_launch_failure) {
+    try {
+      const existing = JSON.parse(ctx.agent_launch_failure) as PersistedAgentLaunchFailure
+      if (existing.code === 'launch_state_unknown' && typeof existing.failureId === 'string') {
+        persisted = { ...failure, failureId: existing.failureId }
+      }
+    } catch {
+      // Malformed/legacy blob — replace it with the fresh card.
+    }
+  }
   this.db
     .prepare('UPDATE dispatch_contexts SET agent_launch_failure = ? WHERE id = ?')
-    .run(JSON.stringify(failure), ctxId)
+    .run(JSON.stringify(persisted), ctxId)
   return this.getDispatchContextById(ctxId)
 }
 

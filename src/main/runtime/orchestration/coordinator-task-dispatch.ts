@@ -5,6 +5,7 @@ import { buildDispatchPreamble } from './preamble'
 import type {
   CoordinatorRuntime,
   DispatchAgentIdentity,
+  DispatchAgentLaunchValidation,
   WorktreeDrift
 } from './coordinator-runtime-contract'
 import {
@@ -111,7 +112,19 @@ export async function dispatchTaskToWorker(params: {
   )
 
   if (identity && runtime.validateDispatchAgentLaunch) {
-    const validation = await runtime.validateDispatchAgentLaunch(identity)
+    let validation: DispatchAgentLaunchValidation
+    try {
+      validation = await runtime.validateDispatchAgentLaunch(identity)
+    } catch (err) {
+      const updated = db.failDispatch(
+        dispatch.id,
+        err instanceof Error ? err.message : String(err)
+      )
+      if (updated?.status === 'circuit_broken') {
+        params.onCircuitBroken(task.id)
+      }
+      throw err
+    }
     if (!validation.ok) {
       const updated = db.failDispatch(dispatch.id, validation.error, validation.launchFailure)
       if (updated?.status === 'circuit_broken') {
