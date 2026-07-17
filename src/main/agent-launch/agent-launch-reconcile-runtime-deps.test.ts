@@ -105,7 +105,7 @@ describe('buildReconcileAgentLaunchDeps liveness', () => {
       }
     })
     const entry = pending()
-    store.beginPending(entry)
+    store.rebuildPendingFrom([entry])
 
     const outcome = reconcileOnePendingAgentLaunch(deps, entry)
 
@@ -125,12 +125,14 @@ describe('buildReconcileAgentLaunchDeps liveness', () => {
       }
     })
     const entry = pending()
-    store.beginPending(entry)
+    store.rebuildPendingFrom([entry])
 
     const outcome = reconcileOnePendingAgentLaunch(deps, entry)
 
     expect(outcome).toEqual({ kind: 'invalid_launch_snapshot' })
-    expect(arm.calls).toEqual(['failed'])
+    // Non-settling card write: pending survives so the thief terminal's exit
+    // can re-derive spawn_failed (Retry re-opens) instead of a dead-end.
+    expect(arm.calls).toEqual(['unknown'])
   })
 
   it('treats a live token with an UNRESOLVABLE worktree as attributed, never absent', () => {
@@ -150,7 +152,7 @@ describe('buildReconcileAgentLaunchDeps liveness', () => {
       }
     })
     const entry = pending({}, 'ssh:host-a')
-    store.beginPending(entry)
+    store.rebuildPendingFrom([entry])
 
     const outcome = reconcileOnePendingAgentLaunch(deps, entry)
 
@@ -170,7 +172,7 @@ describe('buildReconcileAgentLaunchDeps liveness', () => {
       }
     })
     const entry = pending({}, 'local')
-    store.beginPending(entry)
+    store.rebuildPendingFrom([entry])
 
     const outcome = reconcileOnePendingAgentLaunch(deps, entry)
 
@@ -190,7 +192,7 @@ describe('buildReconcileAgentLaunchDeps liveness', () => {
       }
     })
     const entry = pending({ launchToken: 'token-r' }, 'ssh:host-a')
-    store.beginPending(entry)
+    store.rebuildPendingFrom([entry])
 
     const outcome = reconcileOnePendingAgentLaunch(deps, entry)
 
@@ -212,7 +214,7 @@ describe('buildReconcileAgentLaunchDeps liveness', () => {
       }
     })
     const entry = pending({ launchToken: 'token-r' }, 'ssh:host-a')
-    store.beginPending(entry)
+    store.rebuildPendingFrom([entry])
 
     const outcome = reconcileOnePendingAgentLaunch(deps, entry)
 
@@ -232,7 +234,7 @@ describe('buildReconcileAgentLaunchDeps liveness', () => {
       }
     })
     const entry = pending({ launchToken: 'token-r' }, 'ssh:host-a')
-    store.beginPending(entry)
+    store.rebuildPendingFrom([entry])
 
     const outcome = reconcileOnePendingAgentLaunch(deps, entry)
 
@@ -263,7 +265,7 @@ describe('buildReconcileAgentLaunchDeps liveness', () => {
       { scope: 'attempt-7', launchToken: 'token-bg', intent: 'background' },
       'local'
     )
-    store.beginPending(entry)
+    store.rebuildPendingFrom([entry])
 
     const outcome = reconcileOnePendingAgentLaunch(deps, entry)
 

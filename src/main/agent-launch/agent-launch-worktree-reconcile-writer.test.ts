@@ -86,7 +86,7 @@ describe('reconcileOnePendingAgentLaunch', () => {
   it('live+attributed settles launched, clears pending, and registers the boundary', () => {
     const store = new AgentLaunchOperationStore()
     const entry = pending()
-    store.beginPending(entry)
+    store.rebuildPendingFrom([entry])
     const persistence = persistenceSpy()
     const settleBoundary = vi.fn()
     const deps = buildDeps(
@@ -106,10 +106,10 @@ describe('reconcileOnePendingAgentLaunch', () => {
     expect(settled).toMatchObject({ status: 'launched', terminalId: 'term-9', failureId: null })
   })
 
-  it('live+unattributed records invalid_launch_snapshot without tearing the terminal down', () => {
+  it('live+unattributed records invalid_launch_snapshot but keeps pending and reservation', () => {
     const store = new AgentLaunchOperationStore()
     const entry = pending()
-    store.beginPending(entry)
+    store.rebuildPendingFrom([entry])
     const persistence = persistenceSpy()
     const settleBoundary = vi.fn()
     const deps = buildDeps(
@@ -122,20 +122,51 @@ describe('reconcileOnePendingAgentLaunch', () => {
     const outcome = reconcileOnePendingAgentLaunch(deps, entry)
 
     expect(outcome).toEqual({ kind: 'invalid_launch_snapshot' })
+    // Coexistence with the live-but-unattributed terminal: nothing is settled or
+    // released, so a later liveness event can re-derive this same pending.
+    expect(settleBoundary).not.toHaveBeenCalled()
+    expect(store.getPending('token-1')).not.toBeNull()
+    expect(store.findSettledByIdempotencyKey('wt-1', 'idem-1')).toBeNull()
+    expect(persistence.failed).not.toHaveBeenCalled()
+    const failure = persistence.unknown.mock.calls[0][0]
+    expect(failure).toMatchObject({ code: 'invalid_launch_snapshot', intent: 'interactive' })
+  })
+
+  it('invalid_launch_snapshot converts to a retryable spawn_failed once the conflicting terminal is gone', () => {
+    const store = new AgentLaunchOperationStore()
+    const entry = pending()
+    store.rebuildPendingFrom([entry])
+    const persistence = persistenceSpy()
+    const settleBoundary = vi.fn()
+    const liveDeps = buildDeps(
+      store,
+      { kind: 'live', attributed: false, terminalId: 'term-hijack' },
+      persistence,
+      settleBoundary
+    )
+    expect(reconcileOnePendingAgentLaunch(liveDeps, entry)).toEqual({
+      kind: 'invalid_launch_snapshot'
+    })
+
+    // The conflicting terminal exits; the next liveness event proves absence.
+    const absentDeps = buildDeps(store, { kind: 'absent' }, persistence, settleBoundary)
+    const outcome = reconcileOnePendingAgentLaunch(absentDeps, entry)
+
+    expect(outcome).toEqual({ kind: 'spawn_failed' })
     expect(settleBoundary).toHaveBeenCalledWith('token-1', 'failed')
     expect(store.getPending('token-1')).toBeNull()
     const failure = persistence.failed.mock.calls[0][0]
-    expect(failure).toMatchObject({ code: 'invalid_launch_snapshot', intent: 'interactive' })
+    expect(failure).toMatchObject({ code: 'spawn_failed', intent: 'interactive' })
     expect(store.findSettledByIdempotencyKey('wt-1', 'idem-1')).toMatchObject({
       status: 'failed',
-      terminalId: 'term-hijack'
+      terminalId: null
     })
   })
 
   it('absent settles spawn_failed with Retry available', () => {
     const store = new AgentLaunchOperationStore()
     const entry = pending()
-    store.beginPending(entry)
+    store.rebuildPendingFrom([entry])
     const persistence = persistenceSpy()
     const deps = buildDeps(store, { kind: 'absent' }, persistence)
 
@@ -154,7 +185,7 @@ describe('reconcileOnePendingAgentLaunch', () => {
   it('unknown writes the durable failure but keeps pending, snapshot, and reservation', () => {
     const store = new AgentLaunchOperationStore()
     const entry = pending()
-    store.beginPending(entry)
+    store.rebuildPendingFrom([entry])
     const persistence = persistenceSpy()
     const settleBoundary = vi.fn()
     const deps = buildDeps(store, { kind: 'unknown' }, persistence, settleBoundary)
@@ -190,15 +221,15 @@ describe('reconcileOnePendingAgentLaunch', () => {
 describe('reconcileAllPendingAgentLaunches', () => {
   it('reconciles only the filtered scope', () => {
     const store = new AgentLaunchOperationStore()
-    store.beginPending(pending())
-    store.beginPending(
+    store.rebuildPendingFrom([
+      pending(),
       pending({
         scope: 'wt-2',
         launchToken: 'token-2',
         operationId: 'op-2',
         idempotencyKey: 'idem-2'
       })
-    )
+    ])
     const persistence = persistenceSpy()
     const deps: ReconcileAgentLaunchDeps = {
       ...buildDeps(store, { kind: 'absent' }, persistence),

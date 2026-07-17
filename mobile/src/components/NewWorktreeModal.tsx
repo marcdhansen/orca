@@ -38,9 +38,8 @@ import { buildInteractiveLaunchParams } from './interactive-worktree-launch-para
 import type { SshConnectionState } from '../../../src/shared/ssh-types'
 import { getProjectIdentityKey } from '../../../src/shared/project-host-setup-projection'
 import {
-  buildSelectableNewWorktreeAgentOptions,
+  buildNewWorktreePickerOptions,
   NEW_WORKTREE_AGENT_OPTIONS as AGENT_OPTIONS,
-  NEW_WORKTREE_BLANK_AGENT as BLANK_TERMINAL,
   pickPreferredNewWorktreeAgent,
   resolveNewWorktreeAgentSelection,
   type NewWorktreeAgentOption as AgentOption
@@ -278,7 +277,8 @@ function NewWorktreeModalContent({
     selectedAgent: selectedAgentState,
     agentOverridden: agentOverriddenState,
     runtimeSettings,
-    detectedAgentIds
+    detectedAgentIds,
+    catalogSnapshot: agentCatalog
   })
   // Why: agent preference repair is pure render dataflow; doing it here
   // avoids a stale selected-agent commit while preserving user overrides.
@@ -626,7 +626,9 @@ function NewWorktreeModalContent({
         selectedAgent.id !== '__blank__' &&
         !isMobileTuiAgentEnabled(selectedAgent.id, latestRuntimeSettings?.disabledTuiAgents)
       ) {
-        setSelectedAgent(pickPreferredNewWorktreeAgent(latestRuntimeSettings, detectedAgentIds))
+        setSelectedAgent(
+          pickPreferredNewWorktreeAgent(latestRuntimeSettings, detectedAgentIds, agentCatalog)
+        )
         setAgentOverridden(false)
         setError('Selected agent is disabled. Choose an enabled agent before creating.')
         return
@@ -739,16 +741,11 @@ function NewWorktreeModalContent({
     !creating &&
     !sshGate.requiresConnection &&
     (!needsSetupChoice || setupDecisionChoice != null)
-  // Customs appear only when the host publishes a version:1 catalog (the identity-
-  // launch capability signal); the projection returns built-ins for a null/oversize
-  // snapshot, so passing includeCustomAgents unconditionally stays a safe gate flip.
-  const visibleAgentOptions = buildSelectableNewWorktreeAgentOptions({
+  const pickerAgentOptions = buildNewWorktreePickerOptions({
     snapshot: agentCatalog,
-    includeCustomAgents: true,
     detectedAgentIds,
     disabledTuiAgents: runtimeSettings?.disabledTuiAgents
   })
-  const pickerAgentOptions = [...visibleAgentOptions, BLANK_TERMINAL]
   const projectPickerItems = useMemo(() => buildNewWorkspaceProjectOptions(repos), [repos])
   const selectedProjectId = selectedRepo ? getProjectIdentityKey(selectedRepo) : null
   const selectedProject =
