@@ -1122,6 +1122,7 @@ import {
 } from '../agent-launch/agent-launch-host-state'
 import {
   resolveAgentLaunchStartupPlanWithoutAdmission,
+  sanitizeClientAgentLaunchSourceRecord,
   type AgentLaunchSpawnTarget
 } from '../agent-launch/agent-launch-spawn'
 import type {
@@ -24552,7 +24553,74 @@ export class OrcaRuntimeService {
     })
   }
 
-  async createManagedWorktree(args: {
+  async createManagedWorktree(
+    args: Parameters<OrcaRuntimeService['createManagedWorktreeAfterLaunchPrepare']>[0]
+  ): Promise<CreatedWorktreeResult> {
+    if (!this.store) {
+      throw new Error('runtime_unavailable')
+    }
+
+    const repo = await this.resolveRepoSelector(args.repoSelector)
+    const createSettings = this.store.getSettings()
+    const requestedAgent = args.startupAgent ?? args.createdWithAgent
+    const requestedAgentEnabled =
+      requestedAgent !== undefined
+        ? isTuiAgentEnabled(requestedAgent, createSettings.disabledTuiAgents)
+        : false
+    if ((args.startup || args.startupAgent) && requestedAgent && !requestedAgentEnabled) {
+      throw new Error('Selected agent is disabled. Choose an enabled agent before creating.')
+    }
+    if (
+      args.startup &&
+      args.startupDraftPaste &&
+      !isTuiAgentEnabled(args.startupDraftPaste.agent, createSettings.disabledTuiAgents)
+    ) {
+      throw new Error('Selected agent is disabled. Choose an enabled agent before creating.')
+    }
+
+    const agentLaunchPrepared = args.agentLaunch
+      ? await this.prepareWorktreeCreateAgentLaunch(
+          repo,
+          args.agentLaunch,
+          args.agentLaunchClientKind,
+          worktreeCreateRpcLaunchIntent(args.agentLaunchClientKind)
+        )
+      : null
+    if (agentLaunchPrepared && !agentLaunchPrepared.ok) {
+      throw new WorktreeAgentLaunchPreCreateError({
+        ...(agentLaunchPrepared.failure ? { failure: agentLaunchPrepared.failure } : {}),
+        ...(agentLaunchPrepared.requestError
+          ? { requestError: agentLaunchPrepared.requestError }
+          : {})
+      })
+    }
+    const agentLaunchFinish = agentLaunchPrepared?.ok ? agentLaunchPrepared : null
+    let launchReservationReleased = false
+    const releaseLaunchReservation = (): void => {
+      if (launchReservationReleased) {
+        return
+      }
+      launchReservationReleased = true
+      agentLaunchFinish?.release()
+    }
+    const guardedAgentLaunchFinish = agentLaunchFinish
+      ? { ...agentLaunchFinish, release: releaseLaunchReservation }
+      : null
+    try {
+      return await this.createManagedWorktreeAfterLaunchPrepare(
+        args,
+        repo,
+        createSettings,
+        guardedAgentLaunchFinish
+      )
+    } catch (error) {
+      // Stage 1 has no durable owner until the post-prepare body settles.
+      releaseLaunchReservation()
+      throw error
+    }
+  }
+
+  private async createManagedWorktreeAfterLaunchPrepare(args: {
     repoSelector: string
     name: string
     /** True only when `name` came from Orca's creature-name generator; gates retirement so a name
@@ -24612,13 +24680,11 @@ export class OrcaRuntimeService {
       NonNullable<WorktreeStartupLaunch['telemetry']>,
       'launch_source' | 'request_kind'
     >
-  }): Promise<CreatedWorktreeResult> {
-    if (!this.store) {
-      throw new Error('runtime_unavailable')
-    }
-
-    const repo = await this.resolveRepoSelector(args.repoSelector)
-    const createSettings = this.store.getSettings()
+  },
+  repo: Repo,
+  createSettings: ReturnType<RuntimeStore['getSettings']>,
+  agentLaunchFinish: WorktreeCreateAgentLaunchPreparedOk | null
+  ): Promise<CreatedWorktreeResult> {
     const requestedAgent = args.startupAgent ?? args.createdWithAgent
     const requestedAgentEnabled =
       requestedAgent !== undefined
@@ -24634,25 +24700,6 @@ export class OrcaRuntimeService {
     ) {
       throw new Error('Selected agent is disabled. Choose an enabled agent before creating.')
     }
-    // Stage 1 of the two-stage transactional launch: pin identity + reserve
-    // capacity BEFORE git. A pre-git failure throws and creates no worktree.
-    const agentLaunchPrepared = args.agentLaunch
-      ? await this.prepareWorktreeCreateAgentLaunch(
-          repo,
-          args.agentLaunch,
-          args.agentLaunchClientKind,
-          worktreeCreateRpcLaunchIntent(args.agentLaunchClientKind)
-        )
-      : null
-    if (agentLaunchPrepared && !agentLaunchPrepared.ok) {
-      throw new WorktreeAgentLaunchPreCreateError({
-        ...(agentLaunchPrepared.failure ? { failure: agentLaunchPrepared.failure } : {}),
-        ...(agentLaunchPrepared.requestError
-          ? { requestError: agentLaunchPrepared.requestError }
-          : {})
-      })
-    }
-    const agentLaunchFinish = agentLaunchPrepared?.ok ? agentLaunchPrepared : null
     // The host-atomic agentLaunch owns the agent terminal; suppress the legacy
     // client startup path for it entirely.
     const agentStartup =
@@ -28192,6 +28239,7 @@ export class OrcaRuntimeService {
     clientKind: AuthenticatedClientKind,
     intent: LaunchIntent
   ): Promise<WorktreeCreateAgentLaunchPrepared> {
+    request = sanitizeClientAgentLaunchSourceRecord(request)
     const boundary = getHostAgentLaunchBoundary()
     const deps = this.buildWorktreeAgentLaunchDeps(repo)
     const principal: AdmissionPrincipal = clientKind
@@ -28735,7 +28783,16 @@ export class OrcaRuntimeService {
    *  most one kind matches; a still-paired kind is skipped, and a local-host row is
    *  never returned (plan :498 never clears a local reservation). */
   private resolveRevokedRemoteRowOwner(scope: string): DeviceScope | null {
-    const pairedScopes = new Set(this.getPairedDeviceScopesFn?.() ?? [])
+    let pairedScopes: Set<DeviceScope>
+    try {
+      const readPairedScopes = this.getPairedDeviceScopesFn
+      if (!readPairedScopes) {
+        return null
+      }
+      pairedScopes = new Set(readPairedScopes())
+    } catch {
+      return null
+    }
     const boundary = getHostAgentLaunchBoundary()
     for (const kind of REVOCABLE_REMOTE_CLIENT_KINDS) {
       if (pairedScopes.has(kind)) {
@@ -28943,7 +29000,8 @@ export class OrcaRuntimeService {
    *  outcome to its owner record by launch intent. */
   private reconcilePendingAgentLaunches(
     isHostAuthoritative: (hostId: AgentLaunchExecutionHostId) => boolean,
-    filter?: (pending: PendingAgentLaunchSnapshot) => boolean
+    filter?: (pending: PendingAgentLaunchSnapshot) => boolean,
+    relistedTokenPtyIds?: ReadonlyMap<string, string>
   ): void {
     if (!this.store) {
       return
@@ -28962,7 +29020,8 @@ export class OrcaRuntimeService {
             return { ptyId: pty.ptyId, worktreeId: pty.worktreeId }
           }
         }
-        return null
+        const relistedPtyId = relistedTokenPtyIds?.get(launchToken)
+        return relistedPtyId ? { ptyId: relistedPtyId, worktreeId: null } : null
       },
       isHostAuthoritative,
       expectedWorktreeId: (pending) => {
@@ -29818,6 +29877,9 @@ export class OrcaRuntimeService {
     request: AgentLaunchInput,
     clientKind: AuthenticatedClientKind
   ): Promise<WorkspaceAgentLaunchResolution> {
+    if (!('resume' in request) && !('vaultResume' in request)) {
+      request = sanitizeClientAgentLaunchSourceRecord(request)
+    }
     const descriptor = this.buildTerminalAgentLaunchDescriptor(workspace)
     if ('vaultResume' in request) {
       const vault = request.vaultResume
@@ -29832,14 +29894,11 @@ export class OrcaRuntimeService {
       // same row the listing returned; correlation below still uses the actual
       // terminal target from the descriptor.
       const discovered = await this.listAiVaultSessions({ limit: 2000, force: true })
-      const sessions = discovered.sessions.map((session) =>
-        session.executionHostId === vault.entry.executionHostId
-          ? session
-          : restampAiVaultListResult(
-              { sessions: [session], issues: [], scannedAt: discovered.scannedAt },
-              vault.entry.executionHostId
-            ).sessions[0]
+      const sessions = discovered.sessions.some(
+        (session) => session.executionHostId === vault.entry.executionHostId
       )
+        ? discovered.sessions
+        : restampAiVaultListResult(discovered, vault.entry.executionHostId).sessions
       const session = findVaultResumeSession(
         vault.entry,
         sessions.filter((candidate): candidate is NonNullable<typeof candidate> =>
@@ -30798,6 +30857,14 @@ export class OrcaRuntimeService {
           }
           pty.tabId = tabId
           pty.paneKey = paneKey
+        }
+        if (!adoptedStablePane && pty?.launchNotices && agentLaunchReceipt) {
+          await this.commitSuccessfulLaunchNotices(
+            workspace.id,
+            tabId,
+            pty.launchNotices,
+            result.id
+          )
         }
         const handle = pty ? this.issuePtyHandle(pty) : preAllocatedHandle
         if (pty && !adoptedStablePane && launchOpts.deferMobileSessionPublish !== true) {
@@ -35209,6 +35276,7 @@ export class OrcaRuntimeService {
     // SSH relay connections that evidenced a live re-list in this pass, so the
     // reconcile below can speak authoritatively for their execution hosts.
     const relistedConnectionIds = new Set<string>()
+    const relistedTokenPtyIds = new Map<string, string>()
     for (const session of sessions) {
       // The owning inventory positively observed this PTY again; prior lost-contact doubt is stale.
       this.forgetPtyLivenessVerdict(session.id, livenessObservationAtStart)
@@ -35217,6 +35285,9 @@ export class OrcaRuntimeService {
         (typeof connectionId === 'string' ? connectionId : null)
       if (sessionConnectionId) {
         relistedConnectionIds.add(sessionConnectionId)
+      }
+      if (session.launchToken) {
+        relistedTokenPtyIds.set(session.launchToken, session.id)
       }
       const persistedIndexes = getPersistedIndexes(
         sessionConnectionId ? toSshExecutionHostId(sessionConnectionId) : LOCAL_EXECUTION_HOST_ID
@@ -35361,15 +35432,19 @@ export class OrcaRuntimeService {
     this.pruneDisconnectedPtyRecords()
     if (targetWorktreeId === null) {
       const relistedAuthority = hostAuthorityFromRelistedConnections(relistedConnectionIds)
-      this.reconcilePendingAgentLaunches((hostId) => {
-        if (connectionId === undefined) {
-          return relistedAuthority(hostId)
-        }
-        if (connectionId === null) {
-          return hostId === 'local' || hostId.startsWith('wsl:')
-        }
+      this.reconcilePendingAgentLaunches(
+        (hostId) => {
+          if (connectionId === undefined) {
+            return relistedAuthority(hostId)
+          }
+          if (connectionId === null) {
+            return hostId === 'local' || hostId.startsWith('wsl:')
+          }
           return hostId !== 'local' && !hostId.startsWith('wsl:') && relistedAuthority(hostId)
-      })
+        },
+        undefined,
+        relistedTokenPtyIds
+      )
     }
     return {
       livePtyIds: targetWorktreeId ? selectedLivePtyIds : allLivePtyIds,

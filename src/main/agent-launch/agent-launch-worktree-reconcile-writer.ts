@@ -94,6 +94,11 @@ export function reconcileOnePendingAgentLaunch(
   if (!deps.operationStore.getPending(pending.launchToken)) {
     return null
   }
+  // The spawn transaction still owns this token; reconciliation must not race
+  // it into a false absent/spawn-failed settlement.
+  if (deps.operationStore.isSpawnInFlight(pending.launchToken)) {
+    return null
+  }
   const liveness = deps.resolveLiveness(pending)
   const outcome = reconcileAgentLaunchLiveness(toProviderLiveness(liveness))
   const persistence = deps.persistenceFor(pending)

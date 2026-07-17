@@ -5,8 +5,11 @@ import type {
   AutomationUpdateInput
 } from '../../../shared/automations-types'
 import type { PersistedState } from '../../../shared/persisted-state-types'
+import type { TuiAgent } from '../../../shared/types'
 import { normalizeAutomationPrecheck } from '../../../shared/automation-precheck'
 import { nextAutomationOccurrenceAfter } from '../../../shared/automation-schedules'
+import { isBuiltInTuiAgent } from '../../../shared/tui-agent-config'
+import { normalizeAgentCatalog } from '../../../shared/agent-catalog-normalization'
 import type { StoreOwnedPersistedState } from '../loading-store/store-owned-state'
 import {
   getAutomationContextsForRepo,
@@ -27,10 +30,29 @@ export function listAutomations(state: PersistedState): Automation[] {
     .sort((left, right) => left.name.localeCompare(right.name))
 }
 
+function isLaunchableAutomationAgent(state: PersistedState, agentId: TuiAgent): boolean {
+  const catalog = normalizeAgentCatalog({
+    customTuiAgents: state.settings.customTuiAgents,
+    deletedCustomTuiAgents: state.settings.deletedCustomTuiAgents,
+    disabledTuiAgents: state.settings.disabledTuiAgents,
+    defaultTuiAgent: state.settings.defaultTuiAgent
+  }).catalog
+  if (isBuiltInTuiAgent(agentId)) {
+    return !catalog.disabledAgents.has(agentId)
+  }
+  const live = catalog.liveById.get(agentId)
+  return Boolean(live && !catalog.disabledAgents.has(agentId) && !catalog.disabledAgents.has(live.baseAgent))
+}
+
 export function createAutomation(
   operations: AutomationDefinitionOperations,
   input: AutomationCreateInput
 ): Automation {
+  if (!isLaunchableAutomationAgent(operations.state, input.agentId)) {
+    throw new Error(
+      'The selected agent is not available. Choose an enabled agent for this automation.'
+    )
+  }
   const repo = operations.state.repos.find((entry) => entry.id === input.projectId)
   const now = Date.now()
   const executionTargetType = repo?.connectionId ? 'ssh' : 'local'
@@ -100,6 +122,11 @@ export function updateAutomation(
     ...current,
     ...definedUpdates,
     name: updates.name !== undefined ? updates.name.trim() || 'Untitled automation' : current.name,
+    agentId:
+      updates.agentId === current.agentId ||
+      (updates.agentId !== undefined && isLaunchableAutomationAgent(operations.state, updates.agentId))
+        ? (updates.agentId ?? current.agentId)
+        : current.agentId,
     precheck: Object.hasOwn(definedUpdates, 'precheck')
       ? normalizeAutomationPrecheck(definedUpdates.precheck)
       : normalizeAutomationPrecheck(current.precheck),
