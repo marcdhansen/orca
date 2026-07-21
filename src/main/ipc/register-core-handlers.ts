@@ -37,9 +37,10 @@ import { setAgentBrowserBridgeRef, registerBrowserHandlers } from './browser'
 import { setTrustedBrowserRendererWebContentsId } from './browser-renderer-trust'
 import { registerSessionHandlers } from './session'
 import { registerSettingsHandlers } from './settings'
+import { registerAgentCatalogHandlers } from './agent-catalog'
+import { registerDataRecoveryHandlers } from './data-recovery'
 import { registerDiagnosticsHandlers } from './diagnostics'
 import { registerSkillsHandlers } from './skills'
-import { registerAgentCatalogHandlers } from './agent-catalog'
 import { registerWorkspaceSpaceHandlers } from './workspace-space'
 import { registerWorkspacePortHandlers } from './workspace-ports'
 import { registerLocalhostWorktreeLabelHandlers } from './localhost-worktree-labels'
@@ -178,6 +179,7 @@ export function registerCoreHandlers(
   registerSettingsHandlers(store, agentAwakeService)
   registerAgentCatalogHandlers(store)
   registerSkillsHandlers(store, runtime)
+  registerDataRecoveryHandlers(store)
   if (automations) {
     registerAutomationHandlers(store, automations)
   }

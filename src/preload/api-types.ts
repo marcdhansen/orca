@@ -22,6 +22,13 @@ import type { BrowserApi } from './api/browser-api'
 import type { CliApi } from './api/cli-install-api'
 import type { CrashReportsApi, FeedbackApi } from './api/crash-report-api'
 import type { DashboardApi, TerminalPreviewApi } from './api/dashboard-api'
+import type {
+  DataRecoveryMigrationStatus,
+  DataRecoveryOperationResult,
+  RecoveryPointDto,
+  RecoveryPointId,
+  RestoreRecoveryPointMode
+} from '../shared/data-recovery'
 import type { EmulatorApi } from './api/emulator-api'
 import type { EphemeralVmApi } from './api/ephemeral-vm-api'
 import type { ExportApi, FilesystemApi } from './api/filesystem-api'
@@ -149,6 +156,16 @@ export type PreloadApi = {
   agentStatus: AgentStatusApi
   mobile: MobileApi
   speech: SpeechApi
+  /** Desktop-only data recovery; paired web clients do not expose this surface. */
+  dataRecovery?: {
+    migrationStatus: () => Promise<DataRecoveryMigrationStatus>
+    retryAgentCatalogMigration: () => Promise<DataRecoveryOperationResult>
+    listPoints: () => Promise<RecoveryPointDto[]>
+    restore: (args: {
+      id: RecoveryPointId
+      mode: RestoreRecoveryPointMode
+    }) => Promise<DataRecoveryOperationResult>
+  }
 }
 
 export type { ClaudeUsageApi, CodexUsageApi, OpenCodeUsageApi } from './api/agent-usage-api'

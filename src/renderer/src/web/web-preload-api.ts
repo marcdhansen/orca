@@ -32,6 +32,9 @@ import type {
 import type { SearchResult } from '../../../shared/code-search-types'
 import type { DirEntry } from '../../../shared/filesystem-entry-types'
 import type {
+  CreateWorktreeResult,
+  DetectedWorktreeListResult,
+  ForceDeleteWorktreeBranchResult,
   GlobalSettings,
   WorktreeVisibilityDefaults
 } from '../../../shared/global-settings-types'
@@ -161,6 +164,12 @@ import {
   type FeatureInteractionState
 } from '../../../shared/feature-interactions'
 import { normalizeContextualTourIds, type ContextualTourId } from '../../../shared/contextual-tours'
+import { AGENT_LAUNCH_IDENTITY_RUNTIME_CAPABILITY } from '../../../shared/protocol-version'
+import {
+  resolveRemoteWorktreeCreateLaunchParams,
+  type RemoteWorktreeCreateLaunchParams
+} from './worktree-create-launch-compat'
+import type { AgentLaunchSpawnRequest } from '../../../shared/agent-launch-spawn-request'
 import { translate } from '@/i18n/i18n'
 import { translateHostAccessLinkError } from '@/lib/remote-pairing-copy'
 import { getDefaultCreateProjectParent } from '@/components/sidebar/create-project-defaults'
@@ -1865,7 +1874,11 @@ function createWorktreesApi(): NonNullable<Partial<PreloadApi>['worktrees']> {
     listAll: () => listAllRuntimeWorktrees(),
     create: async (args) => {
       invalidateRuntimeWorktreeCaches()
-      const owned = await callRuntimeResultWithOwner<{ worktree: Worktree }>('worktree.create', {
+      const launchParams = await resolveWebWorktreeCreateLaunchParams(args.agentLaunch)
+      // Legacy fallback carries the id in startupAgent; an empty client command
+      // must not ride along or the old host spawns a bare shell instead.
+      const dropEmptyStartupCommand = 'startupAgent' in launchParams && args.startup?.command === ''
+      const owned = await callRuntimeResultWithOwner<CreateWorktreeResult>('worktree.create', {
         repo: args.repoId,
         name: args.name,
         // Absent means user-typed, which is what the host must assume — so send it only when true.
@@ -1891,7 +1904,7 @@ function createWorktreesApi(): NonNullable<Partial<PreloadApi>['worktrees']> {
         pendingFirstAgentMessageRename: args.pendingFirstAgentMessageRename,
         ...(args.startup
           ? {
-              startupCommand: args.startup.command,
+              ...(dropEmptyStartupCommand ? {} : { startupCommand: args.startup.command }),
               ...(args.startup.env ? { startupEnv: args.startup.env } : {}),
               ...(args.startup.launchConfig
                 ? { startupLaunchConfig: args.startup.launchConfig }
@@ -1906,8 +1919,11 @@ function createWorktreesApi(): NonNullable<Partial<PreloadApi>['worktrees']> {
         workspaceStatus: args.workspaceStatus,
         manualOrder: args.manualOrder,
         automationProvenanceRequest: args.automationProvenanceRequest,
-        ...(args.agentLaunch ? { agentLaunch: args.agentLaunch } : {})
+        ...launchParams
       })
+      if (!('worktree' in owned.result)) {
+        return owned.result
+      }
       return {
         ...owned.result,
         worktree: withRuntimeWorktreeOwner(owned.result.worktree, owned.hostId)
@@ -3808,6 +3824,23 @@ async function saveClipboardImageAsTempFileInRuntime(
 
 async function getRemoteRuntimeStatus(): Promise<RuntimeStatus> {
   return callRuntimeResult<RuntimeStatus>('status.get', undefined, 15_000)
+}
+
+async function remoteHostSupportsAgentLaunchIdentity(): Promise<boolean> {
+  try {
+    const status = await getRemoteRuntimeStatus()
+    return status.capabilities?.includes(AGENT_LAUNCH_IDENTITY_RUNTIME_CAPABILITY) === true
+  } catch {
+    // CLI/mobile parity: an unreachable probe reads as unsupported and degrades
+    // to the legacy id path every host still accepts for built-ins.
+    return false
+  }
+}
+
+function resolveWebWorktreeCreateLaunchParams(
+  agentLaunch: AgentLaunchSpawnRequest | undefined
+): Promise<RemoteWorktreeCreateLaunchParams> {
+  return resolveRemoteWorktreeCreateLaunchParams(agentLaunch, remoteHostSupportsAgentLaunchIdentity)
 }
 
 function getClientForEnvironment(environment: StoredWebRuntimeEnvironment): WebRuntimeClient {

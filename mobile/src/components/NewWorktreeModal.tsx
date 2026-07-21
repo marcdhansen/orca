@@ -33,6 +33,7 @@ import { isMobileTuiAgentEnabled } from '../tasks/mobile-tui-agents'
 import type { PersistedTrustedOrcaHooks } from '../../../src/shared/orca-yaml-hook-types'
 import type { Repo as SharedRepo } from '../../../src/shared/repo-types'
 import type { TuiAgent } from '../../../src/shared/tui-agent'
+import { hostAgentCatalogReadOnlyNotice } from '../tasks/mobile-agent-catalog-projection'
 import { hostSupportsAgentLaunchIdentity } from '../session/agent-launch-identity-capability'
 import { buildInteractiveLaunchParams } from './interactive-worktree-launch-params'
 import type { SshConnectionState } from '../../../src/shared/ssh-types'
@@ -1094,6 +1095,7 @@ function NewWorktreeModalContent({
       <PickerListDrawer
         visible={visible && drawerView === 'agent'}
         title="Agent"
+        subtitle={hostAgentCatalogReadOnlyNotice(agentCatalog)}
         items={pickerAgentOptions}
         selectedId={selectedAgent.id}
         onSelect={(agent) => {

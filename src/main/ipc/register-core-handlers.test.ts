@@ -16,6 +16,8 @@ const {
   registerDeveloperPermissionHandlersMock,
   registerComputerUsePermissionHandlersMock,
   registerSettingsHandlersMock,
+  registerAgentCatalogHandlersMock,
+  registerDataRecoveryHandlersMock,
   registerKeybindingHandlersMock,
   registerTelemetryHandlersMock,
   registerDiagnosticsHandlersMock,
@@ -59,7 +61,6 @@ const {
   registerTerminalPreviewHandlersMock,
   registerSpeechHandlersMock,
   registerSkillsHandlersMock,
-  registerAgentCatalogHandlersMock,
   registerWorkspaceSpaceHandlersMock,
   registerWorkspacePortHandlersMock,
   registerLocalhostWorktreeLabelHandlersMock,
@@ -82,6 +83,8 @@ const {
   registerDeveloperPermissionHandlersMock: vi.fn(),
   registerComputerUsePermissionHandlersMock: vi.fn(),
   registerSettingsHandlersMock: vi.fn(),
+  registerAgentCatalogHandlersMock: vi.fn(),
+  registerDataRecoveryHandlersMock: vi.fn(),
   registerKeybindingHandlersMock: vi.fn(),
   registerTelemetryHandlersMock: vi.fn(),
   registerDiagnosticsHandlersMock: vi.fn(),
@@ -125,7 +128,6 @@ const {
   registerTerminalPreviewHandlersMock: vi.fn(),
   registerSpeechHandlersMock: vi.fn(),
   registerSkillsHandlersMock: vi.fn(),
-  registerAgentCatalogHandlersMock: vi.fn(),
   registerWorkspaceSpaceHandlersMock: vi.fn(),
   registerWorkspacePortHandlersMock: vi.fn(),
   registerLocalhostWorktreeLabelHandlersMock: vi.fn(),
@@ -224,12 +226,16 @@ vi.mock('./settings', () => ({
   registerSettingsHandlers: registerSettingsHandlersMock
 }))
 
-vi.mock('./skills', () => ({
-  registerSkillsHandlers: registerSkillsHandlersMock
+vi.mock('./data-recovery', () => ({
+  registerDataRecoveryHandlers: registerDataRecoveryHandlersMock
 }))
 
 vi.mock('./agent-catalog', () => ({
   registerAgentCatalogHandlers: registerAgentCatalogHandlersMock
+}))
+
+vi.mock('./skills', () => ({
+  registerSkillsHandlers: registerSkillsHandlersMock
 }))
 
 vi.mock('./workspace-space', () => ({
@@ -535,7 +541,8 @@ describe('registerCoreHandlers', () => {
     expect(registerTerminalPreviewHandlersMock).toHaveBeenCalledWith(runtime)
     expect(registerSettingsHandlersMock).toHaveBeenCalledWith(store, agentAwakeService)
     expect(registerAgentCatalogHandlersMock).toHaveBeenCalledWith(store)
-    expect(registerSkillsHandlersMock).toHaveBeenCalledWith(store, runtime)
+  expect(registerSkillsHandlersMock).toHaveBeenCalledWith(store, runtime)
+    expect(registerDataRecoveryHandlersMock).toHaveBeenCalledWith(store)
     expect(registerWorkspaceSpaceHandlersMock).toHaveBeenCalledWith(store)
     expect(registerWorkspacePortHandlersMock).toHaveBeenCalledWith(store)
     expect(registerLocalhostWorktreeLabelHandlersMock).toHaveBeenCalledWith(store)

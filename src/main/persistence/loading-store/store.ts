@@ -2652,6 +2652,38 @@ export class Store {
     return this.agentCatalogMigrationError
   }
 
+  /** Absolute path of the live data file; recovery operations key off it. */
+  getDataFilePath(): string {
+    return this.dataFile
+  }
+
+  /** Retry a blocked agent-catalog migration against the current on-disk bytes. */
+  retryAgentCatalogMigration(): { ok: true } | { ok: false; error: string } {
+    if (this.agentCatalogMigrationError === null) {
+      return { ok: true }
+    }
+    let raw: string | null = null
+    try {
+      raw = existsSync(this.dataFile) ? readFileSync(this.dataFile, 'utf-8') : null
+    } catch (error) {
+      const message = `Could not read the data file: ${error instanceof Error ? error.message : String(error)}`
+      this.agentCatalogMigrationError = message
+      return { ok: false, error: message }
+    }
+    const migration = migrateAgentCatalogSchema({
+      settings: this.state.settings,
+      preV1RawContents: raw,
+      createBackup: () => createPinnedPreV1Backup(this.dataFile, raw ?? '')
+    })
+    if (migration.backupError) {
+      this.agentCatalogMigrationError = migration.backupError
+      return { ok: false, error: migration.backupError }
+    }
+    this.agentCatalogMigrationError = null
+    this.updateSettings(migration.settingsPatch)
+    return { ok: true }
+  }
+
   onSettingsChanged(
     listener: (
       updates: Partial<GlobalSettings>,
@@ -3878,6 +3910,11 @@ export class Store {
       clearTimeout(this.writeTimer)
       this.writeTimer = null
     }
+  }
+
+  /** Re-enable writes after a failed recovery-point restore. */
+  unfreezeWrites(): void {
+    this.writesFrozen = false
   }
 
   // Why best-effort: the sidecar is a refetchable cache; a failed write only costs a cold badge paint next launch, never data.
