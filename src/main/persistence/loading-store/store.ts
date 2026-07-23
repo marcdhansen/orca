@@ -358,10 +358,8 @@ import {
 import { hydrateRepo as hydrateRepoOperation } from '../tracking-repos/repo-hydration'
 import { RepoUpdatePersistenceOperations } from '../tracking-repos/repo-update-operations'
 import { ProjectHostSetupPersistenceOperations } from '../tracking-repos/project-host-setup-update'
-import {
-  createPinnedPreV1Backup,
-  migrateAgentCatalogSchema
-} from '../../agent-launch/agent-catalog-schema-migration'
+import { createPinnedPreV1Backup } from '../../agent-launch/agent-catalog-pre-v1-backup'
+import { migrateAgentCatalogSchema } from '../../../shared/agent-catalog-schema-migration'
 
 // Why (issue #1158): keep 5 rolling backups at >=1h spacing so a corrupt/empty write leaves an earlier copy recoverable.
 const BACKUP_COUNT = 5
