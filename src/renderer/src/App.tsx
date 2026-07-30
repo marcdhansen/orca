@@ -6,6 +6,7 @@ import { BrowserWebAuthnAccountDialog } from './components/browser-webauthn-acco
 import { LinkRoutingPreferenceDialogProvider } from './components/link-routing-preference-dialog'
 import { SkillFreshnessNudge } from './components/skills/SkillFreshnessNudge'
 import { DataRecoveryMigrationNotice } from './components/data-recovery/DataRecoveryMigrationNotice'
+import { DataRecoveryPinExitNotice } from './components/data-recovery/DataRecoveryPinExitNotice'
 import PinnedTabCloseDialog from './components/terminal-pane/PinnedTabCloseDialog'
 import RunningTerminalCloseDialog from './components/terminal-pane/RunningTerminalCloseDialog'
 import WorktreeBaseFallbackDialog from './components/WorktreeBaseFallbackDialog'
@@ -101,6 +102,7 @@ function App(): React.JSX.Element {
       <Toaster closeButton toastOptions={{ className: 'font-sans text-sm' }} />
       <SkillFreshnessNudge />
       <DataRecoveryMigrationNotice />
+      <DataRecoveryPinExitNotice />
       <WorktreeBaseFallbackDialog />
       <PinnedTabCloseDialog />
       <RunningTerminalCloseDialog />
