@@ -144,7 +144,6 @@ import {
 import { isMainTerminalSideEffectAuthorityForPty } from './terminal-pane/terminal-side-effect-facts-handler'
 import { appendUniqueOpenFileIds } from './terminal/unsaved-close-queue'
 import { setWindowCloseRequestHandler } from './window-close-request-coordinator'
-import CodexRestartChip from './CodexRestartChip'
 import { AgentLaunchNotices } from './terminal-pane/AgentLaunchNotices'
 import { AgentLaunchRecoveryCardContainer } from './terminal-pane/AgentLaunchRecoveryCardContainer'
 import {
