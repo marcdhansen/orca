@@ -146,7 +146,7 @@ describe('CLI status permission-denied classification', () => {
   })
 
   it('keeps stale_bootstrap when the pid is provably gone', async () => {
-    // Only ESRCH proves death. A guarded endpoint behind a dead pid is a
+    // ESRCH means the pid is absent. A guarded endpoint behind a dead pid is a
     // leftover, so the pre-existing stale_bootstrap answer keeps precedence
     // over the new permission_denied branch.
     const userDataPath = writeGuardedMetadata(4242)

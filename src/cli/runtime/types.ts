@@ -7,15 +7,15 @@ export type {
   RuntimeRpcSuccess
 } from '../../shared/runtime-rpc-envelope'
 
-// Why: the OS rejected the connect on permissions, so the endpoint exists and is
-// guarded rather than absent. Collapsing it into 'runtime_unavailable' tells the
-// user to restart Orca, which recreates the endpoint with the same permissions.
+// Why: the OS denied access to the transport path. Collapsing that into
+// 'runtime_unavailable' tells the user to restart Orca, which recreates the
+// endpoint with the same permissions and cannot clear an ownership or ACL problem.
 export const RUNTIME_PERMISSION_DENIED_CODE = 'runtime_permission_denied'
 
 const PERMISSION_DENIED_SYSCALL_CODES: ReadonlySet<string> = new Set(['EACCES', 'EPERM'])
 
-// Covers both Unix domain sockets and Windows named pipes, which surface a
-// guarded endpoint as EACCES/EPERM on connect.
+// Covers both Unix domain sockets and Windows named pipes, which surface a denied
+// transport path as EACCES/EPERM on connect.
 export function isPermissionDeniedSyscallCode(code: string | undefined): boolean {
   return code !== undefined && PERMISSION_DENIED_SYSCALL_CODES.has(code)
 }

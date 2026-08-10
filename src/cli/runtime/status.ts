@@ -136,9 +136,10 @@ function isProcessRunning(pid: number | null | undefined): boolean {
     process.kill(pid, 0)
     return true
   } catch (error) {
-    // Why: only ESRCH proves the process is gone. EPERM means it exists but is
-    // owned by another user — the sandbox case — and collapsing "can't tell"
-    // into "dead" is what reported a healthy runtime as stale_bootstrap.
+    // Why: EPERM means the process is present but owned by another user — the
+    // sandbox case — so reporting it dead is wrong. ESRCH means absent. Any other
+    // errno is unexpected on a signal-0 probe and is treated conservatively as
+    // absent, matching the behaviour before this branch existed.
     return (error as NodeJS.ErrnoException).code === 'EPERM'
   }
 }
