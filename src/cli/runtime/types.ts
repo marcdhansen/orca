@@ -7,6 +7,19 @@ export type {
   RuntimeRpcSuccess
 } from '../../shared/runtime-rpc-envelope'
 
+// Why: a connect refused on permissions proves the endpoint exists and is guarded.
+// Collapsing it into 'runtime_unavailable' tells the user to restart Orca, which
+// never clears an ownership or ACL problem.
+export const RUNTIME_PERMISSION_DENIED_CODE = 'runtime_permission_denied'
+
+const PERMISSION_DENIED_SYSCALL_CODES: ReadonlySet<string> = new Set(['EACCES', 'EPERM'])
+
+// Covers both Unix domain sockets and Windows named pipes, which surface a
+// guarded endpoint as EACCES/EPERM on connect.
+export function isPermissionDeniedSyscallCode(code: string | undefined): boolean {
+  return code !== undefined && PERMISSION_DENIED_SYSCALL_CODES.has(code)
+}
+
 export class RuntimeClientError extends Error {
   readonly code: string
   // Why: optional structured recovery payload (e.g. did-you-mean suggestions,
@@ -18,6 +31,10 @@ export class RuntimeClientError extends Error {
     this.code = code
     this.data = redactOrchestrationCompatibilitySecrets(data)
   }
+}
+
+export function isRuntimePermissionDeniedError(error: unknown): boolean {
+  return error instanceof RuntimeClientError && error.code === RUNTIME_PERMISSION_DENIED_CODE
 }
 
 export class RuntimeRpcFailureError extends RuntimeClientError {

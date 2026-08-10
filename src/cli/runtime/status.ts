@@ -2,7 +2,11 @@ import type { CliStatusResult, RuntimeStatus } from '../../shared/runtime-types'
 import { findTransport } from '../../shared/runtime-bootstrap'
 import { tryReadMetadata } from './metadata'
 import { sendRequest } from './transport'
-import { RuntimeRpcFailureError, type RuntimeRpcSuccess } from './types'
+import {
+  isRuntimePermissionDeniedError,
+  RuntimeRpcFailureError,
+  type RuntimeRpcSuccess
+} from './types'
 
 export async function getCliStatus(
   userDataPath: string
@@ -56,8 +60,29 @@ export async function getCliStatus(
         state: graphState
       }
     })
-  } catch {
+  } catch (error) {
     const running = isProcessRunning(metadata.pid)
+    // Why: a guarded endpoint and a mid-startup runtime both fail to answer, but
+    // only one of them ever resolves. Reporting 'starting' here left the CLI
+    // advertising progress that could not arrive.
+    if (isRuntimePermissionDeniedError(error)) {
+      return buildCliStatusResponse({
+        app: {
+          running,
+          pid: running ? metadata.pid : null
+        },
+        runtime: {
+          state: 'permission_denied',
+          reachable: false,
+          runtimeId: null
+        },
+        graph: {
+          // Why: 'not_running' would claim the graph stopped, which a live pid
+          // contradicts. We were refused, so it is unreachable, not absent.
+          state: 'unavailable'
+        }
+      })
+    }
     return buildCliStatusResponse({
       app: {
         running,

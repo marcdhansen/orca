@@ -102,6 +102,9 @@ export type CliRuntimeState =
   | 'ready'
   | 'graph_not_ready'
   | 'stale_bootstrap'
+  // Why: the endpoint answered but refused us. Distinct from 'starting' because
+  // no amount of waiting clears an ownership or ACL problem.
+  | 'permission_denied'
 
 export type CliStatusResult = {
   app: {
