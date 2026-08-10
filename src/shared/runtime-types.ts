@@ -102,8 +102,8 @@ export type CliRuntimeState =
   | 'ready'
   | 'graph_not_ready'
   | 'stale_bootstrap'
-  // Why: the endpoint answered but refused us. Distinct from 'starting' because
-  // no amount of waiting clears an ownership or ACL problem.
+  // Why: the OS refused the connection before the runtime ever saw it. Distinct
+  // from 'starting' because no waiting clears an ownership or ACL problem.
   | 'permission_denied'
 
 export type CliStatusResult = {

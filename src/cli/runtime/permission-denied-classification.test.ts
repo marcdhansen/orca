@@ -12,8 +12,11 @@ import { sendRequest } from './transport'
 
 // Why: a real permission-denied connect is not reproducible across platforms —
 // a root CI user bypasses Unix mode bits and Windows guards named pipes by ACL.
-// Faking the connect keeps the classification itself under test everywhere,
-// including Windows, where the named-pipe path is exactly where this bug bites.
+// Faking the connect keeps the classification itself under test everywhere.
+//
+// Scope: this exercises how Node's errno is classified, not the OS enforcement
+// that produces it. It does not prove anything about a real named-pipe DACL or
+// Unix socket mode bits.
 const { nextConnection } = vi.hoisted(() => ({
   nextConnection: { create: null as null | (() => EventEmitter) }
 }))
@@ -34,7 +37,31 @@ vi.mock('node:net', async (importOriginal) => {
 
 afterEach(() => {
   nextConnection.create = null
+  vi.restoreAllMocks()
 })
+
+// The liveness probe is `process.kill(pid, 0)`. Stubbing it is the only portable
+// way to reach the errno branches: a real cross-user pid is not available in CI.
+function stubLivenessProbe(code: 'EPERM' | 'ESRCH'): void {
+  vi.spyOn(process, 'kill').mockImplementation(() => {
+    throw Object.assign(new Error(`kill ${code}`), { code })
+  })
+}
+
+function writeGuardedMetadata(pid: number): string {
+  const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-permission-'))
+  writeFileSync(
+    getRuntimeMetadataPath(userDataPath),
+    JSON.stringify({
+      runtimeId: 'runtime-1',
+      pid,
+      transports: [{ kind: 'unix', endpoint: join(userDataPath, 'runtime.sock') }],
+      authToken: 'token',
+      startedAt: Date.now()
+    })
+  )
+  return userDataPath
+}
 
 // Emits 'error' then 'close', matching Node's real ordering — the close handler
 // must not overwrite the classified error that the error handler already settled.
@@ -84,19 +111,9 @@ describe('runtime transport permission-denied classification', () => {
 
 describe('CLI status permission-denied classification', () => {
   it('does not report a guarded endpoint as starting while the pid is alive', async () => {
-    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-permission-'))
-    writeFileSync(
-      getRuntimeMetadataPath(userDataPath),
-      JSON.stringify({
-        runtimeId: 'runtime-1',
-        // Why: this process is provably alive, which is the exact condition that
-        // drove the old code down the 'starting' branch.
-        pid: process.pid,
-        transports: [{ kind: 'unix', endpoint: join(userDataPath, 'runtime.sock') }],
-        authToken: 'token',
-        startedAt: Date.now()
-      })
-    )
+    // This process is provably alive, which is the exact condition that drove
+    // the old code down the 'starting' branch.
+    const userDataPath = writeGuardedMetadata(process.pid)
     failConnectWith('EACCES')
 
     const status = await getCliStatus(userDataPath)
@@ -111,5 +128,36 @@ describe('CLI status permission-denied classification', () => {
     // A live pid disproves 'not_running'; we were refused, not told it stopped.
     expect(status.result.graph.state).toBe('unavailable')
     expect(status.result.app.running).toBe(true)
+  })
+
+  it('treats an EPERM liveness probe as alive, not as a dead pid', async () => {
+    // The macOS half of this defect: in a sandbox `process.kill(pid, 0)` throws
+    // EPERM for a healthy runtime owned by another user. Reading that as "dead"
+    // reported stale_bootstrap for a process that was running the whole time.
+    const userDataPath = writeGuardedMetadata(4242)
+    stubLivenessProbe('EPERM')
+    failConnectWith('EACCES')
+
+    const status = await getCliStatus(userDataPath)
+
+    expect(status.result.runtime.state).toBe('permission_denied')
+    expect(status.result.runtime.state).not.toBe('stale_bootstrap')
+    expect(status.result.app).toMatchObject({ running: true, pid: 4242 })
+  })
+
+  it('keeps stale_bootstrap when the pid is provably gone', async () => {
+    // Only ESRCH proves death. A guarded endpoint behind a dead pid is a
+    // leftover, so the pre-existing stale_bootstrap answer keeps precedence
+    // over the new permission_denied branch.
+    const userDataPath = writeGuardedMetadata(4242)
+    stubLivenessProbe('ESRCH')
+    failConnectWith('EACCES')
+
+    const status = await getCliStatus(userDataPath)
+
+    expect(status.result.runtime.state).toBe('stale_bootstrap')
+    expect(status.result.runtime.state).not.toBe('permission_denied')
+    expect(status.result.app).toMatchObject({ running: false, pid: null })
+    expect(status.result.graph.state).toBe('not_running')
   })
 })

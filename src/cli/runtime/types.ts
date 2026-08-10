@@ -7,9 +7,9 @@ export type {
   RuntimeRpcSuccess
 } from '../../shared/runtime-rpc-envelope'
 
-// Why: a connect refused on permissions proves the endpoint exists and is guarded.
-// Collapsing it into 'runtime_unavailable' tells the user to restart Orca, which
-// never clears an ownership or ACL problem.
+// Why: the OS rejected the connect on permissions, so the endpoint exists and is
+// guarded rather than absent. Collapsing it into 'runtime_unavailable' tells the
+// user to restart Orca, which recreates the endpoint with the same permissions.
 export const RUNTIME_PERMISSION_DENIED_CODE = 'runtime_permission_denied'
 
 const PERMISSION_DENIED_SYSCALL_CODES: ReadonlySet<string> = new Set(['EACCES', 'EPERM'])
