@@ -5,18 +5,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getRuntimeMetadataPath, type RuntimeMetadata } from '../../shared/runtime-bootstrap'
-// vi.mock below is hoisted above these imports, so both modules load against the
-// faked connection factory.
+// vi.mock is hoisted above these imports, so both load against the faked factory.
 import { getCliStatus } from './status'
 import { sendRequest } from './transport'
 
-// Why: a real permission-denied connect is not reproducible across platforms —
-// a root CI user bypasses Unix mode bits and Windows guards named pipes by ACL.
-// Faking the connect keeps the classification itself under test everywhere.
-//
-// Scope: this exercises how Node's errno is classified, not the OS enforcement
-// that produces it. It does not prove anything about a real named-pipe DACL or
-// Unix socket mode bits.
+// Why: a real permission-denied connect is not portable (root bypasses mode bits;
+// Windows guards pipes by ACL), so the connect is faked. Scope: this covers errno
+// classification, not the OS enforcement behind it — no real DACL is exercised.
 const { nextConnection } = vi.hoisted(() => ({
   nextConnection: { create: null as null | (() => EventEmitter) }
 }))
@@ -131,9 +126,8 @@ describe('CLI status permission-denied classification', () => {
   })
 
   it('treats an EPERM liveness probe as alive, not as a dead pid', async () => {
-    // The macOS half of this defect: in a sandbox `process.kill(pid, 0)` throws
-    // EPERM for a healthy runtime owned by another user. Reading that as "dead"
-    // reported stale_bootstrap for a process that was running the whole time.
+    // In a sandbox `process.kill(pid, 0)` throws EPERM for a healthy runtime owned
+    // by another user; reading that as dead reported stale_bootstrap.
     const userDataPath = writeGuardedMetadata(4242)
     stubLivenessProbe('EPERM')
     failConnectWith('EACCES')
@@ -146,9 +140,8 @@ describe('CLI status permission-denied classification', () => {
   })
 
   it('keeps stale_bootstrap when the pid is provably gone', async () => {
-    // ESRCH means the pid is absent. A guarded endpoint behind a dead pid is a
-    // leftover, so the pre-existing stale_bootstrap answer keeps precedence
-    // over the new permission_denied branch.
+    // ESRCH means absent. A denied endpoint behind a dead pid is a leftover, so
+    // stale_bootstrap keeps precedence over the permission_denied branch.
     const userDataPath = writeGuardedMetadata(4242)
     stubLivenessProbe('ESRCH')
     failConnectWith('EACCES')

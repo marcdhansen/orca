@@ -7,9 +7,8 @@ export type {
   RuntimeRpcSuccess
 } from '../../shared/runtime-rpc-envelope'
 
-// Why: the OS denied access to the transport path. Collapsing that into
-// 'runtime_unavailable' tells the user to restart Orca, which recreates the
-// endpoint with the same permissions and cannot clear an ownership or ACL problem.
+// Why: the OS denied access to the transport path. 'runtime_unavailable' would
+// tell the user to restart Orca, which recreates it with the same permissions.
 export const RUNTIME_PERMISSION_DENIED_CODE = 'runtime_permission_denied'
 
 const PERMISSION_DENIED_SYSCALL_CODES: ReadonlySet<string> = new Set(['EACCES', 'EPERM'])

@@ -62,13 +62,9 @@ export async function getCliStatus(
     })
   } catch (error) {
     const running = isProcessRunning(metadata.pid)
-    // Why: a guarded endpoint and a mid-startup runtime both fail to answer, but
-    // only one of them ever resolves. Reporting 'starting' here left the CLI
-    // advertising progress that could not arrive.
-    //
-    // Gated on liveness: a permission-denied connect against a pid that is
-    // provably gone is a leftover endpoint, so the stale_bootstrap answer below
-    // stays correct and keeps precedence.
+    // Why: waiting never clears a permission problem, so this must not report
+    // 'starting'. Gated on liveness — a dead pid means a leftover endpoint, which
+    // the stale_bootstrap fallback below already describes correctly.
     if (running && isRuntimePermissionDeniedError(error)) {
       return buildCliStatusResponse({
         app: {
@@ -136,10 +132,8 @@ function isProcessRunning(pid: number | null | undefined): boolean {
     process.kill(pid, 0)
     return true
   } catch (error) {
-    // Why: EPERM means the process is present but owned by another user — the
-    // sandbox case — so reporting it dead is wrong. ESRCH means absent. Any other
-    // errno is unexpected on a signal-0 probe and is treated conservatively as
-    // absent, matching the behaviour before this branch existed.
+    // Why: EPERM means the process exists but is inaccessible, not dead. Any
+    // other errno, ESRCH included, is treated as absent.
     return (error as NodeJS.ErrnoException).code === 'EPERM'
   }
 }
