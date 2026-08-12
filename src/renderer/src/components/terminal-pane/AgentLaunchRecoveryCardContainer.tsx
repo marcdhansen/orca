@@ -97,7 +97,10 @@ export function AgentLaunchRecoveryCardContainer({
         // Forget cannot stop a possibly-live remote process (plan :498), so it is
         // gated behind an explicit destructive confirmation carrying that warning.
         const confirmed = await confirm(
-          siblingCount > 0
+          // A blank host would render "…stranded launches on ." in a destructive dialog.
+          // The preflight only returns an empty name for a local anchor, which is
+          // contractually count:0 — degrade to the plain confirmation if that ever drifts.
+          siblingCount > 0 && siblingHostName !== ''
             ? {
                 ...forgetLaunchConfirmation(),
                 optIn: {

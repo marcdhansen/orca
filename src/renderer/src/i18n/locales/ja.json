@@ -2805,7 +2805,7 @@
                   "f62b40e2c7": "コピーするターミナルコンテキストがありません",
                   "373a3103e7": "コンテキストをコピーしました",
                   "3fc568a49d": "コンテキストのコピーに失敗しました。",
-                  "customForkUnavailable": "カスタムエージェントではフォークをまだ利用できません"
+                  "customForkUnavailable": "カスタム Agent ではフォークをまだ利用できません"
                 }
               }
             },
@@ -9733,21 +9733,21 @@
           "notice": "Orca Relay はベータ版です。"
         },
         "AgentCatalogList": {
-          "searchPlaceholder": "名前、ハーネス、コマンドでエージェントを検索…",
-          "searchLabel": "エージェントを検索",
-          "noMatch": "検索条件に一致するエージェントがありません。",
-          "listLabel": "エージェント"
+          "searchPlaceholder": "名前、ハーネス、コマンドで Agent を検索…",
+          "searchLabel": "Agent を検索",
+          "noMatch": "検索条件に一致する Agent がありません。",
+          "listLabel": "Agent"
         },
         "AgentCatalogManager": {
-          "title": "エージェント",
+          "title": "Agent",
           "refreshing": "更新中…",
           "refresh": "更新",
-          "newAgent": "新しいエージェント",
-          "zeroCustomHelper": "組み込みエージェントを複製するか、カスタムエージェントを作成して、別の引数や環境を保存できます。"
+          "newAgent": "新規 Agent",
+          "zeroCustomHelper": "組み込み Agent を複製するか、カスタム Agent を作成して、別の引数や環境を保存できます。"
         },
         "AgentCatalogRowView": {
           "enableSwitch": "{{agent}} を有効にする",
-          "repairFallbackLabel": "カスタムエージェント",
+          "repairFallbackLabel": "カスタム Agent",
           "repairHint": "起動する前に、この定義を修復する必要があります。",
           "repair": "修復",
           "deleted": "削除済み",
@@ -9755,12 +9755,12 @@
           "reviewReferences": "参照を確認"
         },
         "AgentCatalogSection": {
-          "loading": "エージェントを読み込み中…",
-          "stagedRepair": "エージェントの修復はまだ利用できません。",
-          "defaultTitle": "デフォルトエージェント",
-          "nullDefaultAttention": "デフォルトのエージェントを選択してください。選択するまで、対話的な起動は開始できず、選択を求められます。",
-          "migrationBlockedTitle": "エージェント設定は一時的に読み取り専用です",
-          "migrationBlockedDescription": "Orca は既存のエージェント設定を更新する前にバックアップを作成できなかったため、データを保護するために変更がブロックされています。以下の問題を解決してから、もう一度お試しください。",
+          "loading": "Agent を読み込み中…",
+          "stagedRepair": "Agent の修復はまだ利用できません。",
+          "defaultTitle": "デフォルト Agent",
+          "nullDefaultAttention": "デフォルトの Agent を選択してください。選択するまで、対話的な起動は開始できず、選択を求められます。",
+          "migrationBlockedTitle": "Agent 設定は一時的に読み取り専用です",
+          "migrationBlockedDescription": "Orca は既存の Agent 設定を更新する前にバックアップを作成できなかったため、データを保護するために変更がブロックされています。以下の問題を解決してから、もう一度お試しください。",
           "unavailable": "Custom agents are managed on the desktop host."
         },
         "AgentCatalogStatusBadge": {
@@ -9773,15 +9773,15 @@
           "repairRequired": "修復が必要"
         },
         "AgentDefaultCombobox": {
-          "searchPlaceholder": "エージェントを検索...",
-          "noMatch": "検索条件に一致するエージェントがありません。",
+          "searchPlaceholder": "Agent を検索…",
+          "noMatch": "検索条件に一致する Agent がありません。",
           "auto": "自動",
           "blank": "空のターミナル",
-          "autoHint": "自動モードはカスタムエージェントを選択しません。",
-          "staleWarning": "このデフォルトは利用できません。別のエージェントを選択するまで、対話的な起動は標準のベースエージェントコマンドを使用します。",
-          "unsetPlaceholder": "デフォルトエージェントを選択",
-          "listLabel": "デフォルトエージェントの選択肢",
-          "repairFallbackLabel": "カスタムエージェント"
+          "autoHint": "自動モードはカスタム Agent を選択しません。",
+          "staleWarning": "このデフォルトは利用できません。別の Agent を選択するまで、対話的な起動は標準のベース Agent コマンドを使用します。",
+          "unsetPlaceholder": "デフォルト Agent を選択",
+          "listLabel": "デフォルト Agent の選択肢",
+          "repairFallbackLabel": "カスタム Agent"
         },
         "BuiltInLaunchSettingsDialog": {
           "reset": "リセット",
@@ -9792,15 +9792,15 @@
         },
         "BuiltInDisableDialog": {
           "title": "{{base}} を無効にしますか?",
-          "consequences": "{{base}} でのすべての新規起動（そのカスタムエージェントを含む）は、再度有効にするまでブロックされ、そのスナップショットの再開もブロックされます。",
-          "derivatives": "これを基にした有効なカスタムエージェント {{count}} 件",
-          "references": "保存済みの項目 {{count}} 件で使用されています（そのカスタムエージェントを含む）",
-          "referencesAtLeast": "少なくとも保存済みの項目 {{count}} 件で使用されています（そのカスタムエージェントを含む）",
+          "consequences": "{{base}} でのすべての新規起動（そのカスタム Agent を含む）は、再度有効にするまでブロックされ、そのスナップショットの再開もブロックされます。",
+          "derivatives": "これを基にした有効なカスタム Agent {{count}} 件",
+          "references": "保存済みの項目 {{count}} 件で使用されています（そのカスタム Agent を含む）",
+          "referencesAtLeast": "少なくとも保存済みの項目 {{count}} 件で使用されています（そのカスタム Agent を含む）",
           "sessions": "再開可能なセッション {{count}} 件",
           "sessionsAtLeast": "少なくとも再開可能なセッション {{count}} 件",
           "conflict": "これが開いている間に設定が変更されました。上記の件数は更新されています。無効にするにはもう一度確認してください。",
           "error": "このエージェントを無効にできませんでした。設定を開き直して、もう一度お試しください。",
-          "confirm": "エージェントを無効にする"
+          "confirm": "Agent を無効にする"
         },
         "CustomAgentEditorDialog": {
           "fieldLabelArguments": "引数",
@@ -9812,19 +9812,19 @@
           "baseChoosePlaceholder": "ベースエージェントを選択",
           "baseSearchPlaceholder": "ベースエージェントを検索...",
           "baseNoMatch": "検索条件に一致するベースエージェントがありません。",
-          "duplicateNote": "これは元のエージェントの設定を新しいエージェントにコピーします。コピーではペア起動の環境共有が無効になります。",
+          "duplicateNote": "これは元の Agent の設定を新規 Agent にコピーします。コピーではペア起動の環境共有が無効になります。",
           "syncEnvLabel": "ペアリングされたデバイスの起動でこれらの環境値を使用できるようにする",
           "syncEnvDescription": "Orca はこれらの値を設定としてペアリングされたデバイスに送信しません。起動されたプロセスはこれらの値にアクセスでき、ターミナルに表示する可能性があります。",
-          "pairedVisibilityWarning": "エージェント名、実行ファイル、引数はペアリングされたデバイスから見えます。これらに機密情報を含めないでください。",
-          "titleNew": "新しいカスタムエージェント",
-          "titleEdit": "カスタムエージェントを編集",
-          "titleDuplicate": "エージェントを複製",
+          "pairedVisibilityWarning": "Agent 名、実行ファイル、引数はペアリングされたデバイスから見えます。これらに機密情報を含めないでください。",
+          "titleNew": "新規カスタム Agent",
+          "titleEdit": "カスタム Agent を編集",
+          "titleDuplicate": "Agent を複製",
           "descriptionDuplicate": "新しい名前でコピーを作成します。",
           "descriptionCreateEdit": "{{harness}} エージェント用に別の引数と環境を保存します。",
           "fieldLabelEnv": "環境変数",
           "envSizeMeter": "{{max}} バイト中 {{bytes}} バイト",
           "envPrecedenceHint": "ここで設定した変数は、ベースエージェントの既定の環境より優先されます。",
-          "envManagedAccountHint": "ここで指定した明示的なプロバイダー認証やホームディレクトリの値（CODEX_HOME を含む）は、このエージェントの起動で選択された管理対象アカウントより優先されます。Orca はベースエージェントに必要なコンパニオンとフックの状態を引き続き設定します。",
+          "envManagedAccountHint": "ここで指定した明示的なプロバイダー認証やホームディレクトリの値（CODEX_HOME を含む）は、この Agent の起動で選択された管理対象アカウントより優先されます。Orca はベース Agent に必要なコンパニオンとフックの状態を引き続き設定します。",
           "envAdd": "変数を追加",
           "envAtCap": "変数は最大 64 個、合計 16 KiB まで追加できます。",
           "envKeyPlaceholder": "名前",
@@ -9837,12 +9837,12 @@
           "errorSummaryHeading": "保存する前に、次の項目を修正してください:",
           "fieldLabelName": "名前",
           "fieldLabelBase": "ベースエージェント",
-          "baseImmutable": "ベースエージェントは作成後に変更できません。別のエージェントを使うには、新しいエージェントを作成してください。",
+          "baseImmutable": "ベース Agent は作成後に変更できません。別の Agent を使うには、新しい Agent を作成してください。",
           "baseReadOnlyLabel": "ベースエージェント（読み取り専用）",
           "fieldLabelExecutable": "実行ファイル",
           "executableHelp": "1 つの実行ファイルへのパス（省略可）。コマンドの一覧やパイプラインはクイックコマンドに設定してください。",
           "executablePlaceholder": "/usr/local/bin/my-agent",
-          "labelEmpty": "このエージェントの名前を入力してください。",
+          "labelEmpty": "この Agent の名前を入力してください。",
           "labelBounds": "80 文字以内で入力してください。",
           "commandEmpty": "有効な実行ファイルのパスを入力するか、空のままにしてください。",
           "commandBounds": "4096 文字以内で入力してください。",
@@ -9860,28 +9860,28 @@
           "envControlChar": "値には改行やヌル文字を含めることはできません。",
           "envTotalBounds": "環境変数が 16 KiB の上限を超えています。",
           "invalidValue": "この値は無効です。",
-          "labelReservedBuiltIn": "その名前は組み込みの {{harness}} エージェント用に予約されています。",
+          "labelReservedBuiltIn": "その名前は組み込みの {{harness}} Agent 用に予約されています。",
           "labelInUse": "その名前はすでに使用されています。別の名前を選択してください。",
           "revisionConflict": "編集中にこの設定が変更されました。変更内容を確認して、もう一度お試しください。",
           "payloadTooLarge": "この構成は大きすぎて保存できません。引数または環境変数をいくつか削除してください。",
           "reloadAndRetry": "設定を再読み込みして、もう一度お試しください。",
-          "editorTooLarge": "このエージェントは構成が多すぎて、ここでは編集できません。デスクトップホストで減らしてください。",
-          "titleRepairReplace": "破損したエージェントを置き換え",
-          "descriptionRepairEdit": "この {{harness}} エージェントを再び起動できるようにするには、以下の無効な値を修正してください。",
-          "descriptionRepairReplace": "破損したエージェントを置き換えるために新しいエージェントを保存します。保存済みの参照は新しいエージェントに再バインドされません。"
+          "editorTooLarge": "この Agent は構成が多すぎて、ここでは編集できません。デスクトップホストで減らしてください。",
+          "titleRepairReplace": "破損した Agent を置き換え",
+          "descriptionRepairEdit": "この {{harness}} Agent を再び起動できるようにするには、以下の無効な値を修正してください。",
+          "descriptionRepairReplace": "破損した Agent を置き換えるために新規 Agent を保存します。保存済みの参照は新規 Agent に再バインドされません。"
         },
         "CustomAgentDeleteDialog": {
           "defaultBaseLabel": "デフォルトを {{base}} に設定",
           "defaultBaseDescription": "{{base}} 独自のコマンド、引数、環境を使用します。",
           "defaultAutoLabel": "デフォルトを自動に設定",
-          "defaultAutoDescription": "Orca が起動時にインストール済みのエージェントを選択します。",
+          "defaultAutoDescription": "Orca が起動時にインストール済みの Agent を選択します。",
           "defaultKeepLabel": "標準の {{base}} へのフォールバックを維持",
           "defaultKeepDescription": "カスタム設定なしで、プレーンな {{base}} コマンドを起動します。",
           "defaultClearLabel": "デフォルトをクリア",
           "defaultClearDescription": "設定で選択を求められます。",
-          "defaultChoiceLabel": "デフォルトエージェントをどうしますか?",
+          "defaultChoiceLabel": "デフォルト Agent をどうしますか?",
           "recommendedBadge": "推奨",
-          "error": "このエージェントを削除できませんでした。設定を開き直して、もう一度お試しください。",
+          "error": "この Agent を削除できませんでした。設定を開き直して、もう一度お試しください。",
           "title": "{{label}} を削除しますか?",
           "permanent": "この操作は元に戻せません。カスタム起動設定は完全に失われます。",
           "consequenceRunning": "開いているターミナルは実行され続けます。",
@@ -9891,15 +9891,15 @@
           "usedByAtLeast": "少なくとも保存済みの項目 {{count}} 件で使用されています",
           "usedBy": "保存済みの項目 {{count}} 件で使用されています",
           "reviewReferences": "参照を確認",
-          "defaultHeading": "このエージェントは現在のデフォルトです",
+          "defaultHeading": "この Agent は現在のデフォルトです",
           "availabilityNote": "可用性は起動時に確認されるため、再割り当て先が必ずインストールされているとは限りません。",
-          "confirm": "エージェントを削除"
+          "confirm": "Agent を削除"
         },
         "CustomAgentReferenceDialog": {
           "title": "{{label}} への参照",
-          "deletedIntro": "このエージェントは削除されていますが、これらの保存済みの項目は名前でこれを参照し続けています。すべての参照が解放されるまで、名前は予約されたままになります。削除を元に戻すことはできません。引数と環境は失われています。",
-          "liveIntro": "これらの保存済みの項目はこのエージェントを参照しています。削除する前に、使用箇所を確認してください。",
-          "ownerDefault": "デフォルトエージェント",
+          "deletedIntro": "この Agent は削除されていますが、これらの保存済みの項目は名前でこれを参照し続けています。すべての参照が解放されるまで、名前は予約されたままになります。削除を元に戻すことはできません。引数と環境は失われています。",
+          "liveIntro": "これらの保存済みの項目はこの Agent を参照しています。削除する前に、使用箇所を確認してください。",
+          "ownerDefault": "デフォルト Agent",
           "ownerQuickCommand": "クイックコマンド",
           "ownerCommitMessage": "Commit メッセージ",
           "ownerSourceControl": "ソース管理アクション",
@@ -9911,26 +9911,26 @@
           "rebindableHeading": "名前を解放できる",
           "removableHeading": "削除可能なレコード",
           "retainedHeading": "まだ解放できない",
-          "rebindableHint": "各項目を開いて別のエージェントを選択すると、名前が解放されます。",
+          "rebindableHint": "各項目を開いて別の Agent を選択すると、名前が解放されます。",
           "removableHint": "これらは、所属するレコードを削除するとクリアされます。",
           "retainedHint": "これらは終了または期限切れになるまで名前を保持します。それまでは名前が予約されます。",
           "countUnavailable": "件数を利用できません",
           "loading": "参照を読み込み中…",
           "unavailable": "参照を読み込めませんでした。設定を開き直して、もう一度お試しください。",
-          "empty": "このエージェントを参照している保存済みの項目はありません。",
+          "empty": "この Agent を参照している保存済みの項目はありません。",
           "close": "閉じる"
         },
         "CustomAgentDisableDialog": {
           "title": "{{label}} を無効にしますか?",
           "usedBy": "保存済みの項目 {{count}} 件で使用されています。",
           "usedByAtLeast": "少なくとも保存済みの項目 {{count}} 件で使用されています。",
-          "consequenceAttended": "新しい対話的な起動は標準のベースエージェントを使用し、通知を表示します。",
+          "consequenceAttended": "新規対話的な起動は標準のベース Agent を使用し、通知を表示します。",
           "consequenceUnattended": "再割り当てされるまで、オートメーション、バックグラウンド、オーケストレーションは失敗します。",
           "consequenceResumes": "セッションの再開は引き続き機能します。",
           "consequenceReversible": "いつでも再度有効にできます。",
           "conflict": "これが開いている間に設定が変更されました。上記の件数は更新されています。無効にするにはもう一度確認してください。",
-          "error": "このエージェントを無効にできませんでした。設定を開き直して、もう一度お試しください。",
-          "confirm": "エージェントを無効にする"
+          "error": "この Agent を無効にできませんでした。設定を開き直して、もう一度お試しください。",
+          "confirm": "Agent を無効にする"
         },
         "CustomAgentRowActions": {
           "trigger": "{{agent}} の操作",
@@ -9940,27 +9940,27 @@
           "delete": "削除"
         },
         "CustomAgentRepairDialog": {
-          "fallbackLabel": "このカスタムエージェント",
+          "fallbackLabel": "このカスタム Agent",
           "discardError": "この行を破棄できませんでした。設定を開き直して、もう一度お試しください。",
           "title": "{{label}} を修復",
-          "description": "この定義は破損しており、その場では編集できません。新しいエージェントに置き換えるか、破棄してください。",
-          "referencesNote": "保存済みの参照は古いエージェントを指し続けます。置き換え先には再バインドされません。どちらの操作も元に戻せません。",
-          "replaceAsNew": "新しいエージェントとして置き換え",
+          "description": "この定義は破損しており、その場では編集できません。新規 Agent に置き換えるか、破棄してください。",
+          "referencesNote": "保存済みの参照は古い Agent を指し続けます。置き換え先には再バインドされません。どちらの操作も元に戻せません。",
+          "replaceAsNew": "新規 Agent として置き換え",
           "discard": "破損した行を破棄"
         },
         "CustomAgentDuplicateRepairDialog": {
-          "mutationError": "これらのエージェントを解決できませんでした。設定を開き直して、もう一度お試しください。",
-          "title": "重複するエージェントを解決",
-          "description": "これらのエージェントは 1 つの保存済み ID を共有しています。既存の参照のために残す 1 つを選び、それ以外は置き換えるか破棄してください。これは一度にまとめて適用されます。",
-          "referencesNote": "置き換えられたエージェントは新しい ID を取得します。破棄されたエージェントは削除されます。保存済みの参照は、残したエージェントに対してのみ機能し続けます。",
-          "confirm": "エージェントを解決",
-          "fallbackLabel": "カスタムエージェント",
+          "mutationError": "これらの Agent を解決できませんでした。設定を開き直して、もう一度お試しください。",
+          "title": "重複する Agent を解決",
+          "description": "これらの Agent は 1 つの保存済み ID を共有しています。既存の参照のために残す 1 つを選び、それ以外は置き換えるか破棄してください。これは一度にまとめて適用されます。",
+          "referencesNote": "置き換えられた Agent は新規 ID を取得します。破棄された Agent は削除されます。保存済みの参照は、残した Agent に対してのみ機能し続けます。",
+          "confirm": "Agent を解決",
+          "fallbackLabel": "カスタム Agent",
           "keep": "既存の参照のために残す",
           "replace": "新規として置き換え",
           "discard": "破棄",
           "tooLargeNote": "この行は大きすぎて、ここでは保持も置き換えもできません。破棄するか、デスクトップホストで縮小してください。",
-          "draftUnavailableError": "これらのエージェントの 1 つが大きすぎて、ここでは保持も置き換えもできません。破棄するか、デスクトップホストで縮小してください。",
-          "incompleteError": "すべてのエージェントに操作を選択してください。残せるのは最大 1 つです。"
+          "draftUnavailableError": "これらの Agent の 1 つが大きすぎて、ここでは保持も置き換えもできません。破棄するか、デスクトップホストで縮小してください。",
+          "incompleteError": "すべての Agent に操作を選択してください。残せるのは最大 1 つです。"
         },
         "EditorFontFamilySetting": {
           "title": "エディターフォント",
@@ -10903,7 +10903,7 @@
             "808cfe0a3b": "このリポジトリのみに保存",
             "994cddd1f7": "保存しないでください",
             "38b899cc02": "すべてのリポジトリ",
-            "saveBeforeStartFailed": "エージェント設定を保存できなかったため、エージェントは起動されませんでした。"
+            "saveBeforeStartFailed": "Agent 設定を保存できなかったため、Agent は起動されませんでした。"
           },
           "SourceControlAgentActionDialogForm": {
             "1bc0bdbb5e": "起動：",
@@ -14187,9 +14187,9 @@
           "48c6a5a9b4": "Agent を検索…",
           "9c6b59fe58": "デフォルトとして設定",
           "1b0d6965fa": "現在のデフォルト",
-          "listLabel": "エージェント",
-          "unavailableAgent": "利用できないエージェント",
-          "staleWarning": "このエージェントは利用できません。別のエージェントを選択してください。選択しない場合、起動は空のターミナルを使用します。"
+          "listLabel": "Agent",
+          "unavailableAgent": "利用できない Agent",
+          "staleWarning": "この Agent は利用できません。別の Agent を選択してください。選択しない場合、起動は空のターミナルを使用します。"
         },
         "AgentSettingsDialog": {
           "50cdb57c03": "AI Agent を管理し、デフォルトを設定し、コマンドをカスタマイズします。",
@@ -14532,27 +14532,27 @@
         }
       },
       "AgentLaunchNotices": {
-        "disabledFallback": "{{value0}} は無効です。カスタム実行ファイル、カスタム引数、カスタムエージェント環境なしで標準の {{value1}} を起動しました。",
-        "missingFallback": "{{value0}} は削除されました。カスタム実行ファイル、カスタム引数、カスタムエージェント環境なしで標準の {{value1}} を起動しました。",
+        "disabledFallback": "{{value0}} は無効です。カスタム実行ファイル、カスタム引数、カスタム Agent 環境なしで標準の {{value1}} を起動しました。",
+        "missingFallback": "{{value0}} は削除されました。カスタム実行ファイル、カスタム引数、カスタム Agent 環境なしで標準の {{value1}} を起動しました。",
         "envWithheld": "この起動では {{value0}} のすべての環境値は使用されませんでした。ペア起動の環境はデスクトップホストで管理してください。",
         "snapshotChanged": "このセッションの開始時にキャプチャされた設定で再開しました。",
         "vaultOriginalConfigUnavailable": "元の起動設定を利用できませんでした。現在の {{value0}} 設定で再開しました。",
         "dismiss": "閉じる"
       },
       "AgentLaunchRecoveryCard": {
-        "title": "このワークスペースのエージェントを開始できませんでした。",
+        "title": "このワークスペースの Agent を開始できませんでした。",
         "retry": "再試行",
         "retryCurrentSettings": "現在の設定で再試行",
         "launchCurrentSettings": "現在の設定で起動",
-        "chooseAgent": "エージェントを選択",
-        "editAgentSettings": "エージェント設定を編集",
+        "chooseAgent": "Agent を選択",
+        "editAgentSettings": "Agent 設定を編集",
         "repairOnHost": "デスクトップホストで修復",
         "reconnectSecurely": "安全に再接続",
         "reconnect": "再接続",
         "recoverCapacity": "起動容量を回復…",
         "openTerminal": "ターミナルを開く",
         "forgetLaunch": "起動を破棄…",
-        "manageAgents": "エージェントを管理"
+        "manageAgents": "Agent を管理"
       },
       "dataRecovery": {
         "pointAgentCatalogPreV1Title": "Before the custom-agents update (agent catalog v1)",
@@ -14949,33 +14949,33 @@
   },
   "agentLaunch": {
     "failure": {
-      "unknownAgent": "そのエージェントは存在しなくなりました。別のエージェントを選んでもう一度お試しください。",
-      "noAgentSelected": "起動する前にエージェントを選択してください。",
-      "needsRepair": "このエージェントの設定が未完了です。設定で構成を完了してから、もう一度お試しください。",
-      "customDisabled": "このエージェントは無効になっています。起動するには設定で有効にしてください。",
-      "configurationChangedPostCreate": "このワークスペースの作成中にエージェント設定が変更されました。現在の設定で起動するには再試行するか、別のエージェントを選択してください。",
-      "configurationChangedPreSpawn": "起動前にエージェント設定が変更されました。現在の設定で再試行するか、別のエージェントを選択してください。",
-      "baseDisabled": "ベースのエージェントが無効になっています。起動するには設定で有効にしてください。",
-      "baseUnavailable": "ベースのエージェントはこのホストで利用できません。",
+      "unknownAgent": "その Agent は存在しなくなりました。別の Agent を選んでもう一度お試しください。",
+      "noAgentSelected": "起動する前に Agent を選択してください。",
+      "needsRepair": "この Agent の設定が未完了です。設定で構成を完了してから、もう一度お試しください。",
+      "customDisabled": "この Agent は無効になっています。起動するには設定で有効にしてください。",
+      "configurationChangedPostCreate": "このワークスペースの作成中に Agent 設定が変更されました。現在の設定で起動するには再試行するか、別の Agent を選択してください。",
+      "configurationChangedPreSpawn": "起動前に Agent 設定が変更されました。現在の設定で再試行するか、別の Agent を選択してください。",
+      "baseDisabled": "ベースの Agent が無効になっています。起動するには設定で有効にしてください。",
+      "baseUnavailable": "ベースの Agent はこのホストで利用できません。",
       "missingVariable": "この起動のワークスペースパスを解決できませんでした。",
       "missingTargetHome": "ターゲットホストのホームディレクトリを解決できませんでした。",
-      "invalidCommandOverride": "このエージェントのコマンドの上書きが無効です。設定で修正してください。",
-      "invalidArgs": "このエージェントの起動引数が無効です。設定で修正してください。",
-      "invalidEnv": "このエージェントの起動環境が無効です。設定で修正してください。",
-      "secureEnvUnavailable": "このエージェントの環境をリモートホストに安全に送信できません。",
-      "commandTooLong": "起動コマンドが長すぎて実行できません。エージェントの引数またはプロンプトを短くしてください。",
-      "invalidSnapshot": "このエージェントの保存された起動情報は無効になりました。",
-      "trustPreflightFailed": "このエージェントのワークスペースの信頼を確認できませんでした。もう一度お試しください。",
-      "spawnFailed": "エージェントを起動できませんでした。もう一度お試しください。",
+      "invalidCommandOverride": "この Agent のコマンドの上書きが無効です。設定で修正してください。",
+      "invalidArgs": "この Agent の起動引数が無効です。設定で修正してください。",
+      "invalidEnv": "この Agent の起動環境が無効です。設定で修正してください。",
+      "secureEnvUnavailable": "この Agent の環境をリモートホストに安全に送信できません。",
+      "commandTooLong": "起動コマンドが長すぎて実行できません。Agent の引数またはプロンプトを短くしてください。",
+      "invalidSnapshot": "この Agent の保存された起動情報は無効になりました。",
+      "trustPreflightFailed": "この Agent のワークスペースの信頼を確認できませんでした。もう一度お試しください。",
+      "spawnFailed": "Agent を起動できませんでした。もう一度お試しください。",
       "stateUnknown": "起動の状態が不明です。再試行する前にターミナルを確認してください。",
-      "capacityExceeded": "このホストで保留中のエージェント起動が多すぎます。取り残された起動を再接続するか解除してから、もう一度お試しください。"
+      "capacityExceeded": "このホストで保留中の Agent 起動が多すぎます。取り残された起動を再接続するか解除してから、もう一度お試しください。"
     },
     "unattendedFailure": {
       "title": {
-        "automation": "オートメーションのエージェントを起動できませんでした。",
-        "orchestration": "タスクのエージェントを起動できませんでした。",
-        "background": "バックグラウンドエージェントを起動できませんでした。",
-        "generic": "エージェントの起動が完了しませんでした。"
+        "automation": "オートメーションの Agent を起動できませんでした。",
+        "orchestration": "タスクの Agent を起動できませんでした。",
+        "background": "バックグラウンド Agent を起動できませんでした。",
+        "generic": "Agent の起動が完了しませんでした。"
       },
       "forgotten": "この起動は破棄されたため、再実行されません。",
       "rowBadge": {
@@ -14998,7 +14998,7 @@
     },
     "capacity": {
       "title": "起動キャパシティの回復",
-      "description": "これらのエージェント起動はこのホストで保留中です。ワークスペースを開いて再接続または解決してから、もう一度起動してください。",
+      "description": "これらの Agent 起動はこのホストで保留中です。ワークスペースを開いて再接続または解決してから、もう一度起動してください。",
       "loadFailed": "保留中の起動を読み込めませんでした。閉じてから開き直して再試行してください。",
       "loading": "保留中の起動を読み込んでいます…",
       "empty": "起動キャパシティは現在空いています。このホストで保留中の起動はありません。",

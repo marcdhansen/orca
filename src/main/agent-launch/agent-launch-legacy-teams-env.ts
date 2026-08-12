@@ -13,6 +13,8 @@
 // prefix surgically (proven by the captured shim-dir), so it is safe to apply
 // only on the legacy replay path.
 
+import type { AgentStartupShell } from '../../shared/tui-agent-startup-shell'
+
 // Generated keys removed only when the config is a captured team launch. TMUX /
 // TMUX_PANE are ephemeral for every launch and stripped unconditionally below.
 const GENERATED_TEAM_ONLY_KEYS = new Set([
@@ -32,8 +34,8 @@ export function isCapturedAgentTeamsConfig(env: Record<string, string>): boolean
   )
 }
 
-export function pathDelimiterForShell(shell: 'posix' | 'powershell' | 'cmd'): string {
-  return shell === 'posix' ? ':' : ';'
+export function pathDelimiterForShell(shell: AgentStartupShell): string {
+  return shell === 'posix' || shell === 'fish' ? ':' : ';'
 }
 
 /** Remove Orca attribution + (for captured team configs) generated team/auth/
@@ -42,7 +44,7 @@ export function pathDelimiterForShell(shell: 'posix' | 'powershell' | 'cmd'): st
  *  whole PATH entry rather than replaying a possibly shim-poisoned one. */
 export function stripLegacyReplayEnv(
   env: Record<string, string>,
-  shell: 'posix' | 'powershell' | 'cmd'
+  shell: AgentStartupShell
 ): Record<string, string> {
   const isTeam = isCapturedAgentTeamsConfig(env)
   const shimDir = env.ORCA_AGENT_TEAMS_SHIM_DIR?.trim() || null

@@ -126,6 +126,11 @@ function failureCodeMessage(
         'Too many agent launches are still pending on this host. Reconnect or forget stranded launches, then try again.'
       )
   }
+  // Exhaustive over the union (switch-exhaustiveness-check enforces that), but a
+  // newer remote host can send a code this client predates — mixed client/host
+  // versions are normal. Without this the switch falls through and the card
+  // renders the literal string "undefined".
+  return translate('agentLaunch.failure.unknown', "The agent couldn't be launched.")
 }
 
 /** Localized copy for a launch-attempt failure. `surface` selects owner-accurate
@@ -158,6 +163,8 @@ export function agentLaunchRequestErrorMessage(error: AgentLaunchRequestError): 
         "This launch source couldn't be verified."
       )
   }
+  // Same mixed-version guard as failureCodeMessage.
+  return translate('agentLaunch.requestError.unknown', "This launch couldn't be completed.")
 }
 
 /** Localized copy for either arm of a non-launched AgentLaunchSpawnOutcome. */

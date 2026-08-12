@@ -581,7 +581,11 @@ import {
 import { resolveTuiAgentBaseAgent, resolveTuiAgentConfig } from '../../shared/custom-tui-agents'
 import { resolveDraftPasteReadyTimeoutMs } from '../../shared/draft-paste-ready-timeout'
 import { createDraftPasteReadyScanner } from '../../shared/draft-paste-ready-scanner'
-import { detectInstalledAgentsWithShellPathHydration, detectRemoteAgents } from '../ipc/preflight'
+import {
+  detectInstalledAgentsWithShellPathHydration,
+  detectRemoteAgents,
+  detectRemoteAgentsIfReachable
+} from '../ipc/preflight'
 import {
   markCodexProjectTrusted,
   markCopilotFolderTrusted,
@@ -28161,7 +28165,11 @@ export class OrcaRuntimeService {
   ): Promise<readonly string[] | null> {
     try {
       if (descriptor.kind === 'ssh') {
-        return await detectRemoteAgents({ connectionId: descriptor.connectionId })
+        // Why the ...IfReachable variant: a downed/reconnecting relay must stay an
+        // honest unknown here. The plain probe reports `[]` for an unreachable host,
+        // which resolve-agent-launch's stock-name gate would read as "base agent
+        // absent" and abort the launch (and worktree create) during a relay blip.
+        return await detectRemoteAgentsIfReachable({ connectionId: descriptor.connectionId })
       }
       if (descriptor.kind === 'local' && descriptor.platform === process.platform) {
         return await detectInstalledAgentsWithShellPathHydration()

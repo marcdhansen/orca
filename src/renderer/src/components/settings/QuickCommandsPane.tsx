@@ -28,7 +28,6 @@ import {
   shouldOpenQuickCommandAddIntent,
   shouldShowQuickCommandsRefreshError
 } from './quick-commands-pane-host-state'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import {
   getTerminalQuickCommandHostOptions,
   shouldShowTerminalQuickCommandHostOwnership

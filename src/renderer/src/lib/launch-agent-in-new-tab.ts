@@ -7,6 +7,8 @@ import {
 } from '@/lib/agent-launch-prompt-delivery'
 import { initialAgentTabViewModeProps } from '@/lib/native-chat-initial-view-mode'
 import { isNativeChatTranscriptLocalReadable } from '@/lib/native-chat-transcript-readability'
+import { resolveInitialNativeChatSessionOptions } from '@/components/native-chat/native-chat-launch-session-options'
+import { seedNativeChatAppliedSessionOptions } from '@/components/native-chat/native-chat-session-option-cache'
 import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
 import { isWebRuntimeSessionActive } from '@/runtime/web-runtime-session'
 import { launchAgentInWebHostTab } from '@/lib/launch-agent-web-host-tab'
@@ -169,14 +171,19 @@ export function launchAgentInNewTab(args: LaunchAgentInNewTabArgs): LaunchAgentI
   // Why: the remote host can't infer this client's draft/default view choice, so decide it here for paired tabs too.
   const viewModePromptDelivery =
     hasPrompt && isFollowupPath && promptDelivery === 'auto-submit' ? 'draft' : promptDelivery
-  const initialViewModeProps = initialAgentTabViewModeProps(store.settings, {
+  const initialViewModeArgs = {
     agent,
     promptDelivery: viewModePromptDelivery,
     launchDraftText: trimmedPrompt,
     nativeChatTranscriptIsLocalReadable: isNativeChatTranscriptLocalReadable(
       getConnectionIdFromState(store, worktreeId)
     )
-  })
+  }
+  const initialViewModeProps = initialAgentTabViewModeProps(store.settings, initialViewModeArgs)
+  // Why: session options stay client-owned even though the host assembles the
+  // command — they configure the native-chat pane (model, reasoning effort), not
+  // the startup argv, so the agentLaunch boundary never carries them.
+  const sessionOptions = resolveInitialNativeChatSessionOptions(store.settings, initialViewModeArgs)
 
   const runtimeEnvironmentId = getRuntimeEnvironmentIdForWorktree(store, worktreeId)
   if (isWebRuntimeSessionActive(runtimeEnvironmentId)) {
@@ -222,6 +229,7 @@ export function launchAgentInNewTab(args: LaunchAgentInNewTabArgs): LaunchAgentI
     quickCommandLabel,
     ...initialViewModeProps
   })
+  seedNativeChatAppliedSessionOptions(tab.id, agent, sessionOptions)
   if (initialCwd?.trim()) {
     // Why: queue before mount so local, WSL, and SSH continuations preserve their subdirectory.
     store.queueTabInitialCwd(tab.id, initialCwd)
@@ -231,6 +239,7 @@ export function launchAgentInNewTab(args: LaunchAgentInNewTabArgs): LaunchAgentI
     // client only names the requested identity and prompt/launch policy.
     command: '',
     agentLaunch,
+    ...(sessionOptions ? { sessionOptions } : {}),
     ...(agent === 'command-code' && hasPrompt && promptDelivery === 'auto-submit'
       ? { initialAgentStatus: { agent, prompt: trimmedPrompt } }
       : {}),

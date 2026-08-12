@@ -2354,12 +2354,20 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     // Ask the host (owner) to remove and persist; remove optimistically locally
     // (no wait on the host ack) so the banner refits the terminal immediately.
     const runtimeEnvironmentId = getRuntimeEnvironmentIdForWorktree(get(), worktreeId)
+    // The local removal below is authoritative for this session, so a host that
+    // cannot be reached only costs the persisted ack — swallow rather than leak an
+    // unhandled rejection (a down relay, a failed chunk load, or a torn-down
+    // pty:dismissLaunchNotice handler all reject here).
     if (runtimeEnvironmentId) {
-      void import('@/runtime/web-runtime-session').then(({ dismissWebRuntimeLaunchNotice }) =>
-        dismissWebRuntimeLaunchNotice({ worktreeId, tabId, launchToken, code })
-      )
+      void import('@/runtime/web-runtime-session')
+        .then(({ dismissWebRuntimeLaunchNotice }) =>
+          dismissWebRuntimeLaunchNotice({ worktreeId, tabId, launchToken, code })
+        )
+        .catch(() => {})
     } else {
-      void window.api.pty.dismissLaunchNotice({ worktreeId, tabId, launchToken, code })
+      void window.api.pty
+        .dismissLaunchNotice({ worktreeId, tabId, launchToken, code })
+        .catch(() => {})
     }
     set((s) => {
       const tabs = s.tabsByWorktree[worktreeId]

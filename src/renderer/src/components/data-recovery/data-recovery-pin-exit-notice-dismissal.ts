@@ -5,27 +5,31 @@
 
 const STORAGE_KEY = 'orca.dataRecovery.pinExitNotice.dismissedCreatedAtMs'
 
+/** Pin timestamps are best-effort (`listRecoveryPoints` leaves them null when the
+ *  stat fails), so a null must still produce a stable key — writing nothing made
+ *  Got-it a session-only no-op and re-showed the notice on every launch. A later
+ *  pin that does carry a timestamp keys differently and resurfaces as intended. */
+const UNKNOWN_CREATED_AT_KEY = 'unknown'
+
+function dismissalKey(createdAtMs: number | null): string {
+  return createdAtMs === null ? UNKNOWN_CREATED_AT_KEY : String(createdAtMs)
+}
+
 export function isPinExitNoticeDismissed(createdAtMs: number | null): boolean {
-  if (createdAtMs === null) {
-    return false
-  }
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) {
       return false
     }
-    return Number(raw) === createdAtMs
+    return raw === dismissalKey(createdAtMs)
   } catch {
     return false
   }
 }
 
 export function dismissPinExitNotice(createdAtMs: number | null): void {
-  if (createdAtMs === null) {
-    return
-  }
   try {
-    localStorage.setItem(STORAGE_KEY, String(createdAtMs))
+    localStorage.setItem(STORAGE_KEY, dismissalKey(createdAtMs))
   } catch {
     // localStorage may be unavailable; the notice remains dismissible for the session via state.
   }

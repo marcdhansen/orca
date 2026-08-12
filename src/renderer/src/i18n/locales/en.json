@@ -16126,7 +16126,10 @@
         "openDataRecovery": "Open Data recovery",
         "copyDetails": "Copy details",
         "settingsRowHint": "A pre-update recovery point exists for this profile.",
-        "settingsRowOpen": "Data recovery…"
+        "settingsRowOpen": "Data recovery…",
+        "pinExitTitle": "This profile was upgraded for custom agents",
+        "pinExitBody": "Orca kept a recovery point so you can return to the previous Orca. Use Data recovery → Prepare downgrade, then install that older version. Do not only reinstall the older app over this profile. Going back discards settings and custom agents saved after the recovery point.",
+        "dismissPinExit": "Got it"
       }
     },
     "i18n": {
@@ -16750,7 +16753,8 @@
       "trustPreflightFailed": "Couldn't confirm workspace trust for this agent. Try again.",
       "spawnFailed": "The agent couldn't be started. Try again.",
       "stateUnknown": "The launch status is unknown. Check the terminal before retrying.",
-      "capacityExceeded": "Too many agent launches are still pending on this host. Reconnect or forget stranded launches, then try again."
+      "capacityExceeded": "Too many agent launches are still pending on this host. Reconnect or forget stranded launches, then try again.",
+      "unknown": "The agent couldn't be launched."
     },
     "unattendedFailure": {
       "title": {
@@ -16776,7 +16780,8 @@
     "requestError": {
       "idempotencyConflict": "This launch is already in progress.",
       "staleFailure": "This launch was already resolved. Refresh and try again.",
-      "untrustedReference": "This launch source couldn't be verified."
+      "untrustedReference": "This launch source couldn't be verified.",
+      "unknown": "This launch couldn't be completed."
     },
     "capacity": {
       "title": "Recover launch capacity",

@@ -464,7 +464,11 @@ vi.mock('../ipc/ssh', () => ({
 
 vi.mock('../ipc/preflight', () => ({
   detectInstalledAgentsWithShellPathHydration: detectInstalledAgentsWithShellPathHydrationMock,
-  detectRemoteAgents: detectRemoteAgentsMock
+  detectRemoteAgents: detectRemoteAgentsMock,
+  // Same probe, but returns null (not []) when the relay is unreachable so the
+  // launch gate cannot read "unreachable" as "agent absent". Shares one mock: the
+  // args and the "did the SSH launch probe remote agents" assertions are identical.
+  detectRemoteAgentsIfReachable: detectRemoteAgentsMock
 }))
 
 vi.mock('../agent-hooks/managed-agent-hook-controls', () => ({
@@ -3558,7 +3562,11 @@ describe('OrcaRuntimeService', () => {
   it('populates terminal summary base attribution: launch attribution, hook fallback, else omitted (W2)', async () => {
     const runtime = createRuntime()
     const internals = runtime as unknown as {
-      recordPtyWorktree: (ptyId: string, worktreeId: string, state?: Record<string, unknown>) => void
+      recordPtyWorktree: (
+        ptyId: string,
+        worktreeId: string,
+        state?: Record<string, unknown>
+      ) => void
       ptysById: Map<string, { launchAgent: unknown; foregroundAgent: unknown }>
     }
     // Launch attribution (launchAgent); hook base metadata (foregroundAgent) with
@@ -3574,14 +3582,50 @@ describe('OrcaRuntimeService', () => {
     runtime.attachWindow(TEST_WINDOW_ID)
     runtime.syncWindowGraph(TEST_WINDOW_ID, {
       tabs: [
-        { tabId: 'tab-codex', worktreeId: TEST_WORKTREE_ID, title: 'x', activeLeafId: 'l-codex', layout: null },
-        { tabId: 'tab-hook', worktreeId: TEST_WORKTREE_ID, title: 'x', activeLeafId: 'l-hook', layout: null },
-        { tabId: 'tab-bare', worktreeId: TEST_WORKTREE_ID, title: 'x', activeLeafId: 'l-bare', layout: null }
+        {
+          tabId: 'tab-codex',
+          worktreeId: TEST_WORKTREE_ID,
+          title: 'x',
+          activeLeafId: 'l-codex',
+          layout: null
+        },
+        {
+          tabId: 'tab-hook',
+          worktreeId: TEST_WORKTREE_ID,
+          title: 'x',
+          activeLeafId: 'l-hook',
+          layout: null
+        },
+        {
+          tabId: 'tab-bare',
+          worktreeId: TEST_WORKTREE_ID,
+          title: 'x',
+          activeLeafId: 'l-bare',
+          layout: null
+        }
       ],
       leaves: [
-        { tabId: 'tab-codex', worktreeId: TEST_WORKTREE_ID, leafId: 'l-codex', paneRuntimeId: 1, ptyId: 'pty-codex' },
-        { tabId: 'tab-hook', worktreeId: TEST_WORKTREE_ID, leafId: 'l-hook', paneRuntimeId: 2, ptyId: 'pty-hook' },
-        { tabId: 'tab-bare', worktreeId: TEST_WORKTREE_ID, leafId: 'l-bare', paneRuntimeId: 3, ptyId: 'pty-bare' }
+        {
+          tabId: 'tab-codex',
+          worktreeId: TEST_WORKTREE_ID,
+          leafId: 'l-codex',
+          paneRuntimeId: 1,
+          ptyId: 'pty-codex'
+        },
+        {
+          tabId: 'tab-hook',
+          worktreeId: TEST_WORKTREE_ID,
+          leafId: 'l-hook',
+          paneRuntimeId: 2,
+          ptyId: 'pty-hook'
+        },
+        {
+          tabId: 'tab-bare',
+          worktreeId: TEST_WORKTREE_ID,
+          leafId: 'l-bare',
+          paneRuntimeId: 3,
+          ptyId: 'pty-bare'
+        }
       ]
     })
 
