@@ -40,6 +40,7 @@ import type { SshConnectionState } from '../../../src/shared/ssh-types'
 import { getProjectIdentityKey } from '../../../src/shared/project-host-setup-projection'
 import {
   buildNewWorktreePickerOptions,
+  hostDefaultMatchesNewWorktreePreview,
   NEW_WORKTREE_AGENT_OPTIONS as AGENT_OPTIONS,
   pickPreferredNewWorktreeAgent,
   resolveNewWorktreeAgentSelection,
@@ -641,7 +642,15 @@ function NewWorktreeModalContent({
         ? buildInteractiveLaunchParams({
             selectedAgentId: selectedAgent.id,
             hasIdentityCapability: true,
-            deferToHostDefault: !selectedAgentResolution.agentOverridden,
+            // Defer only when the host's default resolves to the previewed agent;
+            // target detection narrows the preview but not the host's default.
+            deferToHostDefault:
+              !selectedAgentResolution.agentOverridden &&
+              hostDefaultMatchesNewWorktreePreview(
+                latestRuntimeSettings,
+                detectedAgentIds,
+                agentCatalog
+              ),
             legacyCommand: undefined
           })
         : undefined

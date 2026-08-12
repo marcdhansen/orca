@@ -13,7 +13,8 @@ import {
 import {
   MESSAGE_TYPES,
   projectDispatchStatusForLegacyReaders,
-  type DispatchContextRow
+  type DispatchContextRow,
+  type RunRow
 } from '../../orchestration/types'
 import { buildDispatchPreamble } from '../../orchestration/preamble'
 import { formatMessageBanner } from '../../orchestration/formatter'
@@ -37,7 +38,6 @@ import { ORCHESTRATION_WORKER_METHODS } from './orchestration-worker-methods'
 import { ORCHESTRATION_FEDERATION_METHODS } from './orchestration-federation-methods'
 import { OrchestrationError } from '../../orchestration/orchestration-error'
 import type { OrcaRuntimeService } from '../../orca-runtime'
-import type { RunRow } from '../../orchestration/types'
 import { encodeFederatedControlMessage } from '../../orchestration/federation-control-message'
 import { bindCoordinatorMutationPayload } from '../../orchestration/dispatch-message-binding'
 import {

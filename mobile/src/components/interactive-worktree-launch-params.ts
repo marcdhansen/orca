@@ -34,7 +34,10 @@ export function buildInteractiveLaunchParams(
     const selection: AgentLaunchSelectionRequest = deferToHostDefault
       ? { kind: 'default' }
       : { kind: 'agent', agent: selectedAgentId }
-    const agentLaunch: AgentLaunchSpawnRequest = { selection }
+    // allowEmptyPromptLaunch: a new workspace launches a bare TUI with no prompt,
+    // and without it the host's plan builder returns null and fails
+    // no_agent_selected — which aborts the whole worktree create.
+    const agentLaunch: AgentLaunchSpawnRequest = { selection, allowEmptyPromptLaunch: true }
     return { agentLaunch }
   }
   if (isCustomTuiAgentId(selectedAgentId)) {

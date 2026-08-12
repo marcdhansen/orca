@@ -5,6 +5,7 @@ import type { TuiAgent } from '../../../src/shared/types'
 import {
   buildNewWorktreePickerOptions,
   buildSelectableNewWorktreeAgentOptions,
+  hostDefaultMatchesNewWorktreePreview,
   NEW_WORKTREE_BLANK_AGENT,
   newWorktreeAgentOptionFor,
   pickPreferredNewWorktreeAgent,
@@ -224,6 +225,35 @@ describe('new worktree agent selection', () => {
       selectedAgent: newWorktreeAgentOptionFor('codex'),
       agentOverridden: false
     })
+  })
+})
+
+describe('hostDefaultMatchesNewWorktreePreview', () => {
+  it('matches when detection leaves the host default intact', () => {
+    expect(
+      hostDefaultMatchesNewWorktreePreview({ defaultTuiAgent: 'claude' }, new Set(['claude']))
+    ).toBe(true)
+  })
+
+  it('does not match when detection narrowed the preview away from the host default', () => {
+    // Deferring here would launch claude, which the target does not have.
+    expect(
+      hostDefaultMatchesNewWorktreePreview({ defaultTuiAgent: 'claude' }, new Set(['codex']))
+    ).toBe(false)
+  })
+
+  it('matches while detection is pending', () => {
+    expect(hostDefaultMatchesNewWorktreePreview({ defaultTuiAgent: 'claude' }, null)).toBe(true)
+  })
+
+  it('does not match when a custom default lost its base harness', () => {
+    expect(
+      hostDefaultMatchesNewWorktreePreview(
+        { defaultTuiAgent: 'custom-agent:claude:one' as TuiAgent },
+        new Set(['codex']),
+        catalogWithClaudeCustom()
+      )
+    ).toBe(false)
   })
 })
 

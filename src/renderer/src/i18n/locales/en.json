@@ -16116,6 +16116,8 @@
         "cancel": "Cancel",
         "prepareDowngrade": "Prepare downgrade…",
         "restoreFailed": "Restore failed and no changes were made: {{error}}",
+        "restoredTitle": "Restored — quitting Orca",
+        "restoredBody": "The recovery point was restored and Orca is quitting. This window no longer saves changes, so anything you do here from now on is discarded. If Orca does not quit on its own, quit it yourself, then install the previous Orca version before opening it again.",
         "close": "Close",
         "noticeTitle": "Orca could not back up your data before a required update",
         "noticeBody": "Your existing data is unchanged and built-in agents keep working, but custom-agent settings are read-only until this is resolved.",

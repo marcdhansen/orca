@@ -35,44 +35,29 @@ describe('buildOnboardingFolderAgentStartup', () => {
     expect(startup).toBeUndefined()
   })
 
-  it('omits native-chat preferences from terminal-default folder launches', () => {
-    const startup = buildOnboardingFolderAgentStartup({
-      ...getDefaultSettings('/tmp/orca-workspaces'),
-      defaultTuiAgent: 'codex',
-      experimentalNativeChat: true,
-      openAgentTabsInChatByDefault: false,
-      nativeChatSessionOptions: {
-        codex: {
-          model: 'gpt-5.2-codex',
-          valuesByModel: { 'gpt-5.2-codex': { effort: 'medium' } }
+  it.each([false, true])(
+    'never assembles argv or session options, openAgentTabsInChatByDefault=%s',
+    (openAgentTabsInChatByDefault) => {
+      // The view mode (and with it any native-chat session options) is decided
+      // by the activation path from the created worktree's own connection id —
+      // not here, which is why this builder takes no readability argument.
+      const startup = buildOnboardingFolderAgentStartup({
+        ...getDefaultSettings('/tmp/orca-workspaces'),
+        defaultTuiAgent: 'codex',
+        experimentalNativeChat: true,
+        openAgentTabsInChatByDefault,
+        nativeChatSessionOptions: {
+          codex: {
+            model: 'gpt-5.2-codex',
+            valuesByModel: { 'gpt-5.2-codex': { effort: 'medium' } }
+          }
         }
-      }
-    })
+      })
 
-    expect(startup?.command).not.toContain("'-m'")
-    expect(startup?.sessionOptions).toBeUndefined()
-  })
-
-  it('applies native-chat preferences to chat-default folder launches', () => {
-    const startup = buildOnboardingFolderAgentStartup({
-      ...getDefaultSettings('/tmp/orca-workspaces'),
-      defaultTuiAgent: 'codex',
-      experimentalNativeChat: true,
-      openAgentTabsInChatByDefault: true,
-      nativeChatSessionOptions: {
-        codex: {
-          model: 'gpt-5.2-codex',
-          valuesByModel: { 'gpt-5.2-codex': { effort: 'medium' } }
-        }
-      }
-    })
-
-    expect(startup?.command).toContain("'-m' 'gpt-5.2-codex'")
-    expect(startup?.sessionOptions).toEqual({
-      model: 'gpt-5.2-codex',
-      effort: 'medium'
-    })
-  })
+      expect(startup?.command).toBe('')
+      expect(startup?.sessionOptions).toBeUndefined()
+    }
+  )
 
   it('does not infer an agent from auto mode', () => {
     const startup = buildOnboardingFolderAgentStartup({

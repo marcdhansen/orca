@@ -11,8 +11,7 @@ import type {
   AgentLaunchExecutionHostId,
   AgentLaunchSnapshot
 } from '../../shared/agent-launch-host-contract'
-import type { AgentLaunchFailure } from '../../shared/agent-launch-contract'
-import type { AgentLaunchIntentKind } from '../../shared/agent-launch-contract'
+import type { AgentLaunchFailure, AgentLaunchIntentKind } from '../../shared/agent-launch-contract'
 import type { BuiltInTuiAgent } from '../../shared/types'
 
 export const MAX_PENDING_LAUNCHES_PER_HOST = 256

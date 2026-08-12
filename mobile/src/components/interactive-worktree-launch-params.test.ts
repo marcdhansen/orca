@@ -23,7 +23,9 @@ describe('buildInteractiveLaunchParams', () => {
       deferToHostDefault: false,
       legacyCommand: 'codex'
     })
-    expect(params).toEqual({ agentLaunch: { selection: { kind: 'agent', agent: 'codex' } } })
+    expect(params).toEqual({
+      agentLaunch: { selection: { kind: 'agent', agent: 'codex' }, allowEmptyPromptLaunch: true }
+    })
   })
 
   it('defers to the host default when the agent was not overridden', () => {
@@ -33,7 +35,9 @@ describe('buildInteractiveLaunchParams', () => {
       deferToHostDefault: true,
       legacyCommand: 'claude'
     })
-    expect(params).toEqual({ agentLaunch: { selection: { kind: 'default' } } })
+    expect(params).toEqual({
+      agentLaunch: { selection: { kind: 'default' }, allowEmptyPromptLaunch: true }
+    })
   })
 
   it('never leaks a client command/createdWithAgent on the capable path', () => {
@@ -55,7 +59,9 @@ describe('buildInteractiveLaunchParams', () => {
       deferToHostDefault: false,
       legacyCommand: undefined
     })
-    expect(params).toEqual({ agentLaunch: { selection: { kind: 'agent', agent: CUSTOM_ID } } })
+    expect(params).toEqual({
+      agentLaunch: { selection: { kind: 'agent', agent: CUSTOM_ID }, allowEmptyPromptLaunch: true }
+    })
   })
 
   it('keeps the legacy startupCommand + createdWithAgent path for incapable hosts', () => {

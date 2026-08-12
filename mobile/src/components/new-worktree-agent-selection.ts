@@ -96,6 +96,24 @@ export function pickPreferredNewWorktreeAgent(
   )
 }
 
+/** Whether deferring to the host's stored default would launch the agent the picker
+ *  previewed. Target detection narrows the preview but not the host's default, so a
+ *  host default of `claude` on a target that only has `codex` previews Codex and
+ *  would launch Claude; the caller must pin the preview instead. */
+export function hostDefaultMatchesNewWorktreePreview(
+  settings: NewWorktreeRuntimeSettings | null,
+  detectedAgentIds: Set<string> | null,
+  catalogSnapshot: AgentCatalogValue | null = null
+): boolean {
+  if (detectedAgentIds === null) {
+    return true
+  }
+  return (
+    pickPreferredNewWorktreeAgent(settings, detectedAgentIds, catalogSnapshot).id ===
+    pickPreferredNewWorktreeAgent(settings, null, catalogSnapshot).id
+  )
+}
+
 function isNewWorktreeAgentOptionSelectable(
   option: NewWorktreeAgentOption,
   detectedAgentIds: Set<string> | null,

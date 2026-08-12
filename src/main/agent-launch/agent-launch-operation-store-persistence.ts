@@ -12,10 +12,9 @@
 // discipline as the other host credential stores (writeSecureJsonFile). The
 // encode/decode core takes an injected cipher so it is testable without Electron.
 
-import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { safeStorage } from 'electron'
-import { hardenExistingSecureFile, writeSecureJsonFile } from '../../shared/secure-file'
+import { readSecureJsonFile, writeSecureJsonFile } from '../../shared/secure-file'
 import type {
   AgentLaunchOperationStore,
   AgentLaunchOperationStoreDurableState,
@@ -124,30 +123,32 @@ function validPendingSnapshots(entries: unknown[]): PendingAgentLaunchSnapshot[]
   })
 }
 
-/** Load/decode outcome. `decryptionUnavailable` marks an encrypted pending
- *  section the OS cipher could not read at load (locked/late keychain): the
- *  snapshots are intact on disk, just unreadable NOW, so the write-back sink
- *  must not attach — otherwise the first mutation after boot would overwrite
- *  the crash-recovery snapshots with the empty in-memory set. */
+/** Load/decode outcome. `persistedStateUnreadable` marks persisted state that is
+ *  intact on disk but unreadable NOW — either an encrypted pending section the
+ *  OS cipher could not open (locked/late keychain) or a file this process could
+ *  not read (EACCES/EBUSY/EMFILE/EIO). Either way the write-back sink must not
+ *  attach, or the first mutation after boot overwrites the crash-recovery
+ *  snapshots with the empty in-memory set. An ABSENT or corrupt file is NOT
+ *  unreadable — there rewriting is the recovery, not a loss. */
 export type AgentLaunchOperationStoreLoadResult = AgentLaunchOperationStoreDurableState & {
-  decryptionUnavailable: boolean
+  persistedStateUnreadable: boolean
 }
 
 function decodePending(
   pending: unknown,
   cipher: AgentLaunchOperationCipher
-): { snapshots: PendingAgentLaunchSnapshot[]; decryptionUnavailable: boolean } {
+): { snapshots: PendingAgentLaunchSnapshot[]; persistedStateUnreadable: boolean } {
   if (!isRecord(pending)) {
-    return { snapshots: [], decryptionUnavailable: false }
+    return { snapshots: [], persistedStateUnreadable: false }
   }
   if (pending.format === 'plaintext-v1' && Array.isArray(pending.snapshots)) {
-    return { snapshots: validPendingSnapshots(pending.snapshots), decryptionUnavailable: false }
+    return { snapshots: validPendingSnapshots(pending.snapshots), persistedStateUnreadable: false }
   }
   if (pending.format === 'electron-safe-storage-v1' && typeof pending.ciphertext === 'string') {
     if (!cipher.available()) {
       // Transient: a locked/late keychain at boot. The ciphertext is still
       // valid, so flag it rather than treating the store as empty.
-      return { snapshots: [], decryptionUnavailable: true }
+      return { snapshots: [], persistedStateUnreadable: true }
     }
     // A decrypt failure with an AVAILABLE cipher (keychain reset) drops only the
     // pending map, never the whole file: reconciliation then treats those
@@ -157,10 +158,10 @@ function decodePending(
     const parsed = JSON.parse(decrypted)
     return {
       snapshots: Array.isArray(parsed) ? validPendingSnapshots(parsed) : [],
-      decryptionUnavailable: false
+      persistedStateUnreadable: false
     }
   }
-  return { snapshots: [], decryptionUnavailable: false }
+  return { snapshots: [], persistedStateUnreadable: false }
 }
 
 export function decodeAgentLaunchOperationStore(
@@ -168,7 +169,7 @@ export function decodeAgentLaunchOperationStore(
   cipher: AgentLaunchOperationCipher
 ): AgentLaunchOperationStoreLoadResult {
   if (!isRecord(raw) || raw.version !== 1) {
-    return { pending: [], settled: [], decryptionUnavailable: false }
+    return { pending: [], settled: [], persistedStateUnreadable: false }
   }
   const settled = Array.isArray(raw.settled) ? (raw.settled as SettledAgentLaunchOperation[]) : []
   try {
@@ -176,10 +177,10 @@ export function decodeAgentLaunchOperationStore(
     return {
       pending: pending.snapshots,
       settled,
-      decryptionUnavailable: pending.decryptionUnavailable
+      persistedStateUnreadable: pending.persistedStateUnreadable
     }
   } catch {
-    return { pending: [], settled, decryptionUnavailable: false }
+    return { pending: [], settled, persistedStateUnreadable: false }
   }
 }
 
@@ -187,17 +188,18 @@ export function loadAgentLaunchOperationStoreState(
   path: string,
   cipher: AgentLaunchOperationCipher
 ): AgentLaunchOperationStoreLoadResult {
-  if (!existsSync(path)) {
-    return { pending: [], settled: [], decryptionUnavailable: false }
+  const read = readSecureJsonFile(path)
+  if (read.kind === 'unreadable') {
+    // The ledger and snapshots are intact on disk, just not readable by this
+    // process now. Reporting "empty" would let the sink destroy them.
+    return { pending: [], settled: [], persistedStateUnreadable: true }
   }
-  try {
-    hardenExistingSecureFile(path)
-    return decodeAgentLaunchOperationStore(JSON.parse(readFileSync(path, 'utf-8')), cipher)
-  } catch {
+  if (read.kind !== 'parsed') {
     // A corrupt ledger must never block boot; start empty and let the create/
     // retry path rebuild idempotency state from scratch.
-    return { pending: [], settled: [], decryptionUnavailable: false }
+    return { pending: [], settled: [], persistedStateUnreadable: false }
   }
+  return decodeAgentLaunchOperationStore(read.value, cipher)
 }
 
 export function writeAgentLaunchOperationStoreState(
@@ -274,21 +276,21 @@ export function initAgentLaunchOperationStorePersistence(
       }
     })
   }
-  if (!state.decryptionUnavailable) {
+  if (!state.persistedStateUnreadable) {
     attachWriteBackSink()
     return
   }
-  // Locked/late keychain at boot: the encrypted pending snapshots are intact on
-  // disk but unreadable NOW. A plain write-back sink would overwrite them with
-  // the empty in-memory map on the first mutation, so attach a recovery sink
-  // that re-probes the cipher per durable mutation and, once decryption works,
-  // merges the on-disk state under the in-memory one before taking over.
+  // Persisted state exists but could not be read at boot (locked/late keychain,
+  // or an unreadable file). A plain write-back sink would overwrite it with the
+  // empty in-memory map on the first mutation, so attach a recovery sink that
+  // re-reads per durable mutation and, once the read succeeds, merges the
+  // on-disk state under the in-memory one before taking over.
   store.setDurablePersistence(() => {
-    if (!cipher.available()) {
+    const onDisk = loadAgentLaunchOperationStoreState(path, cipher)
+    if (onDisk.persistedStateUnreadable) {
       return
     }
     try {
-      const onDisk = loadAgentLaunchOperationStoreState(path, cipher)
       const live = store.durableState()
       // Maps key pendings by token and the ledger replaces by operationId in
       // settledAt order, so disk-first + live-second prefers the live state.

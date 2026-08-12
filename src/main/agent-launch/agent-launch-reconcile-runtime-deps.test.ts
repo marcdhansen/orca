@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { AgentLaunchExecutionHostId } from '../../shared/agent-launch-host-contract'
-import type { AgentLaunchSnapshot } from '../../shared/agent-launch-host-contract'
+import type {
+  AgentLaunchExecutionHostId,
+  AgentLaunchSnapshot
+} from '../../shared/agent-launch-host-contract'
 import type { AgentLaunchIntentKind } from '../../shared/agent-launch-contract'
 import {
   AgentLaunchOperationStore,

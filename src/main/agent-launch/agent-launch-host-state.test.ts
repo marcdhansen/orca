@@ -218,6 +218,17 @@ describe('describeSpawnExecutionHost', () => {
     const descriptor = describeSpawnExecutionHost({ connectionId: 'host-1' })
     expect(descriptor).toEqual({ kind: 'ssh', connectionId: 'host-1', platform: 'linux' })
   })
+
+  // A WSL UNC cwd runs a Linux userland; win32 here picks the Windows executable
+  // variant and PowerShell-quotes a bash command line.
+  it('describes a WSL UNC cwd as a linux local target with no Windows shell', () => {
+    const descriptor = describeSpawnExecutionHost({
+      connectionId: null,
+      cwd: '\\\\wsl.localhost\\Ubuntu\\home\\me\\repo',
+      terminalWindowsShell: 'powershell'
+    })
+    expect(descriptor).toEqual({ kind: 'local', platform: 'linux' })
+  })
 })
 
 describe('resolveLocalTargetHomePath', () => {
@@ -228,5 +239,12 @@ describe('resolveLocalTargetHomePath', () => {
       resolveLocalTargetHomePath({ kind: 'ssh', connectionId: 'h', platform: 'linux' })
     ).resolves.toBeNull()
     await expect(resolveLocalTargetHomePath({ kind: 'wsl', distro: 'Ubuntu' })).resolves.toBeNull()
+  })
+
+  it('returns null for a divergent-platform local host, which owns its own $HOME', async () => {
+    const divergent: NodeJS.Platform = process.platform === 'win32' ? 'linux' : 'win32'
+    await expect(
+      resolveLocalTargetHomePath({ kind: 'local', platform: divergent })
+    ).resolves.toBeNull()
   })
 })

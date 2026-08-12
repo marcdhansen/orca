@@ -190,6 +190,30 @@ describe('createRevisionedSnapshotSync', () => {
     expect(sync.getSnapshot('host')?.revision).toBe(5)
   })
 
+  it('drops the cached snapshot when the host answers that it publishes none', async () => {
+    // A downgraded host would otherwise keep offering agents it can no longer launch.
+    const sync = createRevisionedSnapshotSync<Snap>()
+    const { fetch, resolvers, count } = deferredFetch()
+    const conn = sync.openConnection('host', fetch)
+    let notified = 0
+    sync.subscribe('host', () => {
+      notified += 1
+    })
+
+    conn.hydrate()
+    resolvers[0]!({ kind: 'value', runtimeId: 'r', value: { revision: 5 } })
+    await tick()
+    expect(notified).toBe(1)
+
+    conn.announce(7)
+    resolvers[1]!({ kind: 'absent', runtimeId: 'r' })
+    await tick()
+    expect(sync.getSnapshot('host')).toBeNull()
+    expect(notified).toBe(2)
+    // The cleared announcement must not self-chain another fetch.
+    expect(count()).toBe(2)
+  })
+
   it('ignores a fetch that resolves after its connection was disposed', async () => {
     const sync = createRevisionedSnapshotSync<Snap>()
     const { fetch, resolvers } = deferredFetch()

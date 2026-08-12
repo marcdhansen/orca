@@ -8,9 +8,8 @@
 // sibling launch stores. Each row re-validates through the strict shared schema
 // on load so one corrupt entry never aborts rehydrating the rest.
 
-import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { hardenExistingSecureFile, writeSecureJsonFile } from '../../shared/secure-file'
+import { readSecureJsonFile, writeSecureJsonFile } from '../../shared/secure-file'
 import {
   parseBackgroundAgentLaunchAttempt,
   type BackgroundAgentLaunchAttempt
@@ -33,23 +32,37 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-export function loadBackgroundAgentLaunchAttempts(path: string): BackgroundAgentLaunchAttempt[] {
-  if (!existsSync(path)) {
-    return []
+/** Load outcome. `persistedStateUnreadable` marks attempts that are intact on
+ *  disk but unreadable by this process NOW (EACCES/EBUSY/EMFILE/EIO): the caller
+ *  must skip write-back, or the next mutation overwrites the persisted attempts
+ *  with the empty in-memory set and the recovery cards vanish permanently. An
+ *  ABSENT or corrupt file is not unreadable — there rewriting IS the recovery. */
+export type BackgroundAgentLaunchStoreLoadResult = {
+  attempts: BackgroundAgentLaunchAttempt[]
+  persistedStateUnreadable: boolean
+}
+
+export function loadBackgroundAgentLaunchAttempts(
+  path: string
+): BackgroundAgentLaunchStoreLoadResult {
+  const read = readSecureJsonFile(path)
+  if (read.kind === 'unreadable') {
+    return { attempts: [], persistedStateUnreadable: true }
   }
-  try {
-    hardenExistingSecureFile(path)
-    const raw: unknown = JSON.parse(readFileSync(path, 'utf-8'))
-    if (!isRecord(raw) || raw.version !== 1 || !Array.isArray(raw.attempts)) {
-      return []
-    }
-    return raw.attempts
-      .map((entry) => parseBackgroundAgentLaunchAttempt(entry))
-      .filter((attempt): attempt is BackgroundAgentLaunchAttempt => attempt !== null)
-  } catch {
+  if (read.kind !== 'parsed') {
     // A corrupt store must never block boot; start empty and let reconciliation
     // rebuild what the live terminals still evidence.
-    return []
+    return { attempts: [], persistedStateUnreadable: false }
+  }
+  const raw = read.value
+  if (!isRecord(raw) || raw.version !== 1 || !Array.isArray(raw.attempts)) {
+    return { attempts: [], persistedStateUnreadable: false }
+  }
+  return {
+    attempts: raw.attempts
+      .map((entry) => parseBackgroundAgentLaunchAttempt(entry))
+      .filter((attempt): attempt is BackgroundAgentLaunchAttempt => attempt !== null),
+    persistedStateUnreadable: false
   }
 }
 
@@ -67,13 +80,39 @@ export function initBackgroundAgentLaunchStorePersistence(
   store: BackgroundAgentLaunchStore,
   path: string
 ): void {
-  store.rebuildFrom(loadBackgroundAgentLaunchAttempts(path))
-  store.setDurablePersistence((next) => {
+  const state = loadBackgroundAgentLaunchAttempts(path)
+  store.rebuildFrom(state.attempts)
+  const attachWriteBackSink = (): void => {
+    store.setDurablePersistence((next) => {
+      try {
+        writeBackgroundAgentLaunchAttempts(path, next.attempts)
+      } catch {
+        // A failed persist must not break the in-flight attempt; the in-memory
+        // store stays authoritative and the next mutation retries the write.
+      }
+    })
+  }
+  if (!state.persistedStateUnreadable) {
+    attachWriteBackSink()
+    return
+  }
+  // Attempts exist on disk but could not be read at boot. A plain write-back
+  // sink would erase them — and with them the unattended-failure recovery cards
+  // the store exists to keep alive — on the first mutation, so re-read on each
+  // durable mutation instead and only take over once a read succeeds.
+  store.attemptCompleteness.markIncomplete()
+  store.setDurablePersistence(() => {
+    const onDisk = loadBackgroundAgentLaunchAttempts(path)
+    if (onDisk.persistedStateUnreadable) {
+      return
+    }
     try {
-      writeBackgroundAgentLaunchAttempts(path, next.attempts)
+      store.mergeRehydratedAttempts(onDisk.attempts)
+      store.attemptCompleteness.markComplete()
+      attachWriteBackSink()
+      writeBackgroundAgentLaunchAttempts(path, store.durableState().attempts)
     } catch {
-      // A failed persist must not break the in-flight attempt; the in-memory
-      // store stays authoritative and the next mutation retries the write.
+      // Keep the recovery sink armed; the next mutation retries.
     }
   })
 }

@@ -2,26 +2,19 @@
 // "General Data recovery UI"). Only metadata crosses to the renderer — never a
 // filesystem path or raw backup contents; restore/retry are main-owned.
 
-import {
-  closeSync,
-  existsSync,
-  fsyncSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  writeSync
-} from 'node:fs'
+import { existsSync, readFileSync, renameSync, statSync } from 'node:fs'
 import { pinnedPreV1BackupPath } from '../agent-launch/agent-catalog-pre-v1-backup'
+import { durableWriteTempPath, writeFileDurableSync } from '../durable-file-write'
 import type { RecoveryPointDto, RecoveryPointId } from '../../shared/data-recovery'
 
 export type { RecoveryPointDto, RecoveryPointId } from '../../shared/data-recovery'
 
 export const PRE_RESTORE_SAFETY_SUFFIX = '.pre-restore-safety.backup'
+export const RETIRED_BACKUP_SUFFIX = '.pre-downgrade'
 
 type RestoreStore = {
   getDataFilePath(): string
+  getBackupRingFilePaths(): string[]
   freezeWrites(): void
   unfreezeWrites(): void
   waitForPendingWrite(): Promise<void>
@@ -57,24 +50,22 @@ export function listRecoveryPoints(dataFile: string): RecoveryPointDto[] {
   return points
 }
 
-function writeFileAtomicSync(targetPath: string, contents: string, mode: number): void {
-  const tmpPath = `${targetPath}.tmp`
-  const fd = openSync(tmpPath, 'w', mode)
-  try {
-    writeSync(fd, contents)
-    fsyncSync(fd)
-  } finally {
-    closeSync(fd)
-  }
-  try {
-    renameSync(tmpPath, targetPath)
-  } catch (error) {
-    try {
-      unlinkSync(tmpPath)
-    } catch {
-      // Best-effort tmp cleanup; surface the rename error instead.
+/** Moves the rotating `.bak.N` slots out of the names the loader scans. They hold
+ *  snapshots this binary wrote, and the load-time fallback restores any slot that
+ *  merely parses — so on the older binary the ring would silently resurrect the
+ *  very state the downgrade discarded. Renamed rather than deleted so the bytes
+ *  stay recoverable by hand, and best-effort so a locked slot (Windows) cannot
+ *  fail a restore that already committed. */
+function retireBackupRing(store: RestoreStore): void {
+  for (const slot of store.getBackupRingFilePaths()) {
+    if (!existsSync(slot)) {
+      continue
     }
-    throw error
+    try {
+      renameSync(slot, `${slot}${RETIRED_BACKUP_SUFFIX}`)
+    } catch (error) {
+      console.error(`Could not retire backup slot ${slot}:`, error)
+    }
   }
 }
 
@@ -115,13 +106,18 @@ export async function restoreRecoveryPoint(
     await store.waitForPendingWrite()
     const mode = existsSync(dataFile) ? statSync(dataFile).mode & 0o777 : 0o600
     if (existsSync(dataFile)) {
-      writeFileAtomicSync(
-        `${dataFile}${PRE_RESTORE_SAFETY_SUFFIX}`,
+      const safetyPath = `${dataFile}${PRE_RESTORE_SAFETY_SUFFIX}`
+      writeFileDurableSync(
+        durableWriteTempPath(safetyPath),
+        safetyPath,
         readFileSync(dataFile, 'utf-8'),
-        mode
+        { mode }
       )
     }
-    writeFileAtomicSync(dataFile, backupContents, mode)
+    // Durable, not merely atomic: the caller quits right after, so a rename that
+    // is not fsynced to the directory can come back as the pre-restore file.
+    writeFileDurableSync(durableWriteTempPath(dataFile), dataFile, backupContents, { mode })
+    retireBackupRing(store)
     return { ok: true }
   } catch (error) {
     store.unfreezeWrites()

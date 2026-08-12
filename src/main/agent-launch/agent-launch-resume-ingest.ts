@@ -46,7 +46,16 @@ export type ResumeLaunchIngestInput = {
     connectionId: string | null
     /** The pre-quoted config the renderer surrenders over trusted IPC on first
      *  resume of a pre-U5 session; absent once the host owns the record. */
-    handoff?: { launchConfig: SleepingAgentLaunchConfig; recordedConnectionId: string | null }
+    handoff?: {
+      launchConfig: SleepingAgentLaunchConfig
+      recordedConnectionId: string | null
+      /** The sleeping record's transcript path. The ownership key carries only
+       *  the provider session id, but Pi/Prime-Agent resume by transcript path,
+       *  so without it a pre-U5 sleeping session of those bases can never
+       *  resume (its resume argv is null → invalid_launch_snapshot). Trusted at
+       *  the same level as the opaque command it accompanies: desktop IPC only. */
+      transcriptPath?: string
+    }
   }
 }
 
@@ -132,9 +141,14 @@ export function resolveResumeLaunchIngest(
       // First resume of a pre-U5 session: the renderer surrenders the config.
       // A legacy record's requested identity equals its base (migration rule).
       const baseAgent = input.resume.sessionKey.baseAgent
+      const handoffTranscriptPath = input.legacy.handoff.transcriptPath?.trim()
       const providerSession: AgentProviderSessionMetadata = {
         key: providerSessionKeyForResumableBase(baseAgent),
-        id: input.resume.sessionKey.providerSessionId
+        id: input.resume.sessionKey.providerSessionId,
+        // Pi/Prime-Agent resume by this path, never by id; the ownership key
+        // cannot carry it, so it rides the one-time legacy handoff and is then
+        // owned by the persisted record for every later resume.
+        ...(handoffTranscriptPath ? { transcriptPath: handoffTranscriptPath } : {})
       }
       const replay = buildLegacyResumeReplay({
         legacyLaunchConfig: input.legacy.handoff.launchConfig,

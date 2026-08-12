@@ -43,6 +43,7 @@ export function DataRecoveryDialog({ open, onOpenChange }: DataRecoveryDialogPro
   const [points, setPoints] = useState<RecoveryPointDto[] | null>(null)
   const [confirming, setConfirming] = useState<RecoveryPointDto | null>(null)
   const [restoring, setRestoring] = useState(false)
+  const [restored, setRestored] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -77,15 +78,41 @@ export function DataRecoveryDialog({ open, onOpenChange }: DataRecoveryDialogPro
         id: point.id,
         mode: 'prepare-downgrade'
       })
-      // On success Orca quits; only failures come back to this dialog.
       if (result && !result.ok) {
         setError(result.error)
+        return
       }
+      // A committed restore replaced the profile and suspended writes, so this
+      // window is no longer saving anything. Orca quits right after; say so
+      // rather than leave a silent dialog if that quit is ever delayed.
+      setRestored(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setRestoring(false)
     }
+  }
+
+  if (restored) {
+    // Terminal state: not dismissible, because there is nothing to go back to —
+    // the profile on disk is the recovery point and this window saves nothing.
+    return (
+      <Dialog open>
+        <DialogContent className="max-w-lg" showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>
+              {translate('auto.components.dataRecovery.restoredTitle', 'Restored — quitting Orca')}
+            </DialogTitle>
+            <DialogDescription>
+              {translate(
+                'auto.components.dataRecovery.restoredBody',
+                'The recovery point was restored and Orca is quitting. This window no longer saves changes, so anything you do here from now on is discarded. If Orca does not quit on its own, quit it yourself, then install the previous Orca version before opening it again.'
+              )}
+            </DialogDescription>
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>
+    )
   }
 
   return (

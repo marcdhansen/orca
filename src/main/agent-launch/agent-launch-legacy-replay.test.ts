@@ -41,10 +41,12 @@ describe('buildLegacyResumeReplay', () => {
   it('appends resume argv once for every resumable base', () => {
     for (const base of RESUMABLE_TUI_AGENTS) {
       const key = providerSessionKeyForResumableBase(base)
+      // Pi and Prime-Agent resume by transcript path, not id; the bases that
+      // resume by id ignore it, so every base gets one.
       const providerSession = {
         key,
         id: 'sess-9',
-        ...(base === 'pi' ? { transcriptPath: '/tmp/pi/session.jsonl' } : {})
+        transcriptPath: '/tmp/transcripts/session.jsonl'
       } as const
       const result = replay({ baseAgent: base, requestedAgent: base, providerSession })
       expect(result.ok, `base ${base}`).toBe(true)

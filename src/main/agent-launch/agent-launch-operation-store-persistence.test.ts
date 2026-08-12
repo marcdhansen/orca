@@ -140,7 +140,7 @@ describe('agent-launch operation-store persistence', () => {
     ).toEqual({
       pending: [],
       settled: [],
-      decryptionUnavailable: false
+      persistedStateUnreadable: false
     })
   })
 
@@ -157,7 +157,7 @@ describe('agent-launch operation-store persistence', () => {
     const reloaded = loadAgentLaunchOperationStoreState(path, reversibleCipher(false))
     expect(reloaded.pending).toEqual([])
     expect(reloaded.settled).toEqual([settled('op-2')])
-    expect(reloaded.decryptionUnavailable).toBe(true)
+    expect(reloaded.persistedStateUnreadable).toBe(true)
   })
 
   it('returns empty state for a corrupt file', () => {
@@ -166,7 +166,7 @@ describe('agent-launch operation-store persistence', () => {
     expect(loadAgentLaunchOperationStoreState(path, reversibleCipher(true))).toEqual({
       pending: [],
       settled: [],
-      decryptionUnavailable: false
+      persistedStateUnreadable: false
     })
   })
 

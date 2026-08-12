@@ -48,7 +48,11 @@ const LEGACY_CONFIG: SleepingAgentLaunchConfig = {
 
 /** Desktop trusted context with an optional first-resume handoff. */
 function desktopLegacy(
-  handoff?: { launchConfig: SleepingAgentLaunchConfig; recordedConnectionId: string | null },
+  handoff?: {
+    launchConfig: SleepingAgentLaunchConfig
+    recordedConnectionId: string | null
+    transcriptPath?: string
+  },
   connectionId: string | null = null
 ): ResumeLaunchIngestInput['legacy'] {
   return { shell: 'posix', connectionId, ...(handoff ? { handoff } : {}) }
@@ -159,6 +163,76 @@ describe('resolveResumeLaunchIngest — opaque legacy replay', () => {
       store
     )
     expect(second.ok && second.kind).toBe('legacy')
+  })
+
+  it('carries the handoff transcript path so a pre-upgrade Pi session still resumes', () => {
+    // Regression: Pi/Prime-Agent resume by transcript path, but the ownership key
+    // carries only the session id. Dropping the handoff's path made every
+    // pre-upgrade sleeping Pi/Prime session fail closed on first resume.
+    const piKey: AgentSessionOwnershipKey = {
+      worktreeId: 'wt-1',
+      baseAgent: 'pi',
+      providerSessionId: 'sess-pi'
+    }
+    const store = new AgentSessionRecordStore()
+    const result = resolveResumeLaunchIngest(
+      {
+        resume: { operation: 'resume', sessionKey: piKey },
+        client: 'desktop',
+        legacy: desktopLegacy({
+          launchConfig: { agentCommand: 'pi', agentArgs: '', agentEnv: {} },
+          recordedConnectionId: null,
+          transcriptPath: '/home/me/.pi/sessions/sess-pi.jsonl'
+        })
+      },
+      store
+    )
+    expect(result.ok && result.kind).toBe('legacy')
+    if (!result.ok || result.kind !== 'legacy') {
+      return
+    }
+    expect(result.launchCommand).toContain('--session')
+    expect(result.launchCommand).toContain('/home/me/.pi/sessions/sess-pi.jsonl')
+    // The host owns the path thereafter, so a later resume needs no handoff.
+    expect(store.resolveByOwnershipKey(piKey)?.providerSession.transcriptPath).toBe(
+      '/home/me/.pi/sessions/sess-pi.jsonl'
+    )
+    const second = resolveResumeLaunchIngest(
+      {
+        resume: { operation: 'resume', sessionKey: piKey },
+        client: 'desktop',
+        legacy: desktopLegacy()
+      },
+      store
+    )
+    expect(second.ok && second.kind).toBe('legacy')
+  })
+
+  it('fails closed when a Pi handoff has no transcript path to resume by', () => {
+    const store = new AgentSessionRecordStore()
+    const result = resolveResumeLaunchIngest(
+      {
+        resume: {
+          operation: 'resume',
+          sessionKey: { worktreeId: 'wt-1', baseAgent: 'pi', providerSessionId: 'sess-pi' }
+        },
+        client: 'desktop',
+        legacy: desktopLegacy({
+          launchConfig: { agentCommand: 'pi', agentArgs: '', agentEnv: {} },
+          recordedConnectionId: null
+        })
+      },
+      store
+    )
+    // Never a partial write: an unresumable handoff leaves the store untouched.
+    expect(result.ok).toBe(false)
+    expect(
+      store.resolveByOwnershipKey({
+        worktreeId: 'wt-1',
+        baseAgent: 'pi',
+        providerSessionId: 'sess-pi'
+      })
+    ).toBeNull()
   })
 
   it('strips Orca attribution env before replay and persists the cleaned config', () => {

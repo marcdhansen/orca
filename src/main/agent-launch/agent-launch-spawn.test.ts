@@ -14,9 +14,9 @@ import {
 import type { CustomTuiAgentId, GlobalSettings } from '../../shared/types'
 import type {
   ResolvedAgentLaunch,
-  AgentLaunchSnapshot
+  AgentLaunchSnapshot,
+  ResolveAgentLaunchRequest
 } from '../../shared/agent-launch-host-contract'
-import type { ResolveAgentLaunchRequest } from '../../shared/agent-launch-host-contract'
 import type { ResolveAgentLaunchOutcome } from './resolve-agent-launch'
 import { customId } from './agent-launch-test-catalog'
 

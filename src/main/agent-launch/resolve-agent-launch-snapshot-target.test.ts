@@ -4,10 +4,12 @@
 // lossy target (it cannot deliver % ! ^ "), so a shell change into cmd fails
 // closed when any captured element carries one of those.
 import { describe, expect, it } from 'vitest'
-import type { AgentLaunchSnapshot } from '../../shared/agent-launch-host-contract'
+import type {
+  AgentLaunchExecutionHostId,
+  AgentLaunchSnapshot
+} from '../../shared/agent-launch-host-contract'
 import type { AgentStartupShell } from '../../shared/tui-agent-startup-shell'
 import { resolveAgentLaunch, type ResolveAgentLaunchOutcome } from './resolve-agent-launch'
-import type { AgentLaunchExecutionHostId } from '../../shared/agent-launch-host-contract'
 import { catalogOf, requestOf, settingsOf } from './agent-launch-test-catalog'
 
 const RESUME_DESKTOP = { kind: 'resume', operation: 'resume', client: 'desktop' } as const

@@ -74,12 +74,15 @@ describe('background-agent-launch store persistence', () => {
     writeFileSync(path, JSON.stringify(raw), 'utf-8')
 
     const loaded = loadBackgroundAgentLaunchAttempts(path)
-    expect(loaded).toHaveLength(1)
-    expect(loaded[0]?.attemptId).toBe(ATTEMPT_ID)
+    expect(loaded.attempts).toHaveLength(1)
+    expect(loaded.attempts[0]?.attemptId).toBe(ATTEMPT_ID)
   })
 
   it('starts empty on a corrupt file instead of blocking boot', () => {
     writeFileSync(path, '{ not json', 'utf-8')
-    expect(loadBackgroundAgentLaunchAttempts(path)).toEqual([])
+    expect(loadBackgroundAgentLaunchAttempts(path)).toEqual({
+      attempts: [],
+      persistedStateUnreadable: false
+    })
   })
 })

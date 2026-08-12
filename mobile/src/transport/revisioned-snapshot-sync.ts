@@ -17,6 +17,10 @@ export type SnapshotFetchOutcome<V> =
   // Transient failure (client not connected, RPC rejected, malformed frame).
   // The cached value is left untouched; a later event or reconnect re-drives.
   | { kind: 'unavailable' }
+  // The host answered and authoritatively publishes NO snapshot (a downgraded or
+  // pre-catalog host). Distinct from 'unavailable': keeping the cache here would
+  // keep offering agents this host can no longer launch, so it is dropped.
+  | { kind: 'absent'; runtimeId: string }
 
 export type SnapshotFetch<V> = () => Promise<SnapshotFetchOutcome<V>>
 
@@ -137,6 +141,17 @@ export function createRevisionedSnapshotSync<
       }
       if (wasHydrate) {
         state.hydratePending = false
+      }
+      if (outcome.kind === 'absent') {
+        state.runtimeId = outcome.runtimeId
+        // Announced revisions describe a snapshot this host no longer publishes;
+        // clearing them stops needsFetch from self-chaining against it.
+        state.highestAnnounced = null
+        if (state.value !== null) {
+          state.value = null
+          notify(hostId)
+        }
+        return
       }
       applyValue(hostId, state, outcome.runtimeId, outcome.value, wasHydrate)
       // Follow-up only while making progress: a host that persistently serves

@@ -25,7 +25,6 @@ import { prepareLocalWorktreeRootsForRepos } from '../worktree-root-preparation'
 import { scheduleCurrentWorktreeBaseDirectoryWatcherSync } from './worktree-base-directory-watcher'
 import { applyPRBotAuthorOverride } from '../../shared/pr-bot-author-overrides'
 import { resolveEnvironment } from '../../shared/runtime-environment-store'
-import { haveSameDisabledTuiAgents } from '../../shared/tui-agent-selection'
 import {
   normalizeMobilePairingCustomAddress,
   normalizeMobilePairingCustomAddresses
@@ -230,12 +229,12 @@ export function registerSettingsHandlers(
         normalizeComputerAwakeMode(result.computerAwakeMode, result.keepComputerAwakeWhileAgentsRun)
       )
     }
-    const hookSettingChanged =
-      ('agentStatusHooksEnabled' in sanitizedArgs &&
-        before.agentStatusHooksEnabled !== result.agentStatusHooksEnabled) ||
-      ('disabledTuiAgents' in sanitizedArgs &&
-        !haveSameDisabledTuiAgents(before.disabledTuiAgents, result.disabledTuiAgents))
-    if (hookSettingChanged) {
+    // `disabledTuiAgents` is catalog-owned and stripped above, so its half of the
+    // reconcile lives on the settings:mutateAgentCatalog handler instead.
+    if (
+      'agentStatusHooksEnabled' in sanitizedArgs &&
+      before.agentStatusHooksEnabled !== result.agentStatusHooksEnabled
+    ) {
       try {
         await applyAgentStatusHooksEnabled(result.agentStatusHooksEnabled, result, {
           shouldHydrateShellPath: app.isPackaged,

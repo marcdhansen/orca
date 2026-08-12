@@ -18,15 +18,20 @@ import {
   expect as playwrightExpect,
   _electron as electron,
   type Page,
-  type ElectronApplication,
-  type TestInfo
+  type ElectronApplication
 } from '@stablyai/playwright-test'
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { TEST_REPO_PATH_FILE } from '../global-setup'
 import { cleanupE2EDaemons, closeElectronAppForE2E } from './electron-process-shutdown'
 import { getOrcaElectronLaunchArgs } from './electron-launch-args'
+import {
+  forwardElectronProcessLogs,
+  ORCA_E2E_SLOWMO_MS,
+  removeUserDataDirAfterShutdown,
+  shouldLaunchHeadful
+} from './orca-app-launch-environment'
 import { getE2ECompletedOnboardingProfile } from './e2e-completed-onboarding-profile'
 import {
   assertElectronResolvedIsolatedHome,
@@ -79,68 +84,7 @@ type OrcaWorkerFixtures = {
   testRepoPath: string
 }
 
-// Why: parse + warn at module scope so a bad ORCA_E2E_SLOWMO_MS value logs once
-// per worker instead of once per test (otherwise hundreds of lines per CI run).
-const ORCA_E2E_SLOWMO_MS_RAW = process.env.ORCA_E2E_SLOWMO_MS
-const ORCA_E2E_SLOWMO_MS = ((): number => {
-  if (ORCA_E2E_SLOWMO_MS_RAW === undefined) {
-    return 0
-  }
-  const parsed = Number(ORCA_E2E_SLOWMO_MS_RAW)
-  if (!Number.isFinite(parsed)) {
-    console.warn(
-      `[orca-e2e] ORCA_E2E_SLOWMO_MS="${ORCA_E2E_SLOWMO_MS_RAW}" is not a number; ignoring (using 0).`
-    )
-    return 0
-  }
-  return Math.max(parsed, 0)
-})()
-
-async function removeUserDataDirAfterShutdown(userDataDir: string): Promise<void> {
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    try {
-      rmSync(userDataDir, { recursive: true, force: true })
-      return
-    } catch (error) {
-      if (attempt === 4) {
-        throw error
-      }
-      // Why: Windows can briefly keep Electron profile files locked after the
-      // process exits; retrying avoids turning a passed flow into teardown noise.
-      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)))
-    }
-  }
-}
-
-function shouldLaunchHeadful(testInfo: TestInfo): boolean {
-  // Why: ORCA_E2E_FORCE_HEADFUL lets a developer watch any spec in a real
-  // window without retagging it `@headful` or switching projects.
-  if (process.env.ORCA_E2E_FORCE_HEADFUL === '1') {
-    return true
-  }
-  return testInfo.project.metadata.orcaHeadful === true
-}
-
-// Why: exported so specs that launch their own ElectronApplication outside
-// this fixture (e.g. multi-instance lifecycle tests) can still opt into the
-// same ORCA_E2E_FORWARD_APP_LOGS-gated stdout/stderr capture.
-export function forwardElectronProcessLogs(app: ElectronApplication, testInfo: TestInfo): void {
-  if (process.env.ORCA_E2E_FORWARD_APP_LOGS !== '1') {
-    return
-  }
-
-  const child = app.process()
-  const prefix = `[electron:${testInfo.title}]`
-  child.stdout?.on('data', (chunk: Buffer) => {
-    console.log(`${prefix} stdout: ${chunk.toString().trimEnd()}`)
-  })
-  child.stderr?.on('data', (chunk: Buffer) => {
-    console.error(`${prefix} stderr: ${chunk.toString().trimEnd()}`)
-  })
-  child.on('exit', (code, signal) => {
-    console.log(`${prefix} exit: code=${code ?? 'null'} signal=${signal ?? 'null'}`)
-  })
-}
+export { forwardElectronProcessLogs } from './orca-app-launch-environment'
 
 /**
  * Extended Playwright test with Orca-specific fixtures.

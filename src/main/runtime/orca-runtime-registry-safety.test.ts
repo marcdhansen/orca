@@ -54,7 +54,7 @@ type RegistrySafetyInternals = {
   waitForStartupDraftReady: (handle: string, agent: string) => Promise<string | null>
   getLivePtyForHandle: (handle: string) => unknown
   subscribeToTerminalData: (ptyId: string, cb: (data: string) => void) => () => void
-  recentPtyOutputById: Map<string, string>
+  recentPtyOutputById: Map<string, { read: () => string }>
 }
 
 function makeRuntime(): RegistrySafetyInternals {
@@ -95,10 +95,9 @@ describe('runtime registry safety (oracle 16): custom id resolves via base', () 
     const internals = makeRuntime()
     internals.getLivePtyForHandle = () => ({ pty: { ptyId: 'p1' } })
     internals.subscribeToTerminalData = () => () => {}
-    internals.recentPtyOutputById = new Map([['p1', 'ready-bytes']])
-    await expect(
-      internals.waitForStartupDraftReady('term-1', CUSTOM_CODEX_ID)
-    ).resolves.toBe('p1')
+    // The runtime replays buffered output through the buffer's read(), not a raw string.
+    internals.recentPtyOutputById = new Map([['p1', { read: () => 'ready-bytes' }]])
+    await expect(internals.waitForStartupDraftReady('term-1', CUSTOM_CODEX_ID)).resolves.toBe('p1')
     // Base-resolved codex signal — NOT the render-quiet-after-bracketed-paste default.
     expect(createDraftPasteReadyScanner).toHaveBeenCalledWith('codex-composer-prompt')
   })

@@ -20,6 +20,7 @@ import type {
   AiVaultPrepareSessionResumeResult
 } from '../../../shared/ai-vault-resume-preparation'
 import type {
+  AgentLaunchSpawnRequest,
   AgentLaunchVaultResumeCopyResult,
   AgentLaunchVaultResumeDetailsResult,
   AgentLaunchVaultResumeEntry
@@ -169,7 +170,6 @@ import {
   resolveRemoteWorktreeCreateLaunchParams,
   type RemoteWorktreeCreateLaunchParams
 } from './worktree-create-launch-compat'
-import type { AgentLaunchSpawnRequest } from '../../../shared/agent-launch-spawn-request'
 import { translate } from '@/i18n/i18n'
 import { translateHostAccessLinkError } from '@/lib/remote-pairing-copy'
 import { getDefaultCreateProjectParent } from '@/components/sidebar/create-project-defaults'

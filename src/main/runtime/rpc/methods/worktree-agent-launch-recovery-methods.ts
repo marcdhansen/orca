@@ -14,7 +14,7 @@ import {
   WorktreeRetryAgentLaunch,
   WorktreeRetryBackgroundAgentLaunch,
   WorktreeUnknownAgentLaunchSiblingCount
-} from './worktree-schemas'
+} from './worktree-agent-launch-schemas'
 
 export const WORKTREE_AGENT_LAUNCH_RECOVERY_METHODS: RpcMethod[] = [
   defineMethod({

@@ -5,8 +5,10 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentLaunchRecoveryCard } from './AgentLaunchRecoveryCard'
 import type { AgentLaunchRecoveryActionId } from '@/lib/agent-launch-recovery-card'
-import type { PersistedAgentLaunchFailure } from '../../../../shared/agent-launch-contract'
-import type { AgentLaunchFailureCode } from '../../../../shared/agent-launch-contract'
+import type {
+  AgentLaunchFailureCode,
+  PersistedAgentLaunchFailure
+} from '../../../../shared/agent-launch-contract'
 
 const mountedRoots: Root[] = []
 

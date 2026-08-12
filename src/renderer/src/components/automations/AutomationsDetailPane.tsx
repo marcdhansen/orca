@@ -34,8 +34,10 @@ import {
 } from './automation-page-parts'
 import { getAutomationRunContent } from './automation-run-content'
 import type { AutomationTargetAvailability } from './automation-target-availability'
-import type { AutomationRunViewState } from './automation-run-view-state'
-import type { AutomationRunLaunchFailure as AutomationRunLaunchFailureState } from './automation-run-view-state'
+import type {
+  AutomationRunLaunchFailure as AutomationRunLaunchFailureState,
+  AutomationRunViewState
+} from './automation-run-view-state'
 import { AutomationRunLaunchFailure } from './AutomationRunLaunchFailure'
 import type { AutomationRunWorkspaceDisplay } from './automation-run-workspace-display'
 import type { AutomationPaneTab, SelectedExternalRunPage } from './automation-page-state'

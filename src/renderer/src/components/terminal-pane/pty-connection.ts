@@ -5559,6 +5559,11 @@ export function connectPanePty(
                   content: hostDeliveredPrompt,
                   agent: hostDeliveredAgent,
                   submit: hostFollowupSubmit,
+                  // Why: the host returns a prompt here ONLY when native prefill
+                  // could not carry it (oversized argv/env block, cmd-unencodable
+                  // text). Without this the helper's prefill guard would drop the
+                  // text for every agent that merely *has* a draft flag/env var.
+                  forcePaste: true,
                   onTimeout: () => showAutomationPromptNotSentToast(hostDeliveredAgent)
                 }).catch(() => {})
               }

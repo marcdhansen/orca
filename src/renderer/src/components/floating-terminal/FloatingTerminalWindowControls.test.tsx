@@ -157,12 +157,6 @@ beforeEach(() => {
     state.tabsByWorktree[FLOATING_TERMINAL_WORKTREE_ID] = [...existing, tab]
     return tab
   })
-  mocks.buildAgentStartupPlan.mockReturnValue({
-    launchCommand: 'claude',
-    launchConfig: {},
-    env: undefined,
-    startupCommandDelivery: undefined
-  })
   storeBox.state = {
     settings: {
       defaultTuiAgent: 'claude',
@@ -203,7 +197,9 @@ describe('FloatingTerminalWindowControls default-agent launch', () => {
     const launch = findOnClickByAriaLabel(element, 'Open Claude in floating workspace')
     launch()
 
-    expect(mocks.buildAgentStartupPlan.mock.calls[0]?.[0]).not.toHaveProperty('sessionOptions')
+    // The host resolves the default agent, so no client-side plan is built at all
+    // and cached session options cannot leak into the launch.
+    expect(mocks.buildAgentStartupPlan).not.toHaveBeenCalled()
 
     expect(mocks.createTab).toHaveBeenCalledWith(
       FLOATING_TERMINAL_WORKTREE_ID,
@@ -224,6 +220,7 @@ describe('FloatingTerminalWindowControls default-agent launch', () => {
     expect(queued.command).toBeFalsy()
     expect(queued).not.toHaveProperty('launchConfig')
     expect(queued).not.toHaveProperty('launchAgent')
+    expect(queued).not.toHaveProperty('sessionOptions')
     expect(mocks.queueTabStartupCommand.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.activateTab.mock.invocationCallOrder[0]
     )

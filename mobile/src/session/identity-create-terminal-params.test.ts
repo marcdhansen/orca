@@ -10,7 +10,8 @@ describe('buildIdentityCreateTerminalParams', () => {
   // client-cached agent id, so both createTerminal callers send selection:default.
   it('defers agent selection to the host default', () => {
     expect(buildIdentityCreateTerminalParams('wt-1').agentLaunch).toEqual({
-      selection: { kind: 'default' }
+      selection: { kind: 'default' },
+      allowEmptyPromptLaunch: true
     })
   })
 

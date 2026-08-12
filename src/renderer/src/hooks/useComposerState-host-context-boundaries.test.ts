@@ -16,6 +16,10 @@ const RECIPE_OPTIONS_SOURCE = readFileSync(
   join(__dirname, 'useEphemeralVmRecipeOptions.ts'),
   'utf8'
 )
+const FOLDER_SUBMIT_SOURCE = readFileSync(
+  join(__dirname, '../components/sidebar/folder-workspace-composer-submit.ts'),
+  'utf8'
+)
 
 function sourceBetween(source: string, startPattern: string, endPattern: string): string {
   const start = source.indexOf(startPattern)
@@ -646,11 +650,20 @@ describe('useComposerState host-context boundaries', () => {
       'const submitFolderTarget',
       'const submit = useCallback'
     )
+    // The smart resolution can replace the linked item mid-submit, so the freshly
+    // resolved one — never the stale state value — is what the submit is built from.
+    expect(section).toContain('name: smartGitHubMetadata?.workspaceName ?? name')
     expect(section).toContain(
-      'const submitLinkedWorkItem = smartGitHubMetadata?.linkedWorkItem ?? linkedWorkItem'
+      'linkedWorkItem: smartGitHubMetadata?.linkedWorkItem ?? linkedWorkItem'
     )
-    expect(section).toContain('resolveFolderWorkspaceLaunchDraft(submitLinkedWorkItem, note)')
-    expect(section).toContain('linkedWorkItem: submitLinkedWorkItem')
+    // Both the workspace name and the agent startup draft derive from that single
+    // threaded value inside the submit module, so they cannot disagree.
+    expect(FOLDER_SUBMIT_SOURCE).toContain(
+      'const linkedName = linkedWorkItem ? getLinkedItemDisplayName(linkedWorkItem) : null'
+    )
+    expect(FOLDER_SUBMIT_SOURCE).toContain(
+      'buildFolderWorkspaceStartup({ agent: quickAgent, linkedWorkItem, note, launchSource })'
+    )
   })
 
   it('gates every submit path on the derived source intent', () => {

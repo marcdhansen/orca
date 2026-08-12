@@ -165,8 +165,10 @@ describe('resolveRevalidatedVaultResume', () => {
         notices: [{ code: 'vault_original_config_unavailable', baseAgent: 'codex' }]
       }
     })
+    // `cursor` is an AI Vault agent with no provider resume support at all —
+    // the reason a vault row can be unsupported rather than merely uncorrelated.
     const unsupported = resolveRevalidatedVaultResume({
-      session: vaultSession({ agent: 'omp' }),
+      session: vaultSession({ agent: 'cursor' }),
       sessionRecordStore: store,
       targetExecutionHostId: 'local',
       targetPlatform: 'linux'
@@ -215,7 +217,13 @@ describe('resolveRevalidatedVaultResumeDetails', () => {
 describe('buildVaultResumeStartup', () => {
   it('appends the provider resume argv exactly once for every resumable vault agent', () => {
     for (const agent of RESUMABLE_VAULT_AGENTS) {
-      const session = vaultSession({ agent: agent as AiVaultAgent, sessionId: `id-${agent}` })
+      // Every discovered vault row carries its host-derived transcript path;
+      // Pi/Prime-Agent (and OMP) resume by that path rather than by id.
+      const session = vaultSession({
+        agent: agent as AiVaultAgent,
+        sessionId: `id-${agent}`,
+        filePath: `/host/transcripts/id-${agent}.jsonl`
+      })
       const startup = buildVaultResumeStartup({ session, hostPlatform: 'linux' })
       expect(startup.command).toContain(`id-${agent}`)
       // The session id is the resume target and must appear exactly once.
@@ -243,9 +251,12 @@ describe('buildVaultResumeStartup', () => {
       filePath: '/host/transcripts/omp-sess.jsonl'
     })
     const startup = buildVaultResumeStartup({ session, hostPlatform: 'linux' })
-    // OMP is non-resumable → the path-based fallback resumes by absolute path.
+    // OMP's resume argv falls back to the session id when no path is supplied,
+    // so the host-derived path must reach the plan or a custom
+    // OMP_CODING_AGENT_DIR / WSL-store session resumes against the wrong file.
     expect(startup.command).toContain('/host/transcripts/omp-sess.jsonl')
-    expect(startup.launchConfig).toBeUndefined()
+    expect(startup.command).not.toContain("'omp-sess'")
+    expect(startup.launchConfig?.ompResumeFilePath).toBe('/host/transcripts/omp-sess.jsonl')
   })
 
   it('replays a remote session command verbatim without re-deriving it', () => {

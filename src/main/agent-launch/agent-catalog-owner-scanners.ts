@@ -131,10 +131,14 @@ export function registerBuiltInOwnerScanners(
     owner: 'session',
     scan: () => {
       try {
-        return {
-          ok: true,
-          referencedIds: getHostAgentSessionRecordStore().referencedRequestedAgents()
+        const store = getHostAgentSessionRecordStore()
+        // An unreadable persisted store (locked keychain / unreadable file) means
+        // the in-memory records are a PARTIAL view; reporting them as the complete
+        // reference set would let a still-referenced tombstone be pruned.
+        if (!store.recordCompleteness.isComplete()) {
+          return { ok: false }
         }
+        return { ok: true, referencedIds: store.referencedRequestedAgents() }
       } catch {
         return { ok: false }
       }
@@ -148,10 +152,11 @@ export function registerBuiltInOwnerScanners(
     owner: 'background',
     scan: () => {
       try {
-        return {
-          ok: true,
-          referencedIds: getHostBackgroundAgentLaunchStore().referencedRequestedAgents()
+        const store = getHostBackgroundAgentLaunchStore()
+        if (!store.attemptCompleteness.isComplete()) {
+          return { ok: false }
         }
+        return { ok: true, referencedIds: store.referencedRequestedAgents() }
       } catch {
         return { ok: false }
       }

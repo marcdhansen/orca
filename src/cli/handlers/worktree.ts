@@ -235,8 +235,9 @@ export const WORKTREE_HANDLERS: Record<string, CommandHandler> = {
       ...linearIssueLink,
       comment: getOptionalStringFlag(flags, 'comment'),
       runHooks: flags.get('run-hooks') === true,
-      activate:
-        flags.get('activate') === true || flags.get('run-hooks') === true || Boolean(agentLaunch),
+      // An agent launch does NOT imply activation: a CLI-created agent workspace
+      // starts in the background so an agent shell cannot yank the user's focus.
+      activate: flags.get('activate') === true || flags.get('run-hooks') === true,
       ...(setupDecision ? { setupDecision } : {}),
       parentWorktree: explicitParentWorktree,
       ...(explicitParentWorkspace ? { parentWorkspace: explicitParentWorkspace } : {}),

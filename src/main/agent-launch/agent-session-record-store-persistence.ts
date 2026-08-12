@@ -8,10 +8,9 @@
 // core takes an injected cipher so the envelope round-trip is testable without
 // Electron. This file is never client-synced.
 
-import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { safeStorage } from 'electron'
-import { hardenExistingSecureFile, writeSecureJsonFile } from '../../shared/secure-file'
+import { readSecureJsonFile, writeSecureJsonFile } from '../../shared/secure-file'
 import type {
   AgentSessionRecordStore,
   AgentSessionRecordStoreDurableState,
@@ -68,13 +67,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-/** Load/decode outcome. `decryptionUnavailable` marks an encrypted section the OS
- *  cipher could not read at load (locked/late keychain): the persisted records
- *  are intact on disk, just unreadable NOW, so write-back must be skipped —
- *  otherwise the next durable mutation would overwrite them with the empty set. */
+/** Load/decode outcome. `persistedStateUnreadable` marks persisted records that
+ *  are intact on disk but unreadable NOW — either an encrypted section the OS
+ *  cipher could not open (locked/late keychain) or a file this process could not
+ *  read (EACCES/EBUSY/EMFILE/EIO). Both mean the same thing to the caller:
+ *  write-back must be skipped, or the next durable mutation overwrites the
+ *  persisted set with the empty one. An ABSENT or structurally corrupt file is
+ *  NOT unreadable — there rewriting is the recovery, not a loss. */
 export type AgentSessionRecordStoreLoadResult = {
   records: HostSessionLaunchRecord[]
-  decryptionUnavailable: boolean
+  persistedStateUnreadable: boolean
 }
 
 function decodeRecords(
@@ -82,19 +84,19 @@ function decodeRecords(
   cipher: AgentSessionRecordCipher
 ): AgentSessionRecordStoreLoadResult {
   if (!isRecord(section)) {
-    return { records: [], decryptionUnavailable: false }
+    return { records: [], persistedStateUnreadable: false }
   }
   if (section.format === 'plaintext-v1' && Array.isArray(section.records)) {
     return {
       records: section.records as HostSessionLaunchRecord[],
-      decryptionUnavailable: false
+      persistedStateUnreadable: false
     }
   }
   if (section.format === 'electron-safe-storage-v1' && typeof section.ciphertext === 'string') {
     if (!cipher.available()) {
       // Transient: a locked/late keychain at boot. The ciphertext is still
       // valid, so flag it rather than treating the store as empty.
-      return { records: [], decryptionUnavailable: true }
+      return { records: [], persistedStateUnreadable: true }
     }
     // A decrypt failure with an AVAILABLE cipher (keychain reset) is permanent:
     // it drops only the records, never blocks boot — those sessions then require
@@ -102,10 +104,10 @@ function decodeRecords(
     const parsed = JSON.parse(cipher.decrypt(Buffer.from(section.ciphertext, 'base64')))
     return {
       records: Array.isArray(parsed) ? (parsed as HostSessionLaunchRecord[]) : [],
-      decryptionUnavailable: false
+      persistedStateUnreadable: false
     }
   }
-  return { records: [], decryptionUnavailable: false }
+  return { records: [], persistedStateUnreadable: false }
 }
 
 export function decodeAgentSessionRecordStore(
@@ -113,12 +115,12 @@ export function decodeAgentSessionRecordStore(
   cipher: AgentSessionRecordCipher
 ): AgentSessionRecordStoreLoadResult {
   if (!isRecord(raw) || raw.version !== 1) {
-    return { records: [], decryptionUnavailable: false }
+    return { records: [], persistedStateUnreadable: false }
   }
   try {
     return decodeRecords(raw.records, cipher)
   } catch {
-    return { records: [], decryptionUnavailable: false }
+    return { records: [], persistedStateUnreadable: false }
   }
 }
 
@@ -126,17 +128,18 @@ export function loadAgentSessionRecordStoreState(
   path: string,
   cipher: AgentSessionRecordCipher
 ): AgentSessionRecordStoreLoadResult {
-  if (!existsSync(path)) {
-    return { records: [], decryptionUnavailable: false }
+  const read = readSecureJsonFile(path)
+  if (read.kind === 'unreadable') {
+    // The records are intact on disk, just not readable by this process right
+    // now. Reporting "empty" here would let the write-back sink destroy them.
+    return { records: [], persistedStateUnreadable: true }
   }
-  try {
-    hardenExistingSecureFile(path)
-    return decodeAgentSessionRecordStore(JSON.parse(readFileSync(path, 'utf-8')), cipher)
-  } catch {
-    // A corrupt store must never block boot; start empty and let live sessions
-    // rebind on their next hook.
-    return { records: [], decryptionUnavailable: false }
+  if (read.kind !== 'parsed') {
+    // Absent or corrupt: a corrupt store must never block boot; start empty and
+    // let live sessions rebind on their next hook.
+    return { records: [], persistedStateUnreadable: false }
   }
+  return decodeAgentSessionRecordStore(read.value, cipher)
 }
 
 export function writeAgentSessionRecordStoreState(
@@ -175,24 +178,27 @@ export function initAgentSessionRecordStorePersistence(
       }
     })
   }
-  if (!state.decryptionUnavailable) {
+  if (!state.persistedStateUnreadable) {
     attachWriteBackSink()
     return
   }
-  // Locked/late keychain at boot: the ciphertext on disk is intact but
-  // unreadable NOW. A plain write-back sink would overwrite it with the empty
-  // in-memory set on the first mutation, so instead attach a recovery sink that
-  // re-probes the cipher on each durable mutation. Once decryption works, the
-  // on-disk records are merged UNDER the in-memory ones (fresh binds win their
-  // ownership keys), the write-back sink takes over, and later forgets stick
-  // instead of resurrecting from ciphertext next boot.
+  // Persisted records exist but could not be read at boot (locked/late keychain,
+  // or an unreadable file). A plain write-back sink would overwrite them with
+  // the empty in-memory set on the first mutation, so instead attach a recovery
+  // sink that re-reads on each durable mutation. Once the load comes back clean,
+  // the on-disk records are merged UNDER the in-memory ones (fresh binds win
+  // their ownership keys), the write-back sink takes over, and later forgets
+  // stick instead of resurrecting next boot.
+  store.recordCompleteness.markIncomplete()
   store.setDurablePersistence(() => {
-    if (!cipher.available()) {
+    const onDisk = loadAgentSessionRecordStoreState(path, cipher)
+    if (onDisk.persistedStateUnreadable) {
+      // Still degraded — write nothing and keep the recovery sink armed.
       return
     }
     try {
-      const onDisk = loadAgentSessionRecordStoreState(path, cipher)
       store.mergeRehydratedRecords(onDisk.records)
+      store.recordCompleteness.markComplete()
       attachWriteBackSink()
       writeAgentSessionRecordStoreState(path, store.durableState(), cipher)
     } catch {

@@ -652,7 +652,10 @@ jobs:
   # path translation, drive-letter mapping — is proven cross-OS, not just on
   # Linux. The SSH throwaway-container e2e is a SEPARATE Ubuntu-only job because
   # macOS/Windows GitHub runners cannot host a Linux Docker container.
-  custom-agent-platform:
+  # Why snake_case: verify derives each gate's env var from the job name by
+  # uppercasing it, and env vars cannot contain `-`. A kebab name also makes
+  # `needs.<job>.result` parse as subtraction instead of a property access.
+  custom_agent_platform:
     name: Custom agent platform (${{ matrix.os }})
     strategy:
       # Run every OS to completion so a platform-specific failure is not masked
@@ -703,7 +706,7 @@ jobs:
       - managed_hook_node18
       - package
       - package_windows
-      - custom-agent-platform
+      - custom_agent_platform
     runs-on: ubuntu-latest
 
     steps:
@@ -727,7 +730,7 @@ jobs:
           MANAGED_HOOK_NODE18: ${{ needs.managed_hook_node18.result }}
           PACKAGE: ${{ needs.package.result }}
           PACKAGE_WINDOWS: ${{ needs.package_windows.result }}
-          CUSTOM_AGENT_PLATFORM: ${{ needs.custom-agent-platform.result }}
+          CUSTOM_AGENT_PLATFORM: ${{ needs.custom_agent_platform.result }}
         run: |
           for result in \
             "$STATIC_ANALYSIS" \

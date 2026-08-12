@@ -4,8 +4,10 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentLaunchRecoveryCardContainer } from './AgentLaunchRecoveryCardContainer'
-import type { AgentLaunchFailureCode } from '../../../../shared/agent-launch-contract'
-import type { PersistedAgentLaunchFailure } from '../../../../shared/agent-launch-contract'
+import type {
+  AgentLaunchFailureCode,
+  PersistedAgentLaunchFailure
+} from '../../../../shared/agent-launch-contract'
 
 const WORKTREE_ID = 'repo1::/tmp/wt'
 

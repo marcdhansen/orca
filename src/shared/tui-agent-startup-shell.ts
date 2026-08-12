@@ -169,6 +169,8 @@ export function resolveStartupShell(
   return shell ?? (platform === 'win32' ? 'powershell' : 'posix')
 }
 
+const CMD_QUOTE_BREAKING_CHAR_RE = /["%!]/
+
 /**
  * Quotes one argument so the SAME text is literal in every Unix shell Orca can
  * be typing into — sh, bash, zsh, dash and fish.
@@ -230,7 +232,9 @@ export function quoteStartupArg(value: string, shell: AgentStartupShell): string
     // inside cmd quotes and cannot be encoded faithfully — resolver-managed
     // launches reject custom-supplied elements containing % ! " ^ before any
     // writer runs (cmd_metachar); this quoter passes them through as-is.
-    return `"${value}"`
+    return CMD_QUOTE_BREAKING_CHAR_RE.test(value)
+      ? `"${value.replace(/([\^&|<>()%!"])/g, '^$1')}"`
+      : `"${value}"`
   }
   return quotePortableUnixArg(value)
 }
@@ -241,11 +245,34 @@ export function quoteStartupArg(value: string, shell: AgentStartupShell): string
  *  target shell is cmd. */
 export const CMD_UNENCODABLE_CHAR_RE = /[%!^"]/
 
+const POSIX_EXPANDABLE_EXECUTABLE_RE =
+  /^(~|\$[A-Za-z_][A-Za-z0-9_]*|\$\{[A-Za-z_][A-Za-z0-9_]*\})((?:\/[A-Za-z0-9._+@%:=-]+)*)$/
+
+export function isShellExpandableExecutable(value: string, shell: AgentStartupShell): boolean {
+  return shell === 'posix' && POSIX_EXPANDABLE_EXECUTABLE_RE.test(value)
+}
+
+export function quoteStartupExecutable(value: string, shell: AgentStartupShell): string {
+  const match = shell === 'posix' ? POSIX_EXPANDABLE_EXECUTABLE_RE.exec(value) : null
+  if (!match) {
+    return quoteStartupArg(value, shell)
+  }
+  const [, head, rest] = match
+  if (head === '~') {
+    return rest ? `~/${quoteStartupArg(rest.slice(1), shell)}` : '~'
+  }
+  return `"${head}"${rest ? quoteStartupArg(rest, shell) : ''}`
+}
+
 export function buildShellCommandFromArgv(
   args: readonly string[],
   shell: AgentStartupShell
 ): string {
-  const command = args.map((arg) => quoteStartupArg(arg, shell)).join(' ')
+  const command = args
+    .map((arg, index) =>
+      index === 0 ? quoteStartupExecutable(arg, shell) : quoteStartupArg(arg, shell)
+    )
+    .join(' ')
   if (shell === 'powershell' && command) {
     return `& ${command}`
   }

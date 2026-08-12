@@ -5,7 +5,7 @@ import type {
   GlobalSettings,
   TuiAgent
 } from '../../../../shared/types'
-import { getAgentCatalog } from '@/lib/agent-catalog'
+import { getAgentCatalog, getAgentLabel } from '@/lib/agent-catalog'
 import { translate } from '@/i18n/i18n'
 import { useLocalAgentCatalog } from '@/hooks/useLocalAgentCatalog'
 import { useDetectedAgents, type AgentDetectionTarget } from '@/hooks/useDetectedAgents'
@@ -38,7 +38,6 @@ import {
 } from './custom-agent-delete-plan'
 import { disableNeedsConfirmation } from './custom-agent-disable-plan'
 import { baseDisableNeedsConfirmation, countEnabledDerivatives } from './base-disable-plan'
-import { getAgentLabel } from '@/lib/agent-catalog'
 import { isCustomTuiAgentId } from '../../../../shared/custom-tui-agent-identity'
 import type {
   AgentReferenceSummary,

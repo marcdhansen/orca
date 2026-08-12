@@ -13,6 +13,7 @@ import type { PendingAgentLaunchSummary } from '../../../../../shared/agent-laun
 import { toRuntimeWorktreeSelector } from '../../../runtime/runtime-worktree-selector'
 import { getRepoIdFromWorktreeId } from '../worktree-helpers'
 import { settingsForRepoOwner } from './listing/worktree-owner-settings'
+import { createBrowserUuid } from '@/lib/browser-uuid'
 
 export function createWorktreeAgentLaunchActions(
   _set: WorktreeSliceSet,
@@ -30,7 +31,7 @@ export function createWorktreeAgentLaunchActions(
   return {
     retryWorktreeAgentLaunch: async ({ worktreeId, expectedFailureId, action }) => {
       const repoId = getRepoIdFromWorktreeId(worktreeId)
-      const clientMutationId = globalThis.crypto.randomUUID()
+      const clientMutationId = createBrowserUuid()
       const target = getActiveRuntimeTarget(settingsForRepoOwner(get(), repoId))
       if (target.kind === 'local') {
         return window.api.worktrees.retryAgentLaunch({
@@ -55,7 +56,7 @@ export function createWorktreeAgentLaunchActions(
 
     forgetWorktreeAgentLaunch: async ({ worktreeId, expectedOperationId }) => {
       const repoId = getRepoIdFromWorktreeId(worktreeId)
-      const clientMutationId = globalThis.crypto.randomUUID()
+      const clientMutationId = createBrowserUuid()
       const target = getActiveRuntimeTarget(settingsForRepoOwner(get(), repoId))
       if (target.kind === 'local') {
         return window.api.worktrees.forgetAgentLaunch({
@@ -78,7 +79,7 @@ export function createWorktreeAgentLaunchActions(
 
     retryBackgroundAgentLaunch: async ({ attemptId, worktreeId, expectedFailureId, action }) => {
       const repoId = getRepoIdFromWorktreeId(worktreeId)
-      const clientMutationId = globalThis.crypto.randomUUID()
+      const clientMutationId = createBrowserUuid()
       const target = getActiveRuntimeTarget(settingsForRepoOwner(get(), repoId))
       if (target.kind === 'local') {
         return window.api.worktrees.retryBackgroundAgentLaunch({
@@ -98,7 +99,7 @@ export function createWorktreeAgentLaunchActions(
 
     forgetBackgroundAgentLaunch: async ({ attemptId, worktreeId, expectedOperationId }) => {
       const repoId = getRepoIdFromWorktreeId(worktreeId)
-      const clientMutationId = globalThis.crypto.randomUUID()
+      const clientMutationId = createBrowserUuid()
       const target = getActiveRuntimeTarget(settingsForRepoOwner(get(), repoId))
       if (target.kind === 'local') {
         return window.api.worktrees.forgetBackgroundAgentLaunch({

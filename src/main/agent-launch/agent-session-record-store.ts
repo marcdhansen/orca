@@ -22,6 +22,7 @@ import type {
   AgentLaunchExecutionHostId,
   AgentLaunchSnapshot
 } from '../../shared/agent-launch-host-contract'
+import { PersistedSetCompleteness } from './persisted-set-completeness'
 import { rehydrateSessionRecord } from './agent-session-record-rehydrate-validation'
 import {
   getAgentSessionOwnershipKey,
@@ -111,6 +112,7 @@ export class AgentSessionRecordStore {
   // locked-keychain recovery merge cannot resurrect a record the owner already
   // forgot in this process.
   private readonly forgottenSinceRebuild = new Set<string>()
+  readonly recordCompleteness = new PersistedSetCompleteness()
   private readonly now: () => number
   private onDurableMutation: ((state: AgentSessionRecordStoreDurableState) => void) | null = null
 

@@ -96,15 +96,17 @@ export function launchAiVaultSessionInNewTab(args: {
     // On the host-resolved arm the command is empty — the host assembles it; the
     // legacy branch (drag-drop payload) still submits the client-built command.
     command: args.agentLaunch ? '' : args.command,
+    // Why: launchAgent + resumeProviderSession stay renderer-side on BOTH arms —
+    // the resume replay-protection dedup reads them from pendingStartupByTabId, so
+    // dropping them on the host-owned arm lets worktree activation launch a second
+    // resume of the same provider session (see sleeping-agent-session-launch.ts).
+    ...(args.providerSession ? { resumeProviderSession: args.providerSession } : {}),
     ...(args.agentLaunch
       ? { agentLaunch: args.agentLaunch, launchAgent: args.agent }
       : {
           ...(args.env ? { env: args.env } : {}),
           ...(args.envToDelete ? { envToDelete: args.envToDelete } : {}),
-          ...(args.launchConfig
-            ? { launchConfig: args.launchConfig, launchAgent: args.agent }
-            : {}),
-          ...(args.providerSession ? { resumeProviderSession: args.providerSession } : {})
+          ...(args.launchConfig ? { launchConfig: args.launchConfig, launchAgent: args.agent } : {})
         }),
     telemetry: {
       agent_kind: tuiAgentToAgentKind(args.agent),

@@ -268,8 +268,15 @@ export function buildVaultResumeStartup(args: {
       // resume argv lookup fail and drops it to the unstructured fallback.
       providerSession: {
         key: providerSessionKeyForResumableBase(session.agent),
-        id: session.sessionId
+        id: session.sessionId,
+        // Pi/Prime-Agent resume by transcript path, not id: without the
+        // host-derived path their resume argv is null and the session drops to
+        // the unstructured fallback (no launchConfig, no resume at all).
+        ...(session.filePath ? { transcriptPath: session.filePath } : {})
       },
+      // OMP resumes by absolute transcript path; without it the argv falls back
+      // to the session id, which misses a custom OMP_CODING_AGENT_DIR / WSL store.
+      ompResumeFilePath: session.filePath ?? null,
       cmdOverrides: {
         ...settings?.agentCmdOverrides,
         ...(commandOverride?.trim() ? { [session.agent]: commandOverride } : {})

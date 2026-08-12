@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
   PRE_RESTORE_SAFETY_SUFFIX,
+  RETIRED_BACKUP_SUFFIX,
   listRecoveryPoints,
   restoreRecoveryPoint
 } from './recovery-points'
@@ -32,9 +33,14 @@ describe('data recovery points', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
+  function backupRingPaths(): string[] {
+    return Array.from({ length: 5 }, (_, index) => `${dataFile}.bak.${index}`)
+  }
+
   function makeStore() {
     return {
       getDataFilePath: () => dataFile,
+      getBackupRingFilePaths: () => backupRingPaths(),
       freezeWrites: vi.fn(),
       unfreezeWrites: vi.fn(),
       waitForPendingWrite: vi.fn(() => Promise.resolve())
@@ -75,6 +81,33 @@ describe('data recovery points', () => {
     expect(readFileSync(`${dataFile}${PINNED_SUFFIX}`, 'utf-8')).toBe(preV1)
     expect(readFileSync(`${dataFile}${PRE_RESTORE_SAFETY_SUFFIX}`, 'utf-8')).toBe(current)
     expect(statSync(dataFile).mode & 0o777).toBe(0o600)
+  })
+
+  // The older binary's load-time fallback restores any `.bak.N` slot that parses,
+  // so a ring left in place would silently resurrect the discarded v1 state.
+  it('retires the rotating backup ring so a downgraded binary cannot restore v1 state', async () => {
+    const preV1 = JSON.stringify({ settings: { defaultTuiAgent: null } })
+    writeFileSync(dataFile, JSON.stringify({ settings: { agentCatalogSchemaVersion: 1 } }))
+    writeFileSync(`${dataFile}${PINNED_SUFFIX}`, preV1)
+    const slots = backupRingPaths()
+    writeFileSync(slots[0], '{"settings":{"agentCatalogSchemaVersion":1}}')
+    writeFileSync(slots[3], '{"settings":{"agentCatalogSchemaVersion":1,"other":true}}')
+
+    const result = await restoreRecoveryPoint(makeStore(), 'agent-catalog-pre-v1')
+
+    expect(result).toEqual({ ok: true })
+    for (const slot of slots) {
+      expect(existsSync(slot), slot).toBe(false)
+    }
+    // Renamed, not deleted: the bytes stay recoverable by hand.
+    expect(readFileSync(`${slots[0]}${RETIRED_BACKUP_SUFFIX}`, 'utf-8')).toBe(
+      '{"settings":{"agentCatalogSchemaVersion":1}}'
+    )
+    expect(readFileSync(`${slots[3]}${RETIRED_BACKUP_SUFFIX}`, 'utf-8')).toBe(
+      '{"settings":{"agentCatalogSchemaVersion":1,"other":true}}'
+    )
+    expect(existsSync(`${slots[1]}${RETIRED_BACKUP_SUFFIX}`)).toBe(false)
+    expect(readFileSync(dataFile, 'utf-8')).toBe(preV1)
   })
 
   it('rejects a missing point without touching anything', async () => {

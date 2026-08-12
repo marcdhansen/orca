@@ -23,6 +23,13 @@ import {
   type ExecutionHostId
 } from '../../../../shared/execution-host'
 import {
+  getAvailableQuickCommandHostId,
+  isQuickCommandEditorHostCurrent,
+  shouldOpenQuickCommandAddIntent,
+  shouldShowQuickCommandsRefreshError
+} from './quick-commands-pane-host-state'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
+import {
   getTerminalQuickCommandHostOptions,
   shouldShowTerminalQuickCommandHostOwnership
 } from '@/hooks/use-terminal-quick-command-hosts'
@@ -46,43 +53,6 @@ type EditorState =
       hostId: ExecutionHostId
     }
   | null
-
-export function shouldOpenQuickCommandAddIntent(
-  addCommandIntentSignal: number | undefined,
-  consumedAddIntentSignal: number
-): boolean {
-  return Boolean(addCommandIntentSignal && consumedAddIntentSignal !== addCommandIntentSignal)
-}
-
-export function getAvailableQuickCommandHostId(
-  selectedHostId: ExecutionHostId,
-  hostOptions: readonly { id: ExecutionHostId }[]
-): ExecutionHostId {
-  return hostOptions.some((host) => host.id === selectedHostId)
-    ? selectedHostId
-    : LOCAL_EXECUTION_HOST_ID
-}
-
-export function isQuickCommandEditorHostCurrent(
-  hostId: ExecutionHostId,
-  connectionGeneration: number,
-  hostOptions: readonly { id: ExecutionHostId }[],
-  runtimeStatuses: ReadonlyMap<string, { connectionGeneration?: number }>
-): boolean {
-  const host = parseExecutionHostId(hostId)
-  return (
-    hostOptions.some((option) => option.id === hostId) &&
-    (host?.kind !== 'runtime' ||
-      (runtimeStatuses.get(host.environmentId)?.connectionGeneration ?? 0) === connectionGeneration)
-  )
-}
-
-export function shouldShowQuickCommandsRefreshError(
-  commandsAreCurrent: boolean,
-  runtimeCommands: { error: string | null; ready: boolean } | undefined
-): boolean {
-  return commandsAreCurrent && runtimeCommands?.ready === true && Boolean(runtimeCommands.error)
-}
 
 export function QuickCommandsPane({
   settings,

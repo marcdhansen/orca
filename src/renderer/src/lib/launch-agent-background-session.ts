@@ -15,6 +15,7 @@ import {
 } from '@/components/terminal-pane/pty-dispatcher'
 import { subscribeToPtyData } from '@/components/terminal-pane/pty-data-sidecar-subscriptions'
 import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
+import { assertRuntimeSupportsAgentLaunchIdentity } from '@/runtime/agent-launch-identity-negotiation'
 import { toRuntimeWorktreeSelector } from '@/runtime/runtime-worktree-selector'
 import { getSettingsForWorktreeRuntimeOwner } from '@/lib/worktree-runtime-owner'
 import { singlePaneLayoutSnapshot } from '@/store/slices/terminal-helpers'
@@ -160,6 +161,9 @@ export async function launchAgentBackgroundSession(
     if (runtimeTarget.kind === 'environment') {
       // Why: runtime environments execute on the server; using local pty.spawn
       // would silently run automation on the client for a remote workspace.
+      // The client assembles no command on this path, so a pre-identity host that
+      // strips agentLaunch would spawn a bare shell and be reported as launched.
+      await assertRuntimeSupportsAgentLaunchIdentity(runtimeTarget.environmentId)
       const created = await callRuntimeRpc<
         { terminal: RuntimeTerminalCreate } | RuntimeTerminalCreateAgentLaunchFailure
       >(

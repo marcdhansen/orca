@@ -15,6 +15,8 @@ import {
   AGENTS_SETTINGS_ACTIONS,
   RETRY_SAME_ACTIONS
 } from '@/lib/agent-launch-recovery-action-dispatch'
+import { getSettingsForWorktreeRuntimeOwner } from '@/lib/worktree-runtime-owner'
+import { getActiveRuntimeTarget } from '@/runtime/runtime-client-target'
 import type { AgentLaunchRecoveryActionId } from '@/lib/agent-launch-recovery-card'
 import type { AppState } from '@/store/types'
 import type { BackgroundAgentLaunchAttempt } from '../../../../shared/background-agent-launch'
@@ -172,7 +174,13 @@ export function WorktreeCardBackgroundLaunchFailures({
         return
       }
       if (id === 'recover-capacity') {
-        openModal('agent-launch-capacity-recovery')
+        // Query the host that rejected the launch: this worktree's runtime owner,
+        // not the local host (whose summary knows nothing of a remote's capacity).
+        openModal('agent-launch-capacity-recovery', {
+          target: getActiveRuntimeTarget(
+            getSettingsForWorktreeRuntimeOwner(useAppStore.getState(), worktreeId)
+          )
+        })
       }
       // open-terminal routes to an affordance not owned by this wave; the no-op
       // keeps the card honest rather than firing a wrong action.

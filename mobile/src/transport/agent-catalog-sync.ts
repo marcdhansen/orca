@@ -40,11 +40,14 @@ async function fetchCatalog(client: RpcClient): Promise<SnapshotFetchOutcome<Age
     return { kind: 'unavailable' }
   }
   const result = response.result as { agentCatalog?: unknown } | null
+  const runtimeId = (response as { _meta?: { runtimeId?: string } })._meta?.runtimeId ?? ''
   const value = parseCatalogValue(result?.agentCatalog)
   if (!value) {
-    return { kind: 'unavailable' }
+    // settings.get answered without a catalog: this host publishes none (it was
+    // downgraded, or predates the catalog). Keeping the cached one would leave the
+    // picker offering custom agents the host can no longer launch.
+    return { kind: 'absent', runtimeId }
   }
-  const runtimeId = (response as { _meta?: { runtimeId?: string } })._meta?.runtimeId ?? ''
   return { kind: 'value', runtimeId, value }
 }
 

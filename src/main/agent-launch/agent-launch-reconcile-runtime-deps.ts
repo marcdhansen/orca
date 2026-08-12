@@ -21,8 +21,10 @@ import {
   parseExecutionHostId,
   RUNTIME_OWNED_SSH_TARGET_ID_PREFIX
 } from '../../shared/execution-host'
-import type { PendingAgentLaunchSnapshot } from './agent-launch-operation-store'
-import type { AgentLaunchOperationStore } from './agent-launch-operation-store'
+import type {
+  AgentLaunchOperationStore,
+  PendingAgentLaunchSnapshot
+} from './agent-launch-operation-store'
 import {
   reconcilePersistenceForIntent,
   type ReconcileIntentRouterArms

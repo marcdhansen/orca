@@ -23,6 +23,7 @@ import type {
 } from '../../shared/background-agent-launch'
 import type { PersistedAgentLaunchFailure } from '../../shared/agent-launch-contract'
 import type { TuiAgent, BuiltInTuiAgent } from '../../shared/types'
+import { PersistedSetCompleteness } from './persisted-set-completeness'
 import type { ReconcileScopePersistence } from './agent-launch-worktree-reconcile-writer'
 
 /** Fields fixed when an attempt is created (before resolution). */
@@ -41,6 +42,10 @@ export type BackgroundAgentLaunchStoreDurableState = {
 
 export class BackgroundAgentLaunchStore {
   private readonly attempts = new Map<string, BackgroundAgentLaunchAttempt>()
+  // Attempt ids retention-pruned since the last rebuild, so a deferred recovery
+  // merge cannot resurrect one this process already dropped.
+  private readonly deletedSinceRebuild = new Set<string>()
+  readonly attemptCompleteness = new PersistedSetCompleteness()
   private readonly now: () => number
   private onDurableMutation: ((state: BackgroundAgentLaunchStoreDurableState) => void) | null = null
 
@@ -174,6 +179,10 @@ export class BackgroundAgentLaunchStore {
 
   /** Drop an attempt entirely (retention pruning; never a recovery path). */
   delete(attemptId: string): boolean {
+    // Recorded even when nothing was in memory: the caller's intent is "this id
+    // must not exist", and while the persisted file was unreadable the row it
+    // targets may only exist on disk, where a later recovery merge would find it.
+    this.deletedSinceRebuild.add(attemptId)
     const deleted = this.attempts.delete(attemptId)
     if (deleted) {
       this.persistDurable()
@@ -191,9 +200,22 @@ export class BackgroundAgentLaunchStore {
     }
   }
 
+  /** Merge late-read on-disk attempts UNDER the live in-memory ones (a fresh
+   *  create wins its id), skipping ids pruned since boot so a recovery merge
+   *  cannot resurrect them. */
+  mergeRehydratedAttempts(attempts: Iterable<BackgroundAgentLaunchAttempt>): void {
+    for (const attempt of attempts) {
+      if (this.attempts.has(attempt.attemptId) || this.deletedSinceRebuild.has(attempt.attemptId)) {
+        continue
+      }
+      this.attempts.set(attempt.attemptId, attempt)
+    }
+  }
+
   /** Rehydrate attempts at startup. Not routed through the sink. */
   rebuildFrom(attempts: Iterable<BackgroundAgentLaunchAttempt>): void {
     this.attempts.clear()
+    this.deletedSinceRebuild.clear()
     for (const attempt of attempts) {
       this.attempts.set(attempt.attemptId, attempt)
     }

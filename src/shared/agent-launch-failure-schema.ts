@@ -13,9 +13,9 @@ import type {
   AgentLaunchFailureCode,
   AgentLaunchFailureFieldHint,
   AgentLaunchFailureReasonHint,
+  AgentLaunchIntentKind,
   PersistedAgentLaunchFailure
 } from './agent-launch-contract'
-import type { AgentLaunchIntentKind } from './agent-launch-contract'
 import type { BuiltInTuiAgent, TuiAgent } from './types'
 
 export const AGENT_LAUNCH_FAILURE_CODES = [

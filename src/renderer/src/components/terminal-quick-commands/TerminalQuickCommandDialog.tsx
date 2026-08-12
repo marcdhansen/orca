@@ -111,7 +111,8 @@ export function TerminalQuickCommandDialog({
 
   // Custom agents live in the local catalog snapshot, not GlobalSettings, so the
   // picker needs its own read to offer them alongside built-ins.
-  const disabledTuiAgents = useAppStore((s) => s.settings?.disabledTuiAgents ?? [])
+  // Selected raw (no `?? []`): a fresh fallback array would re-render on every store write.
+  const disabledTuiAgents = useAppStore((s) => s.settings?.disabledTuiAgents)
   const { snapshot: localAgentCatalog } = useLocalAgentCatalog()
   const agentOptions = useMemo(
     () =>

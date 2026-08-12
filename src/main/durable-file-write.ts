@@ -3,7 +3,15 @@
 // empty-file symptom as issue #1158, from a different cause. The .bak ring recovers it at up to an
 // hour's loss; fsync stops it from happening.
 
-import { closeSync, fsyncSync, openSync, renameSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  closeSync,
+  fsyncSync,
+  openSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { open, readdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
@@ -136,15 +144,39 @@ export async function removeStaleDurableWriteTempFiles(
   }
 }
 
-/** Synchronous counterpart for quit and crash paths that cannot await. */
-export function writeFileDurableSync(tmpPath: string, finalPath: string, payload: string): void {
-  writeFileSync(tmpPath, payload, 'utf-8')
-  const fd = openSync(tmpPath, 'r+')
+/**
+ * Synchronous counterpart for quit and crash paths that cannot await.
+ * `mode` is applied with chmod rather than an open() mode so a hardened
+ * permission survives the process umask and a reused temp inode.
+ */
+export function writeFileDurableSync(
+  tmpPath: string,
+  finalPath: string,
+  payload: string,
+  options: { mode?: number } = {}
+): void {
+  let renamed = false
   try {
-    fsyncSync(fd)
+    writeFileSync(tmpPath, payload, 'utf-8')
+    if (options.mode !== undefined) {
+      chmodSync(tmpPath, options.mode)
+    }
+    const fd = openSync(tmpPath, 'r+')
+    try {
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
+    }
+    renameSync(tmpPath, finalPath)
+    renamed = true
+    syncDirectorySync(dirname(finalPath))
   } finally {
-    closeSync(fd)
+    if (!renamed) {
+      try {
+        unlinkSync(tmpPath)
+      } catch {
+        // Best-effort: the write already failed, don't mask it with a cleanup error.
+      }
+    }
   }
-  renameSync(tmpPath, finalPath)
-  syncDirectorySync(dirname(finalPath))
 }

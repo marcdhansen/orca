@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 
 import React, { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import type { Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import NewWorkspaceComposerCard from './NewWorkspaceComposerCard'
+import { renderCard } from './new-workspace-composer-card-test-render'
 import type { NewWorkspaceProjectOption } from '@/lib/new-workspace-project-options'
 import type { ProjectHostSetupOption } from '@/lib/project-host-setup-options'
 
@@ -122,19 +122,6 @@ vi.mock('@/components/new-workspace/ProjectCombobox', () => ({
   )
 }))
 
-const projectOptions: NewWorkspaceProjectOption[] = [
-  {
-    kind: 'project-group',
-    id: 'project-group:platform',
-    projectGroupId: 'platform',
-    displayName: 'Platform',
-    badgeColor: 'var(--muted-foreground)',
-    detail: '/workspace/platform',
-    parentPath: '/workspace/platform',
-    connectionId: null
-  }
-]
-
 const sourceRepos = [
   {
     id: 'repo-a',
@@ -204,77 +191,6 @@ function findConnectButton(label: string): HTMLButtonElement | undefined {
   return [...(item?.querySelectorAll('button') ?? [])].find((button) =>
     button.textContent?.includes('Connect')
   )
-}
-
-function renderCard(
-  overrides: Partial<React.ComponentProps<typeof NewWorkspaceComposerCard>> = {}
-) {
-  const container = document.createElement('div')
-  document.body.appendChild(container)
-  const root = createRoot(container)
-  act(() => {
-    root.render(
-      <NewWorkspaceComposerCard
-        quickAgent={null}
-        onQuickAgentChange={() => {}}
-        quickAgentOptions={[]}
-        eligibleRepos={[]}
-        repoId="repo-a"
-        projectOptions={projectOptions}
-        selectedProjectId="project-group:platform"
-        selectedRepoIsGit
-        onRepoChange={() => {}}
-        onProjectChange={() => {}}
-        primaryActionLabel="Create workspace"
-        name=""
-        onNameValueChange={() => {}}
-        onSmartGitHubItemSelect={() => {}}
-        onSmartGitLabItemSelect={() => {}}
-        onSmartBranchSelect={() => {}}
-        onSmartLinearIssueSelect={() => {}}
-        smartNameSelection={null}
-        onClearSmartNameSelection={() => {}}
-        canReuseSelectedBranch={false}
-        reuseSelectedBranch={false}
-        onReuseSelectedBranchChange={() => {}}
-        branchNameOverride=""
-        onBranchNameOverrideChange={() => {}}
-        forkPushWarning={null}
-        onOpenAgentSettings={() => {}}
-        advancedOpen={false}
-        onToggleAdvanced={() => {}}
-        createDisabled={false}
-        projectError={null}
-        creating={false}
-        onCreate={() => {}}
-        note=""
-        onNoteChange={() => {}}
-        setupConfig={null}
-        requiresExplicitSetupChoice={false}
-        setupDecision={null}
-        onSetupDecisionChange={() => {}}
-        setupAgentStartupPolicy="start-immediately"
-        onSetupAgentStartupPolicyChange={() => {}}
-        shouldWaitForSetupCheck={false}
-        resolvedSetupDecision={null}
-        createError={null}
-        selectedRepoConnectionId={null}
-        selectedRepoSshStatus={null}
-        selectedRepoRequiresConnection={false}
-        selectedRepoConnectInProgress={false}
-        onConnectSelectedRepo={async () => {}}
-        canUseSparseCheckout={false}
-        sparsePresets={[]}
-        sparseSelectedPresetId={null}
-        onSparseSelectPreset={() => {}}
-        branchesEnabled={false}
-        setupControlsEnabled={false}
-        sparseControlsEnabled={false}
-        {...overrides}
-      />
-    )
-  })
-  return { container, root }
 }
 
 function findInputByLabel(container: HTMLElement, labelText: string): HTMLInputElement | null {

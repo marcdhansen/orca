@@ -19,6 +19,7 @@ import type { AgentLaunchExecutionHostId } from '../../shared/agent-launch-host-
 import { isBuiltInTuiAgent } from '../../shared/tui-agent-config'
 import { toRuntimeExecutionHostId, toSshExecutionHostId } from '../../shared/execution-host'
 import { isWindowsAbsolutePathLike } from '../../shared/cross-platform-path'
+import { isWslUncPath } from '../../shared/wsl-paths'
 import { resolveLocalWindowsAgentStartupShell } from '../../shared/windows-terminal-shell'
 import type { AgentLaunchSpawnTarget } from './agent-launch-spawn'
 
@@ -117,8 +118,9 @@ export function toStockBaseAgentSet(
  *  path shape — the same heuristic the runtime uses — because the IPC boundary
  *  has no synchronous remote-platform probe; its home/detection stay honest
  *  unknowns until a caller that can probe supplies them. A local target uses
- *  this machine's platform and Windows shell family. WSL/runtime hosts are
- *  described by callers that know the distro/env id. */
+ *  this machine's platform, except a WSL UNC cwd whose shell runs a Linux
+ *  userland — matching the runtime's buildTerminalAgentLaunchDescriptor, whose
+ *  divergent-platform local host keeps honest-unknown home/detection. */
 export function describeSpawnExecutionHost(args: {
   connectionId?: string | null
   cwd?: string | null
@@ -131,14 +133,15 @@ export function describeSpawnExecutionHost(args: {
       platform: args.cwd && isWindowsAbsolutePathLike(args.cwd) ? 'win32' : 'linux'
     }
   }
+  const platform = args.cwd && isWslUncPath(args.cwd) ? 'linux' : process.platform
   const shell = resolveLocalWindowsAgentStartupShell({
-    platform: process.platform,
+    platform,
     isRemote: false,
     terminalWindowsShell: args.terminalWindowsShell
   })
   return {
     kind: 'local',
-    platform: process.platform,
+    platform,
     ...(shell ? { shell } : {})
   }
 }
@@ -215,10 +218,11 @@ export async function deriveAgentLaunchHostState(
  *  agent is missing. */
 export const detectionUnavailable = async (): Promise<null> => null
 
-/** Default home resolver: this machine's home dir for a local target, null
- *  otherwise (a remote/WSL home must be resolved by the host that owns it). */
+/** Default home resolver: this machine's home dir for a same-platform local
+ *  target, null otherwise. A divergent-platform local host (WSL) owns its own
+ *  $HOME, so claiming this machine's would expand `~` to a Windows path. */
 export async function resolveLocalTargetHomePath(
   descriptor: AgentLaunchHostDescriptor
 ): Promise<string | null> {
-  return descriptor.kind === 'local' ? homedir() : null
+  return descriptor.kind === 'local' && descriptor.platform === process.platform ? homedir() : null
 }

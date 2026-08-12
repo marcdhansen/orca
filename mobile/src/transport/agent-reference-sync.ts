@@ -42,11 +42,13 @@ async function fetchReferences(
     return { kind: 'unavailable' }
   }
   const result = response.result as { agentReferences?: unknown } | null
+  const runtimeId = (response as { _meta?: { runtimeId?: string } })._meta?.runtimeId ?? ''
   const value = parseReferenceValue(result?.agentReferences)
   if (!value) {
-    return { kind: 'unavailable' }
+    // The call succeeded but carries no snapshot, so this host publishes none —
+    // an old host answers method_not_found instead, which stays 'unavailable'.
+    return { kind: 'absent', runtimeId }
   }
-  const runtimeId = (response as { _meta?: { runtimeId?: string } })._meta?.runtimeId ?? ''
   return { kind: 'value', runtimeId, value }
 }
 

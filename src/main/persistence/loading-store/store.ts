@@ -541,6 +541,7 @@ export class Store {
   private readonly protectedSecrets = new ProtectedSecretPersistence()
   private loadNeedsSave = false
   private agentCatalogMigrationError: string | null = null
+  private preV1RawContentsAwaitingBackup: string | null = null
   private settingsChangeListeners = new Set<
     (
       updates: Partial<GlobalSettings>,
@@ -836,6 +837,9 @@ export class Store {
         if (agentCatalogMigration.didMigrate || agentCatalogMigration.backupError) {
           this.loadNeedsSave = this.loadNeedsSave || agentCatalogMigration.didMigrate
           this.agentCatalogMigrationError = agentCatalogMigration.backupError ?? null
+          if (agentCatalogMigration.backupError) {
+            this.preV1RawContentsAwaitingBackup = raw
+          }
           parsed.settings = {
             ...parsed.settings,
             ...agentCatalogMigration.settingsPatch
@@ -2655,18 +2659,24 @@ export class Store {
     return this.dataFile
   }
 
+  getBackupRingFilePaths(): string[] {
+    return Array.from({ length: BACKUP_COUNT }, (_, index) => backupPath(this.dataFile, index))
+  }
+
   /** Retry a blocked agent-catalog migration against the current on-disk bytes. */
   retryAgentCatalogMigration(): { ok: true } | { ok: false; error: string } {
     if (this.agentCatalogMigrationError === null) {
       return { ok: true }
     }
-    let raw: string | null = null
-    try {
-      raw = existsSync(this.dataFile) ? readFileSync(this.dataFile, 'utf-8') : null
-    } catch (error) {
-      const message = `Could not read the data file: ${error instanceof Error ? error.message : String(error)}`
-      this.agentCatalogMigrationError = message
-      return { ok: false, error: message }
+    let raw: string | null = this.preV1RawContentsAwaitingBackup
+    if (raw === null) {
+      try {
+        raw = existsSync(this.dataFile) ? readFileSync(this.dataFile, 'utf-8') : null
+      } catch (error) {
+        const message = `Could not read the data file: ${error instanceof Error ? error.message : String(error)}`
+        this.agentCatalogMigrationError = message
+        return { ok: false, error: message }
+      }
     }
     const migration = migrateAgentCatalogSchema({
       settings: this.state.settings,
@@ -2677,6 +2687,7 @@ export class Store {
       this.agentCatalogMigrationError = migration.backupError
       return { ok: false, error: migration.backupError }
     }
+    this.preV1RawContentsAwaitingBackup = null
     this.agentCatalogMigrationError = null
     this.updateSettings(migration.settingsPatch)
     return { ok: true }

@@ -14,7 +14,7 @@ import {
   LaunchAdmissionCoordinator
 } from '../agent-launch/agent-launch-admission-store'
 import type { AgentLaunchHostDescriptor } from '../agent-launch/agent-launch-host-state'
-import type { GlobalSettings } from '../../shared/types'
+import type { GlobalSettings, TuiAgent } from '../../shared/types'
 import type {
   ResolveAgentLaunchRequest,
   ResolvedAgentLaunch,
@@ -22,7 +22,6 @@ import type {
 } from '../../shared/agent-launch-host-contract'
 import type { ResolveAgentLaunchOutcome } from '../agent-launch/resolve-agent-launch'
 import type { AuthenticatedClientKind } from '../agent-launch/agent-launch-boundary'
-import type { TuiAgent } from '../../shared/types'
 import { scanForCustomEnvLeak } from '../../shared/custom-env-leak-scan'
 
 function makeSnapshot(): AgentLaunchSnapshot {

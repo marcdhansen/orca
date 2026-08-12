@@ -21,6 +21,7 @@ import type {
   RuntimeTerminalSend
 } from '../../../../shared/runtime-types'
 import {
+  AGENT_LAUNCH_IDENTITY_RUNTIME_CAPABILITY,
   AGENT_SESSION_OMP_RESUME_PATH_RUNTIME_CAPABILITY,
   TERMINAL_CREATE_IDEMPOTENCY_RUNTIME_CAPABILITY
 } from '../../../../shared/protocol-version'
@@ -36,7 +37,13 @@ import type {
   PtyTransportRecoveryState
 } from './pty-transport-types'
 import { createPtyOutputProcessor } from './pty-transport'
-import { RuntimeRpcCallError, unwrapRuntimeRpcResult } from '../../runtime/runtime-rpc-client'
+import {
+  RuntimeRpcCallError,
+  runtimeEnvironmentSupportsCapability,
+  unwrapRuntimeRpcResult
+} from '../../runtime/runtime-rpc-client'
+import { isRuntimeCompatBlockError } from '../../runtime/runtime-protocol-compat'
+import { AGENT_LAUNCH_IDENTITY_UNSUPPORTED_MESSAGE } from '../../runtime/agent-launch-identity-negotiation'
 import {
   getRemoteRuntimePtyEnvironmentId,
   getRemoteRuntimeTerminalHandle,
@@ -2103,8 +2110,34 @@ export function createRemoteRuntimePtyTransport(
             createEnvironmentId,
             connectLifecycleEpoch
           )
+        // Negotiate before sending: a pre-identity host strips agentLaunch and
+        // spawns a bare shell. Vault resume keeps its client-assembled command for
+        // exactly this case; without one there is nothing to degrade to.
+        const negotiatedAgentLaunchCreate = async () => {
+          let supported: boolean
+          try {
+            supported = await runtimeEnvironmentSupportsCapability(
+              createEnvironmentId,
+              AGENT_LAUNCH_IDENTITY_RUNTIME_CAPABILITY
+            )
+          } catch (error) {
+            // A failed read-only probe spawned nothing; only the legacy command is
+            // safe to fall back to, and a version block must stay a version block.
+            if (isRuntimeCompatBlockError(error) || commandToSend === undefined) {
+              throw error
+            }
+            return await legacyCreate()
+          }
+          if (supported) {
+            return await agentLaunchCreate()
+          }
+          if (commandToSend === undefined) {
+            throw new Error(AGENT_LAUNCH_IDENTITY_UNSUPPORTED_MESSAGE)
+          }
+          return await legacyCreate()
+        }
         const created = agentLaunchToSend
-          ? await agentLaunchCreate()
+          ? await negotiatedAgentLaunchCreate()
           : launchAgentToSend
             ? agentSessionRequiresHostAuthorityReplay
               ? await hostAuthorityCreate()

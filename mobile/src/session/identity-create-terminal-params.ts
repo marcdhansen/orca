@@ -10,6 +10,8 @@ export function buildIdentityCreateTerminalParams(worktreeId: string): {
 } {
   return {
     worktree: `id:${worktreeId}`,
-    agentLaunch: { selection: { kind: 'default' } }
+    // allowEmptyPromptLaunch: these surfaces launch a bare TUI with no prompt, and
+    // without it the host's plan builder returns null and fails no_agent_selected.
+    agentLaunch: { selection: { kind: 'default' }, allowEmptyPromptLaunch: true }
   }
 }

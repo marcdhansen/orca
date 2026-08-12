@@ -31,10 +31,18 @@ const agentLaunch = { selection: { kind: 'default' as const }, allowEmptyPromptL
 
 const CUSTOM_ID = 'custom-agent:claude:11111111-1111-4111-8111-111111111111'
 
+// No clientMutationId in these requests, so the real dedupe just runs the body.
+const passThroughDedupe = <T>(
+  _repo: string,
+  _mutationId: string | undefined,
+  run: () => Promise<T>
+): Promise<T> => run()
+
 describe('worktree.create pre-create agent-launch rejection', () => {
   it('returns a pre-create launch failure in-band as created:false, never a thrown RPC error', async () => {
     const runtime = {
       getRuntimeId: () => 'test-runtime',
+      dedupeWorktreeCreate: passThroughDedupe,
       showRepo: vi.fn().mockResolvedValue(repo),
       createManagedWorktree: vi.fn().mockRejectedValue(
         new WorktreeAgentLaunchPreCreateError({
@@ -65,6 +73,7 @@ describe('worktree.create pre-create agent-launch rejection', () => {
   it('returns a pre-create request rejection in-band as created:false', async () => {
     const runtime = {
       getRuntimeId: () => 'test-runtime',
+      dedupeWorktreeCreate: passThroughDedupe,
       showRepo: vi.fn().mockResolvedValue(repo),
       createManagedWorktree: vi
         .fn()
@@ -97,7 +106,11 @@ describe('worktree.create legacy-path custom-id rejection (U7)', () => {
   it('rejects a remote client naming a custom startupAgent on the legacy path, before any runtime call', async () => {
     const showRepo = vi.fn()
     const createManagedWorktree = vi.fn()
-    const runtime = { showRepo, createManagedWorktree } as unknown as RpcContext['runtime']
+    const runtime = {
+      showRepo,
+      createManagedWorktree,
+      dedupeWorktreeCreate: passThroughDedupe
+    } as unknown as RpcContext['runtime']
 
     const result = await worktreeCreateHandler()(
       { repo: 'repo-1', name: 'wt', startupAgent: CUSTOM_ID },
@@ -112,7 +125,10 @@ describe('worktree.create legacy-path custom-id rejection (U7)', () => {
 
   it('rejects a remote client naming a custom createdWithAgent on the legacy path', async () => {
     const showRepo = vi.fn()
-    const runtime = { showRepo } as unknown as RpcContext['runtime']
+    const runtime = {
+      showRepo,
+      dedupeWorktreeCreate: passThroughDedupe
+    } as unknown as RpcContext['runtime']
 
     const result = await worktreeCreateHandler()(
       { repo: 'repo-1', name: 'wt', createdWithAgent: CUSTOM_ID },
@@ -128,7 +144,10 @@ describe('worktree.create legacy-path custom-id rejection (U7)', () => {
     // sentinel and asserting it propagates — execution proceeded past the guard.
     const sentinel = new Error('proceeded-past-guard')
     const showRepo = vi.fn().mockRejectedValue(sentinel)
-    const runtime = { showRepo } as unknown as RpcContext['runtime']
+    const runtime = {
+      showRepo,
+      dedupeWorktreeCreate: passThroughDedupe
+    } as unknown as RpcContext['runtime']
 
     await expect(
       worktreeCreateHandler()(

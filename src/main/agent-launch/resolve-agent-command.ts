@@ -9,14 +9,17 @@ import { posix as pathPosix, win32 as pathWin32 } from 'node:path'
 import type { AgentArgv } from '../../shared/agent-launch-host-contract'
 import type { AgentLaunchFailure } from '../../shared/agent-launch-contract'
 import type { AgentStartupShell } from '../../shared/tui-agent-startup-shell'
-import { CMD_UNENCODABLE_CHAR_RE } from '../../shared/tui-agent-startup-shell'
+import {
+  CMD_UNENCODABLE_CHAR_RE,
+  isShellExpandableExecutable,
+  tokenizeStartupCommand
+} from '../../shared/tui-agent-startup-shell'
 import { getTuiAgentLaunchArgv, type TuiAgentConfig } from '../../shared/tui-agent-config'
 import {
   canonicalizeCommandOverride,
   MAX_COMMAND_PATH_LENGTH
 } from '../../shared/custom-tui-agent-fields'
 import { tokenizeAgentArgsTemplate } from '../../shared/agent-args-tokenizer'
-import { tokenizeStartupCommand } from '../../shared/tui-agent-startup-shell'
 import { tokenizeLegacyAgentPrefix } from '../../shared/legacy-agent-prefix-tokenizer'
 import {
   collectReferencedVariables,
@@ -67,14 +70,8 @@ function expandTilde(arg: string, shell: AgentStartupShell, home: string | null)
   if (arg[0] !== '~') {
     return { ok: true, value: arg }
   }
-  const lib = shell === 'posix' ? pathPosix : pathWin32
-  if (arg === '~') {
-    return home === null
-      ? { ok: false, failure: { code: 'missing_target_home' } }
-      : { ok: true, value: home }
-  }
   const second = arg[1]
-  const isSep = second === '/' || (shell !== 'posix' && second === '\\')
+  const isSep = second === undefined || second === '/' || (shell !== 'posix' && second === '\\')
   if (!isSep) {
     // ~user/ forms cannot be expanded without a passwd lookup; fail loudly
     // rather than emit a broken executable path.
@@ -84,9 +81,15 @@ function expandTilde(arg: string, shell: AgentStartupShell, home: string | null)
     }
   }
   if (home === null) {
-    return { ok: false, failure: { code: 'missing_target_home' } }
+    // No local view of the target's home (SSH/WSL/runtime). Defer to the shell
+    // that owns it — aborting here also aborts worktree creation — but only for
+    // a form the executable emitter leaves expandable.
+    return isShellExpandableExecutable(arg, shell)
+      ? { ok: true, value: arg }
+      : { ok: false, failure: { code: 'missing_target_home' } }
   }
-  return { ok: true, value: lib.join(home, arg.slice(2)) }
+  const lib = shell === 'posix' ? pathPosix : pathWin32
+  return { ok: true, value: arg === '~' ? home : lib.join(home, arg.slice(2)) }
 }
 
 function validateResolvedExecutable(value: string): AgentLaunchFailure | null {

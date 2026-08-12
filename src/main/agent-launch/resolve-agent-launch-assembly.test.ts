@@ -159,12 +159,14 @@ describe('tilde expansion', () => {
     })
   })
 
-  it('fails missing_target_home when home is unavailable', () => {
+  it('defers ~ to the target shell when home is unavailable', () => {
+    // SSH/remote: hard-failing here also aborts worktree creation, and only the
+    // target shell knows its own home.
     const outcome = resolveCustom({ commandOverride: '~/bin/agent' }, { targetHomePath: null })
-    expect(failureOf(outcome).code).toBe('missing_target_home')
+    expect(argvOf(outcome)).toEqual(['~/bin/agent'])
   })
 
-  it('fails missing_target_home for a ~-prefixed WSL executable with no distro home', () => {
+  it('defers a ~-prefixed WSL executable with no distro home to the target shell', () => {
     const outcome = resolveCustom(
       { commandOverride: '~/bin/agent' },
       {
@@ -173,6 +175,20 @@ describe('tilde expansion', () => {
         executionHostId: 'wsl:Ubuntu' as AgentLaunchExecutionHostId,
         targetHomePath: null
       }
+    )
+    expect(argvOf(outcome)).toEqual(['~/bin/agent'])
+  })
+
+  it('still fails missing_target_home when the deferred form is not shell-safe', () => {
+    // A space cannot survive an unquoted emission, so there is nothing to defer.
+    const outcome = resolveCustom({ commandOverride: '~/my bin/agent' }, { targetHomePath: null })
+    expect(failureOf(outcome).code).toBe('missing_target_home')
+  })
+
+  it('still fails missing_target_home on a windows target, which has no deferral', () => {
+    const outcome = resolveCustom(
+      { commandOverride: '~\\bin\\agent.exe' },
+      { platform: 'win32', shell: 'powershell', targetHomePath: null }
     )
     expect(failureOf(outcome).code).toBe('missing_target_home')
   })

@@ -4,15 +4,18 @@
 // launch's completion promise back through markDispatchResult.
 
 import type { Store } from '../persistence'
-import type { Automation, AutomationRun } from '../../shared/automations-types'
-import type { AutomationDispatchResult } from '../../shared/automations-types'
+import type {
+  Automation,
+  AutomationDispatchResult,
+  AutomationPrecheckResult,
+  AutomationRun
+} from '../../shared/automations-types'
 import {
   didAutomationPrecheckPass,
   formatAutomationPrecheckFailure
 } from '../../shared/automation-precheck'
 import type { AutomationRunTargetResult } from './run-target-resolution'
 import type { HeadlessAutomationDispatcher } from './headless-dispatch'
-import type { AutomationPrecheckResult } from '../../shared/automations-types'
 
 export type HeadlessAutomationDispatchDeps = {
   store: Store

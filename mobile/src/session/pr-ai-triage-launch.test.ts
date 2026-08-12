@@ -27,7 +27,7 @@ describe('createTerminalAndSendPrompt', () => {
     // pick rather than pinning a client-cached agent id.
     expect(client.sendRequest).toHaveBeenNthCalledWith(1, 'session.tabs.createTerminal', {
       worktree: 'id:wt-1',
-      agentLaunch: { selection: { kind: 'default' } },
+      agentLaunch: { selection: { kind: 'default' }, allowEmptyPromptLaunch: true },
       activate: false,
       select: true,
       navigation: 'caller'

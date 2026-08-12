@@ -11,8 +11,12 @@ import {
   AGENTS_SETTINGS_ACTIONS,
   RETRY_SAME_ACTIONS
 } from '@/lib/agent-launch-recovery-action-dispatch'
-import type { AgentLaunchRecoveryActionId } from '@/lib/agent-launch-recovery-card'
-import type { AgentLaunchRecoveryLiveness } from '@/lib/agent-launch-recovery-card'
+import { getSettingsForWorktreeRuntimeOwner } from '@/lib/worktree-runtime-owner'
+import { getActiveRuntimeTarget } from '@/runtime/runtime-client-target'
+import type {
+  AgentLaunchRecoveryActionId,
+  AgentLaunchRecoveryLiveness
+} from '@/lib/agent-launch-recovery-card'
 
 const FORGET_WITHOUT_PENDING: ReadonlySet<AgentLaunchRecoveryActionId> = new Set(['forget-launch'])
 
@@ -130,9 +134,14 @@ export function AgentLaunchRecoveryCardContainer({
         return
       }
       if (id === 'recover-capacity') {
-        // The summary is principal-scoped host-side, so no target is passed here;
-        // the local runtime aggregates the local principal's rows across hosts.
-        openModal('agent-launch-capacity-recovery')
+        // The summary is principal-scoped on whichever host rejected the launch,
+        // so the sheet must query THIS workspace's runtime owner — a remote Orca
+        // server's capacity is invisible to the local host's summary.
+        openModal('agent-launch-capacity-recovery', {
+          target: getActiveRuntimeTarget(
+            getSettingsForWorktreeRuntimeOwner(useAppStore.getState(), worktreeId)
+          )
+        })
       }
       // open-terminal routes to an affordance not owned by this wave; the
       // no-op keeps the card honest rather than firing a wrong action.
