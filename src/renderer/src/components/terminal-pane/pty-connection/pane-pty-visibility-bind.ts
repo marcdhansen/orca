@@ -47,6 +47,8 @@ export function installPanePtyVisibilityBind(session: ConnectPanePtySession): vo
     session.registerSideEffectFactConsumerForPty(ptyId)
     session.syncHiddenRendererPtyDelivery()
     session.deps.syncPanePtyLayoutBinding(session.pane.id, ptyId)
+    // Why: a live PTY bind proves the pane is current again after detach/reattach.
+    useAppStore.getState().restoreAgentPaneAuthority?.(session.cacheKey)
     notifyCodexPaneBoundForStaleSweep(ptyId)
     const tabPtyIds = useAppStore.getState().ptyIdsByTabId?.[session.deps.tabId] ?? []
     const directSshRetryAttemptId =

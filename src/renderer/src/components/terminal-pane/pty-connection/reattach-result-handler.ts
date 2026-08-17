@@ -1,4 +1,5 @@
 import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
+import { useAppStore } from '@/store'
 import type { PtyBufferSnapshot, PtyConnectResult } from '../pty-transport'
 import { warnTerminalLifecycleAnomaly } from '../terminal-lifecycle-diagnostics'
 // Why: a restored pane's stale-account prompt can only be raised once a PTY is
@@ -22,6 +23,7 @@ type ReattachResultSession = ReattachPayloadSession &
     ConnectPanePtySession,
     | 'agentCompletionCoordinator'
     | 'authoritativeReattachGeneration'
+    | 'cacheKey'
     | 'capturedDirectSshRetryPtyAccepted'
     | 'deps'
     | 'directSshRetryAttempt'
@@ -163,6 +165,8 @@ export function bindHandleReattachResult(sessionBag: ConnectPanePtySession): voi
     session.registerSideEffectFactConsumerForPty(ptyId)
     session.syncHiddenRendererPtyDelivery()
     session.deps.syncPanePtyLayoutBinding(session.pane.id, ptyId)
+    // Why: the daemon-backed reattach proves the pane is current again.
+    useAppStore.getState().restoreAgentPaneAuthority?.(session.cacheKey)
     notifyCodexPaneBoundForStaleSweep(ptyId)
     if (session.capturedDirectSshRetryPtyAccepted && session.directSshRetryAttempt) {
       session.deps.updateTabPtyId(
