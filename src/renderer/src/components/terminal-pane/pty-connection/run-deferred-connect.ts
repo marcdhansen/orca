@@ -1,16 +1,9 @@
 import { createTerminalZeroDimensionsMessage } from '../../../../../shared/terminal-zero-dimensions-diagnostic'
 import { isWorktreeRemovalFenceError } from '../../../../../shared/worktree/removal-fence-error'
 import { safeFit } from '@/lib/pane-manager/pane-tree-ops'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { createCodexBackfillErrorDetector } from '../codex-backfill-error-detector'
 
 import { isRemoteRuntimePtyId } from './paired-parked-terminal-restore'
-
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 import { bindBuildColdRestoreAgentResumeStartup } from './cold-restore-resume-startup'

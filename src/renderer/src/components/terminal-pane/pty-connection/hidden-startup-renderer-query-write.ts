@@ -6,8 +6,6 @@ import {
   isStatefulRendererReplyCsiQuery,
   isStatelessRendererReplyCsiQuery
 } from '../../../../../shared/terminal-reply-query-extraction'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import type { PtyDataMeta } from '../pty-dispatcher'
 import {
   DEFAULT_DA1_RESPONSE,
@@ -16,13 +14,9 @@ import {
 
 import { recordHiddenRendererSkip } from './e2e-terminal-pty-harness'
 
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
-
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
+/** Hidden-pane startup renderer query extraction, output skipping, and salvage from discarded restore data. */
 export function bindHiddenStartupRendererQueryWrite(session: ConnectPanePtySession): void {
   session.takeHiddenStartupRendererQueryPendingForForeground = function (data: string): {
     statelessQueryData: string

@@ -11,8 +11,6 @@ import {
   RESET_TERMINAL_CURSOR_STYLE
 } from '../../../../../shared/terminal-mode-reset-profiles'
 import { subscribeToTerminalUserInput } from '../terminal-user-input-signal'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import {
   isLocalNativeWindowsConpty,
   resolveWindowsShellOverride
@@ -38,14 +36,10 @@ import { DIRECT_SSH_PANE_RETRY_SETTLEMENT_TIMEOUT_MS } from './pty-connect-limit
 import { isRemoteRuntimePtyId } from './paired-parked-terminal-restore'
 import { resolveLatestAgentDoneStartedAt } from './agent-done-started-at'
 
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
-
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 import type { DirectSshRetryLease } from './direct-ssh-retry-lease'
 
+/** Direct-SSH retry arming plus the host/Windows capability flags and input-activity tracking its status routing reads. */
 export function installDirectSshRetryStatus(session: ConnectPanePtySession): void {
   session.armDirectSshPaneRetryTimeout = (
     promise: Promise<unknown>,

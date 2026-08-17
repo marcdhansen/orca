@@ -5,8 +5,6 @@ import {
   POST_REPLAY_MODE_RESET,
   RESET_GRAPHIC_RENDITION
 } from '../../../../../shared/terminal-mode-reset-profiles'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import {
   buildMainModelSnapshotReplayWrites,
   hasPositiveTerminalDimensions,
@@ -16,11 +14,6 @@ import {
 } from '../terminal-snapshot-replay-paint'
 
 import { isRemoteRuntimePtyId } from './paired-parked-terminal-restore'
-
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
 
 import type { ReattachPayloadContext } from './reattach-payload-context'
 import type { ReattachPayloadSession } from './reattach-payload-session'
@@ -247,7 +240,9 @@ export function createReattachPayloadHandlers(
         }
       }
       // Why: recorded scrollback is raw PTY output that may hold query sequences; xterm.write would auto-reply into the new shell's stdin. See replay-guard.ts.
-      session.writeReplayData(`${RESET_GRAPHIC_RENDITION}${ctx.connectResult.coldRestore.scrollback}`)
+      session.writeReplayData(
+        `${RESET_GRAPHIC_RENDITION}${ctx.connectResult.coldRestore.scrollback}`
+      )
       const preparedStartup = ctx.coldRestoreStartup ?? session.buildColdRestoreAgentResumeStartup()
       const didPrepareResume = session.applyColdRestoreAgentResumeStartup(preparedStartup)
       if (didPrepareResume) {

@@ -11,8 +11,6 @@ import { registerUndeliverableWriteHandler } from '@/lib/pane-manager/terminal-w
 import { requestTerminalPaneRecovery } from '../terminal-pane-recovery'
 import { getSystemPrefersDark } from '@/lib/terminal-theme'
 import { resolveTerminalColorSchemeMode } from '../../../../../shared/terminal-color-scheme-protocol'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { discardTerminalOutput } from '@/lib/pane-manager/pane-terminal-output-scheduler'
 import {
   CONPTY_DA1_RESPONSE,
@@ -21,14 +19,11 @@ import {
 } from '../terminal-capability-replies'
 
 import { isRemoteRuntimePtyId } from './paired-parked-terminal-restore'
-
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
+import { TRANSPORT_CONNECT_SETTLE_GRACE_MS } from './pty-connect-limits'
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
+/** Transport creation, terminal capability replies, viewport claims, and undeliverable-input recovery. */
 export function installPtyInputRecovery(session: ConnectPanePtySession): void {
   session.markAcceptedTerminalInputSent = (): void => {
     session.markTerminalInputSent()
@@ -270,14 +265,6 @@ export function installPtyInputRecovery(session: ConnectPanePtySession): void {
   // (issue #8104 class). None of the dead-session reconciles cover it because
   // the PTY is live; recover by remounting the tab over the live PTY.
   session.transportConnectInFlightSince = null
-  // Why a grace window instead of a plain flag: a connect that never settles
-  // (SSH RPC timeout class, wedged daemon call) would otherwise suppress
-  // input-triggered recovery FOREVER — and such a pane has no output flowing,
-  // so no other detector can fire. Past the grace, undeliverable input may
-  // recover again; the transport's destroyed-check no longer kills a
-  // pre-existing session when a late reattach resolves, so a remount racing
-  // a slow-but-alive connect costs a wasted view rebuild, not a shell.
-  session.TRANSPORT_CONNECT_SETTLE_GRACE_MS = 60_000
   session.requestRecoveryForUndeliverableInput = (providerRejected = false): void => {
     if (
       !providerRejected &&
@@ -295,7 +282,7 @@ export function installPtyInputRecovery(session: ConnectPanePtySession): void {
     // after dispose: the successor pane owns the tab now.
     const connectStillSettling =
       session.transportConnectInFlightSince !== null &&
-      Date.now() - session.transportConnectInFlightSince < session.TRANSPORT_CONNECT_SETTLE_GRACE_MS
+      Date.now() - session.transportConnectInFlightSince < TRANSPORT_CONNECT_SETTLE_GRACE_MS
     if (connectStillSettling || session.disposed) {
       return
     }

@@ -11,11 +11,6 @@ import { resolveHiddenRestoreScrollbackRows } from '../terminal-hidden-restore-s
 import { isRemoteRuntimePtyId } from './paired-parked-terminal-restore'
 import type { ColdRestoreAgentResumeStartup } from './fresh-spawn-types'
 
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
-
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
 import type { ReattachPayloadContext } from './reattach-payload-context'

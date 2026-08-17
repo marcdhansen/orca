@@ -1,7 +1,5 @@
 import { detectAgentStatusFromTitle, isClaudeAgent } from '@/lib/agent-status'
 import { useAppStore } from '@/store'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { isFreshNonDoneAgentStatus } from '../../../../../shared/agent-status-types'
 import type {
   AgentCompletionDispatchMeta,
@@ -18,11 +16,6 @@ import {
   isAgentTaskCompleteNotificationEnabled,
   subscribeAgentTaskCompleteTrackingEnabled
 } from './agent-task-complete-settings'
-
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 

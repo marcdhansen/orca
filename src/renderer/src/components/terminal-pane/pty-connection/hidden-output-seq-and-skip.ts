@@ -9,18 +9,11 @@ import {
   resolveTerminalColorSchemeMode,
   scanMode2031ReplyDecision
 } from '../../../../../shared/terminal-color-scheme-protocol'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { installTerminalLiveScrollbackRestore } from '@/lib/pane-manager/terminal-live-scrollback-restore'
 import type { PtyDataMeta } from '../pty-dispatcher'
 import { sendTerminalOscColorQueryReplies } from '../terminal-capability-replies'
 
 import { shouldWritePtyOutputForeground } from './foreground-output-scan'
-
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 import { bindWritePtyOutputToXterm } from './write-pty-output-to-xterm'
@@ -32,6 +25,12 @@ import { bindHiddenStartupRendererQueryWrite } from './hidden-startup-renderer-q
 import { bindHiddenOutputRestoreDrain } from './hidden-output-restore-drain'
 
 export function bindHiddenOutputSeqAndSkip(session: ConnectPanePtySession): void {
+  // Why record-only: DECSET 2031 subscribes to future color changes, it is not a query —
+  // the protocol's query is `CSI ?996n`. fish arms 2031 for the ~1ms it paints a prompt, so
+  // any reply lands after the withdrawal and paints `?997;1n` as literal text (#9993).
+  // Why here and not in xterm's CSI handler: xterm batches several PTY chunks into one
+  // synchronous parse, so a handler cannot tell where a chunk ended. One raw chunk in,
+  // one order-aware final state out.
   session.observeLiveMode2031Chunk = function (data: string): void {
     // Gate-managed PTYs never see these bytes; main's '2031-subscribe' fact records them.
     if (session.isHiddenDeliveryGateManagedPty(session.transport.getPtyId())) {
@@ -237,7 +236,6 @@ export function bindHiddenOutputSeqAndSkip(session: ConnectPanePtySession): void
     )
   }
 
-  // 'drained' = painted all queued bytes; 'overflow' = queue blew its cap (stream outran fetch+replay); 'refetch' = offsets unmappable, need a fresher snapshot.
   bindHiddenOutputRestoreDrain(session)
   bindAbandonHiddenOutputRestore(session)
 }

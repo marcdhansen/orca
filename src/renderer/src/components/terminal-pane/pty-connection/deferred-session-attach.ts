@@ -1,8 +1,6 @@
 import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { useAppStore } from '@/store'
 import { isRuntimeOwnedSshTargetId } from '../../../../../shared/execution-host'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { resolveSshPaneConnectGate } from '../ssh-pane-connect-gate'
 
 import {
@@ -11,11 +9,6 @@ import {
   waitForSshConnection
 } from './ssh-session-connect'
 import { isRemoteRuntimePtyId } from './paired-parked-terminal-restore'
-
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
@@ -129,6 +122,12 @@ export function runDeferredSessionAttach(session: ConnectPanePtySession): void {
             session.runtimeEnvironmentId || isRemoteRuntimePtyId(pendingSessionId)
               ? Promise.resolve(null)
               : window.api.pty.declarePendingPaneSerializer(session.cacheKey).catch(() => null)
+          const clearPreSignaledSerializer = async (): Promise<void> => {
+            const gen = await preSignalPromise
+            if (typeof gen === 'number') {
+              void window.api.pty.clearPendingPaneSerializer(session.cacheKey, gen).catch(() => {})
+            }
+          }
           let expiredReattachError = false
           const coldRestoreStartup = session.buildColdRestoreAgentResumeStartup()
           session.clearPaneMode2031State()
@@ -179,12 +178,7 @@ export function runDeferredSessionAttach(session: ConnectPanePtySession): void {
             .then(async (result) => {
               if (outputCallbacks.generation !== session.transportStreamGeneration) {
                 session.finishReattachLiveDataDeferral(false, outputCallbacks.generation)
-                const gen = await preSignalPromise
-                if (typeof gen === 'number') {
-                  void window.api.pty
-                    .clearPendingPaneSerializer(session.cacheKey, gen)
-                    .catch(() => {})
-                }
+                await clearPreSignaledSerializer()
                 return
               }
               console.warn(
@@ -198,12 +192,7 @@ export function runDeferredSessionAttach(session: ConnectPanePtySession): void {
               )
               if (!result && expiredReattachError) {
                 session.finishReattachLiveDataDeferral(false, outputCallbacks.generation)
-                const gen = await preSignalPromise
-                if (typeof gen === 'number') {
-                  void window.api.pty
-                    .clearPendingPaneSerializer(session.cacheKey, gen)
-                    .catch(() => {})
-                }
+                await clearPreSignaledSerializer()
                 if (session.disposed) {
                   return
                 }
@@ -247,12 +236,7 @@ export function runDeferredSessionAttach(session: ConnectPanePtySession): void {
             })
             .catch(async (err) => {
               session.finishReattachLiveDataDeferral(false, outputCallbacks.generation)
-              const gen = await preSignalPromise
-              if (typeof gen === 'number') {
-                void window.api.pty
-                  .clearPendingPaneSerializer(session.cacheKey, gen)
-                  .catch(() => {})
-              }
+              await clearPreSignaledSerializer()
               console.warn(`[pty-connection] Reattach FAILED for tab=${session.deps.tabId}:`, err)
               if (
                 session.disposed ||

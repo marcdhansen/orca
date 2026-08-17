@@ -1,7 +1,5 @@
 import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { useAppStore } from '@/store'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { isWebTerminalSurfaceTabId } from '@/runtime/web-terminal-surface-id'
 import { getEagerPtyBufferHandle } from '../pty-dispatcher'
 
@@ -13,15 +11,10 @@ import {
 } from './paired-parked-terminal-restore'
 import { startDeferredSessionReattach } from './deferred-session-reattach-connect'
 
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
-
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
 export function runDeferredSessionReattachChoice(session: ConnectPanePtySession): void {
-  // Why: re-read session IDs inside the rAF — cleanup during the one-frame gap could otherwise reattach a dead session.
+  // Why: re-read session IDs here rather than at connect scheduling — cleanup during the caller's one-frame gap could otherwise reattach a dead session.
   const restoredPtyId =
     session.deps.restoredLeafId && session.deps.restoredPtyIdByLeafId
       ? (session.deps.restoredPtyIdByLeafId[session.deps.restoredLeafId] ?? null)

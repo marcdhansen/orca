@@ -5,18 +5,11 @@ import { getFitOverrideForPty } from '@/lib/pane-manager/mobile-fit-overrides'
 import { isPtyLocked } from '@/lib/pane-manager/mobile-driver-state'
 import { reconcilePtySizeAcrossFrames } from '../pty-size-reconcile'
 import { shouldClaimRemoteDesktopViewport } from '../remote-desktop-viewport-claim'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { deferTerminalGeometryMutationDuringRebuild } from '@/lib/pane-manager/terminal-scroll-intent-rebuild'
 import { waitForStableStartupGrid } from '../terminal-startup-grid-settle'
 
 import { isRemoteRuntimePtyId } from './paired-parked-terminal-restore'
 import { isSetupSplitGeometryReady } from './setup-split-geometry'
-
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 

@@ -1,7 +1,5 @@
 import { takeCurrentTerminalDeliveryCredit } from '@/lib/pane-manager/terminal-delivery-credit'
 import { nativeWindowsRewriteNeedsFollowupRenderRefresh } from '@/lib/pane-manager/terminal-complex-script'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { writeTerminalOutput } from '@/lib/pane-manager/pane-terminal-output-scheduler'
 
 import { FOREGROUND_SYNCHRONIZED_FRAME_INTERACTIVE_WINDOW_MS } from './foreground-output-budgets'
@@ -12,13 +10,9 @@ import {
 } from './foreground-output-scan'
 import { containsHiddenStartupRendererQuery } from './hidden-startup-renderer-query'
 
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
-
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
+/** The xterm write path for PTY output, including the queued agent-idle mode reset. */
 export function bindWritePtyOutputToXterm(session: ConnectPanePtySession): void {
   session.writePtyOutputToXterm = function (
     data: string,

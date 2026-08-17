@@ -1,21 +1,15 @@
 import { serializeWithAbsoluteCursor } from '../../../../../shared/terminal-serialize-absolute-cursor'
 import { isTerminalWritePipelineCertifiedDead } from '@/lib/pane-manager/terminal-write-pipeline-health'
 import { registerPtySerializer, registerPtyTitleSource } from '../pty-buffer-serializer'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import {
   discardTerminalOutput,
   waitForTerminalOutputParsed
 } from '@/lib/pane-manager/pane-terminal-output-scheduler'
 import { clearTerminalScrollbackAndFollowOutput } from '@/lib/pane-manager/terminal-scrollback-clear'
 
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
-
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
+/** Serializer and title-source registration for a bound PTY, plus the replay write queue. */
 export function bindRegisterPaneSerializer(session: ConnectPanePtySession): void {
   session.registerPaneSerializerFor = (ptyId: string): void => {
     // Why: StrictMode mounts panes twice; the first mount is session.disposed

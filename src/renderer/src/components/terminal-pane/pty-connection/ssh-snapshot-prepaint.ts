@@ -1,17 +1,10 @@
 import { waitForTerminalReplayWritesParsed } from '../replay-guard'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { recordTerminalOutput } from '@/lib/pane-manager/pane-scroll'
 import { parseAppSshPtyId } from '../../../../../shared/ssh-pty-id'
 import {
   buildMainModelSnapshotReplayWrites,
   hasPositiveTerminalDimensions
 } from '../terminal-snapshot-replay-paint'
-
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 

@@ -3,8 +3,6 @@ import { useAppStore } from '@/store'
 import { getConnectionId } from '@/lib/connection-context'
 import { replayIntoTerminal } from '../replay-guard'
 import { POST_REPLAY_REATTACH_RESET } from '../../../../../shared/terminal-mode-reset-profiles'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { isLocalNativeWindowsConpty } from '@/lib/pane-manager/windows-pty-compatibility'
 import { createTerminalCommandLifecycle } from '../terminal-command-lifecycle'
 import { createPaneForegroundAgentTracker } from '../pane-foreground-agent-tracker'
@@ -17,13 +15,9 @@ import { isTuiAgent, TUI_AGENT_CONFIG } from '../../../../../shared/tui-agent-co
 
 import { isRemoteRuntimePtyId } from './paired-parked-terminal-restore'
 
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
-
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
+/** Pane agent identity, foreground-agent sampling, and command lifecycle handling. */
 export function installPaneAgentIdentity(session: ConnectPanePtySession): void {
   // Why: the 133;D confirmation guard and the visible-pane resampler both key off
   // "does this pane expect an agent"; derive each signal once so the two callers

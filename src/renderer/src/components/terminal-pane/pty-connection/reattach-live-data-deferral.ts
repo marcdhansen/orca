@@ -1,15 +1,8 @@
 import { deliverTerminalDataWithDeferredCredit } from '@/lib/pane-manager/terminal-delivery-credit'
 import { waitForTerminalReplayWritesParsed } from '../replay-guard'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { flushTerminalOutput } from '@/lib/pane-manager/pane-terminal-output-scheduler'
 import { enforceTerminalCurrentScrollIntent } from '@/lib/pane-manager/terminal-scroll-intent'
 import { MAX_DEFERRED_REATTACH_LIVE_CHARS } from '../deferred-reattach-live-data-queue'
-
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 

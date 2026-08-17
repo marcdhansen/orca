@@ -6,8 +6,6 @@ import {
 } from '../terminal-dead-session-reconcile'
 import { cancelPendingSafeFitContinuations } from '@/lib/pane-manager/pane-tree-ops'
 import { PANE_PTY_RESIZE_HOLD_FLUSH_EVENT } from '@/lib/pane-manager/pane-pty-resize-hold'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { discardTerminalOutput } from '@/lib/pane-manager/pane-terminal-output-scheduler'
 import {
   getProviderSessionClaimKey,

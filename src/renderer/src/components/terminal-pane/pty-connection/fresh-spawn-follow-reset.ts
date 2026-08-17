@@ -7,8 +7,6 @@ import {
   POST_REPLAY_REATTACH_RESET_KEEP_MOUSE
 } from '../../../../../shared/terminal-mode-reset-profiles'
 import { buildFreshShellViewportBlankingSequence } from '../terminal-restored-viewport'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { flushTerminalOutput } from '@/lib/pane-manager/pane-terminal-output-scheduler'
 import {
   getTerminalScrollIntentKind,
@@ -19,14 +17,9 @@ import { deferTerminalGeometryMutationDuringRebuild } from '@/lib/pane-manager/t
 import { TERMINAL_RENDERER_RISK_SCAN_TAIL_CHARS } from './foreground-output-scan'
 import type { FreshSpawnOptions } from './fresh-spawn-types'
 
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
-
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
-import { bindStartFreshSpawn } from './fresh-spawn-start'
 
+/** Follow-output reset, replay writes, and fresh-shell viewport blanking. */
 export function bindFreshSpawnFollowReset(session: ConnectPanePtySession): void {
   session.resetFreshSpawnFollowOutput = (): void => {
     session.cancelFreshSpawnFollowReset()
@@ -66,7 +59,6 @@ export function bindFreshSpawnFollowReset(session: ConnectPanePtySession): void 
     }
   }
 
-  bindStartFreshSpawn(session)
   function trailingIncompleteCsiSequence(data: string): string {
     const escapeIndex = data.lastIndexOf('\x1b')
     if (escapeIndex === -1) {

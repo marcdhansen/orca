@@ -8,20 +8,14 @@ import {
 } from '../pty-shutdown-exit-deferral'
 import { replayIntoTerminal } from '../replay-guard'
 import { POST_REPLAY_MODE_RESET } from '../../../../../shared/terminal-mode-reset-profiles'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import {
   getProviderSessionClaimKey,
   isPassiveCompletedHibernationEvidence
 } from '@/lib/sleeping-agent-pane-ownership'
 
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
-
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
+/** PTY exit handling, hibernated-pane wake targets, and post-exit focus transfer. */
 export function installPtyExitHibernate(session: ConnectPanePtySession): void {
   session.focusSurvivingPtyPaneAfterKeptExit = (): void => {
     if (session.manager.getActivePane()?.id !== session.pane.id) {

@@ -1,7 +1,8 @@
 import { isDocumentVisibilityProvenStale } from '../stale-document-visibility'
 import {
-  FOREGROUND_BUDGET_WINDOW_MS,
-  INACTIVE_FOREGROUND_IMMEDIATE_BUDGET_CHARS
+  INACTIVE_FOREGROUND_IMMEDIATE_BUDGET_CHARS,
+  consumeForegroundImmediateBudget,
+  createForegroundImmediateBudget
 } from './foreground-output-budgets'
 
 export const TERMINAL_RENDERER_RISK_SCAN_TAIL_CHARS = 256
@@ -16,8 +17,7 @@ export const FOCUS_REPORTING_DISABLE_SEQUENCE = '\x1b[?1004l'
 export const REATTACH_IDLE_AGENT_CURSOR_RESET_DELAY_MS = 250
 export const SHIFT_ENTER_RECONFIRM_IDLE_MS = 350
 
-let inactiveForegroundImmediateBudgetChars = 0
-let inactiveForegroundImmediateBudgetWindowStart = 0
+const inactiveForegroundImmediateBudget = createForegroundImmediateBudget()
 
 export function shouldWritePtyOutputForeground(isPaneVisible: boolean): boolean {
   if (!isPaneVisible) {
@@ -116,17 +116,9 @@ export function containsCursorRestore(data: string): boolean {
 }
 
 export function consumeInactiveForegroundImmediateBudget(dataLength: number): boolean {
-  const now = performance.now()
-  if (now - inactiveForegroundImmediateBudgetWindowStart > FOREGROUND_BUDGET_WINDOW_MS) {
-    inactiveForegroundImmediateBudgetChars = 0
-    inactiveForegroundImmediateBudgetWindowStart = now
-  }
-  if (
-    inactiveForegroundImmediateBudgetChars + dataLength >
+  return consumeForegroundImmediateBudget(
+    inactiveForegroundImmediateBudget,
+    dataLength,
     INACTIVE_FOREGROUND_IMMEDIATE_BUDGET_CHARS
-  ) {
-    return false
-  }
-  inactiveForegroundImmediateBudgetChars += dataLength
-  return true
+  )
 }

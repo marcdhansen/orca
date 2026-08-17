@@ -2,8 +2,6 @@ import { useAppStore } from '@/store'
 import { safeFit } from '@/lib/pane-manager/pane-tree-ops'
 import { bindPanePtyId, getFitOverrideForPty } from '@/lib/pane-manager/mobile-fit-overrides'
 import { inspectRuntimeTerminalProcess } from '@/runtime/runtime-terminal-inspection'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { parseAppSshPtyId } from '../../../../../shared/ssh-pty-id'
 import { isFreshNonDoneAgentStatus } from '../../../../../shared/agent-status-types'
 import { isCtrlCKeyEvent, isPlainEscapeKeyEvent } from '../agent-interrupt-inference'
@@ -16,13 +14,9 @@ import { registerTerminalSideEffectFactConsumer } from '../terminal-side-effect-
 import { isAgentTaskCompleteTrackingEnabled } from './agent-task-complete-settings'
 import { isRemoteRuntimePtyId } from './paired-parked-terminal-restore'
 
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
-
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
+/** Keydown intent, PTY fit binding, side-effect fact consumption, and the agent completion coordinator. */
 export function installTerminalKeydownFit(session: ConnectPanePtySession): void {
   session.onTerminalKeyDown = (event: KeyboardEvent): void => {
     if (isPlainEscapeKeyEvent(event)) {

@@ -6,8 +6,6 @@ import {
   windowsEastAsianOutputPrefersRenderRefresh
 } from '@/lib/pane-manager/terminal-complex-script'
 import { RESET_AFTER_BYTE_GAP } from '../../../../../shared/terminal-mode-reset-profiles'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { recordTerminalOutput } from '@/lib/pane-manager/pane-scroll'
 import { ensureArabicShapingJoinerForText } from '@/lib/pane-manager/terminal-arabic-shaping-joiner'
 import { registerPtyModelRestoreNeededHandler } from '../pty-model-restore-channel'
@@ -22,7 +20,7 @@ import {
   FOREGROUND_INTERACTIVE_REDRAW_CHARS,
   FOREGROUND_INTERACTIVE_REDRAW_WINDOW_MS,
   FOREGROUND_IMMEDIATE_BUDGET_CHARS,
-  FOREGROUND_BUDGET_WINDOW_MS
+  consumeForegroundImmediateBudget
 } from './foreground-output-budgets'
 import {
   shouldWritePtyOutputForeground,
@@ -30,14 +28,10 @@ import {
 } from './foreground-output-scan'
 import { isRemoteRuntimePtyId } from './paired-parked-terminal-restore'
 
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
-
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
 export function bindForegroundOutputRefresh(session: ConnectPanePtySession): void {
+  // Extends the suppression window; every backpressure signal resets the timer so the deferred repaint fires once, SUPPRESS_MS after the last signal.
   session.noteHiddenOutputRestoreFloodBackpressure = function (): void {
     session.hiddenOutputRestoreFloodSuppressedUntil =
       Date.now() + HIDDEN_OUTPUT_RESTORE_FLOOD_SUPPRESS_MS
@@ -201,16 +195,11 @@ export function bindForegroundOutputRefresh(session: ConnectPanePtySession): voi
   }
 
   session.consumeForegroundImmediateBudget = function (dataLength: number): boolean {
-    const now = performance.now()
-    if (now - session.foregroundImmediateBudgetWindowStart > FOREGROUND_BUDGET_WINDOW_MS) {
-      session.foregroundImmediateBudgetChars = 0
-      session.foregroundImmediateBudgetWindowStart = now
-    }
-    if (session.foregroundImmediateBudgetChars + dataLength > FOREGROUND_IMMEDIATE_BUDGET_CHARS) {
-      return false
-    }
-    session.foregroundImmediateBudgetChars += dataLength
-    return true
+    return consumeForegroundImmediateBudget(
+      session.foregroundImmediateBudget,
+      dataLength,
+      FOREGROUND_IMMEDIATE_BUDGET_CHARS
+    )
   }
 
   session.isActiveSplitPane = function (): boolean {
@@ -304,11 +293,4 @@ export function bindForegroundOutputRefresh(session: ConnectPanePtySession): voi
       inPlaceRewrite: false
     }
   }
-
-  // Why record-only: DECSET 2031 subscribes to future color changes, it is not a query —
-  // the protocol's query is `CSI ?996n`. fish arms 2031 for the ~1ms it paints a prompt, so
-  // any reply lands after the withdrawal and paints `?997;1n` as literal text (#9993).
-  // Why here and not in xterm's CSI handler: xterm batches several PTY chunks into one
-  // synchronous parse, so a handler cannot tell where a chunk ended. One raw chunk in,
-  // one order-aware final state out.
 }

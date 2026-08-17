@@ -2,8 +2,6 @@ import { useAppStore } from '@/store'
 import type { SessionRestoredBannerReason } from '../session-restored-banner-pane-state'
 import { hasPtySerializer } from '../pty-buffer-serializer'
 import { inspectRuntimeTerminalProcess } from '@/runtime/runtime-terminal-inspection'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { waitForTerminalOutputParsed } from '@/lib/pane-manager/pane-terminal-output-scheduler'
 import { getSettingsForWorktreeRuntimeOwner } from '@/lib/worktree-runtime-owner'
 import { isExpectedAgentProcess } from '../../../../../shared/agent-process-recognition'
@@ -14,11 +12,6 @@ import { writeTerminalPastePtyInput } from '../terminal-pty-paste-writer'
 
 import { STARTUP_DRAFT_PASTE_QUIET_MS } from './pty-connect-limits'
 import { isRemoteRuntimePtyId } from './paired-parked-terminal-restore'
-
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
@@ -100,8 +93,7 @@ export function bindSettlePaneSerializer(session: ConnectPanePtySession): void {
     if (
       !ptyId ||
       session.disposed ||
-      session.deps.paneTransportsRef.current.get(session.pane.id) !== session.transport ||
-      session.transport.getPtyId() !== ptyId
+      session.deps.paneTransportsRef.current.get(session.pane.id) !== session.transport
     ) {
       return null
     }

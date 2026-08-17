@@ -6,8 +6,6 @@ import {
   registerTerminalPaneRecoveryInstance
 } from '../terminal-pane-recovery'
 import { RESET_TERMINAL_CURSOR_STYLE } from '../../../../../shared/terminal-mode-reset-profiles'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { writeTerminalOutput } from '@/lib/pane-manager/pane-terminal-output-scheduler'
 import { createTerminalStructuralReplayCoordinator } from '@/lib/pane-manager/terminal-structural-replay-coordinator'
 import { makePaneKey } from '../../../../../shared/stable-pane-id'
@@ -23,10 +21,6 @@ import {
   isAgentTaskCompleteTrackingEnabled
 } from './agent-task-complete-settings'
 
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
 import { installRunDeferredConnect } from './run-deferred-connect'
 
 import { installSleepingRecordAccess } from './sleeping-record-access'
@@ -42,6 +36,10 @@ import { installPtyInputForward } from './pty-input-forward'
 import { installPtyResizeGeometry } from './pty-resize-geometry'
 import { installSessionReconcileDispose } from './session-reconcile-dispose'
 
+/**
+ * Establishes a binding between a terminal pane and its corresponding PTY stream,
+ * managing input, output, title synchronization, and agent status tracking.
+ */
 export function connectPanePty(
   pane: ManagedPane,
   manager: PaneManager,

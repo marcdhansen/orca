@@ -1,5 +1,3 @@
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { waitForTerminalOutputParsed } from '@/lib/pane-manager/pane-terminal-output-scheduler'
 
 import {
@@ -11,11 +9,6 @@ import {
   parsedViewportShowsParkedCursorAgentScreen,
   terminalHasFocusReportingEnabled
 } from './cursor-agent-reattach-screen'
-
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 

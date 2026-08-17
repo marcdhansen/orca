@@ -1,8 +1,6 @@
 import { useAppStore } from '@/store'
 import type { PtyReplayDataMeta } from '../pty-transport'
 import { INITIAL_MODE_2031_REPLY_SCAN_STATE } from '../../../../../shared/terminal-color-scheme-protocol'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { waitForTerminalOutputParsed } from '@/lib/pane-manager/pane-terminal-output-scheduler'
 import { executeTerminalStartupCommandPaste } from '../terminal-startup-command-paste'
 import { getTerminalPasteSshRemotePlatform } from '../terminal-paste-ssh-platform'
@@ -10,12 +8,8 @@ import { resolveTerminalPasteRuntime } from '../terminal-paste-runtime'
 import { CLIENT_PLATFORM } from '@/lib/new-workspace'
 
 import { shouldKeepHiddenStartupRendererQueriesLive } from './hidden-startup-renderer-query'
+import { createForegroundImmediateBudget } from './foreground-output-budgets'
 import type { FreshSpawnOptions, ColdRestoreAgentResumeStartup } from './fresh-spawn-types'
-
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 import { bindCaptureTransportOutputCallbacks } from './transport-output-callbacks'
@@ -200,8 +194,7 @@ export function bindDeferredColdRestoreAndSnapshot(session: ConnectPanePtySessio
     session.restoredSnapshotExpectedStartSeq = null
     session.restoredSnapshotDeliveryWindowStartSeq = null
   }
-  session.foregroundImmediateBudgetChars = 0
-  session.foregroundImmediateBudgetWindowStart = 0
+  session.foregroundImmediateBudget = createForegroundImmediateBudget()
   session.foregroundRewriteChunkEndedWithCarriageReturn = false
   session.foregroundRewriteCsiScanTail = ''
   session.mode2031ReplyScanState = INITIAL_MODE_2031_REPLY_SCAN_STATE

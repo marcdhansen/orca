@@ -1,8 +1,6 @@
 import { useAppStore } from '@/store'
 import type { PtyBufferSnapshot } from '../pty-transport'
 import { INITIAL_MODE_2031_REPLY_SCAN_STATE } from '../../../../../shared/terminal-color-scheme-protocol'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { discardTerminalOutput } from '@/lib/pane-manager/pane-terminal-output-scheduler'
 import { cancelTerminalScrollIntentBufferRebuildCompletions } from '@/lib/pane-manager/terminal-scroll-intent-rebuild'
 import { DeferredReattachLiveDataQueue } from '../deferred-reattach-live-data-queue'
@@ -21,11 +19,6 @@ import {
 import { shouldWritePtyOutputForeground } from './foreground-output-scan'
 import { recordHiddenRendererSkip } from './e2e-terminal-pty-harness'
 import { isRemoteRuntimePtyId } from './paired-parked-terminal-restore'
-
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 import { bindHiddenOutputRestoreSnapshot } from './hidden-output-restore-snapshot'

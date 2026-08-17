@@ -6,18 +6,11 @@ import { isEphemeralSetupTerminalWorktreeId } from '../../../../../shared/epheme
 import { parseExecutionHostId } from '../../../../../shared/execution-host'
 import { resolveTerminalWorktreeRoute } from '@/lib/terminal-worktree-route'
 import { getConnectionId } from '@/lib/connection-context'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { getRemoteRuntimePtyEnvironmentId } from '@/runtime/runtime-terminal-stream'
 import { parseAppSshPtyId } from '../../../../../shared/ssh-pty-id'
 import { isWebTerminalSurfaceTabId } from '@/runtime/web-terminal-surface-id'
 import type { DirectSshPaneRetryAttempt } from '@/store/slices/direct-ssh-terminal-recovery'
 import { directSshAuthoritiesEqual } from '@/store/slices/direct-ssh-terminal-authority-ledger'
-
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 

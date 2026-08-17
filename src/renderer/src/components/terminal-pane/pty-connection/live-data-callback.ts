@@ -1,8 +1,6 @@
 import { useAppStore } from '@/store'
 import { containsStatefulRendererQuery } from '../../../../../shared/terminal-reply-query-extraction'
 import { takeCurrentTerminalDeliveryCredit } from '@/lib/pane-manager/terminal-delivery-credit'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { recordAgentHibernationPaneOutput } from '@/lib/agent-hibernation-output-activity'
 import { observeTerminalBracketedPasteModeOutput } from '../terminal-bracketed-paste'
 import type { PtyDataMeta } from '../pty-dispatcher'
@@ -10,11 +8,6 @@ import { sendTerminalOscColorQueryReplies } from '../terminal-capability-replies
 
 import { shouldWritePtyOutputForeground } from './foreground-output-scan'
 import { registerE2eTerminalPtyDataInjection } from './e2e-terminal-pty-harness'
-
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 

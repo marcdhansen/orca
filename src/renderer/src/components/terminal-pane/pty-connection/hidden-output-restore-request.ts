@@ -3,15 +3,12 @@ import { isTerminalWritePipelineCertifiedDead } from '@/lib/pane-manager/termina
 import { requestTerminalPaneRecovery } from '../terminal-pane-recovery'
 import { registerStaleDocumentVisibilityRecovery } from '../stale-document-visibility'
 import { warnTerminalLifecycleAnomaly } from '../terminal-lifecycle-diagnostics'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { registerTerminalBacklogRecovery } from '@/lib/pane-manager/pane-terminal-output-scheduler'
 import {
   cancelScheduledHiddenOutputRestore,
   scheduleHiddenOutputRestore
 } from '../hidden-output-restore-scheduler'
 import { resolveHiddenRestoreScrollbackRows } from '../terminal-hidden-restore-scrollback'
-import type { PtyBufferSnapshot } from '../pty-transport'
 
 import {
   HIDDEN_OUTPUT_RESTORE_MAX_LOOP_ITERATIONS,
@@ -21,19 +18,8 @@ import {
 import { shouldWritePtyOutputForeground } from './foreground-output-scan'
 import { isRemoteRuntimePtyId } from './paired-parked-terminal-restore'
 
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
-
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
-
-type HiddenOutputSnapshotResult =
-  | { kind: 'snapshot'; snapshot: PtyBufferSnapshot }
-  | { kind: 'retry-worthy'; source: 'host' | 'local' }
-  | { kind: 'permanently-unavailable' }
-  | { kind: 'unknown-legacy-host' }
-  | { kind: 'unavailable' }
+import type { HiddenOutputSnapshotResult } from './hidden-output-snapshot-serialize'
 
 export function bindHiddenOutputRestoreRequest(session: ConnectPanePtySession): void {
   session.requestHiddenOutputRestoreIfNeeded = function (opts?: {

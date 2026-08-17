@@ -1,13 +1,6 @@
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import type { PtyDataMeta } from '../pty-dispatcher'
 
 import { HIDDEN_OUTPUT_RESTORE_PENDING_CHARS } from './hidden-output-restore-limits'
-
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 import type { PendingHiddenOutputRestoreChunk } from './pending-hidden-output-restore-chunk'

@@ -1,16 +1,10 @@
 import type { PtyReplayDataMeta } from '../pty-transport'
 import type { PtyTransportRecoveryState } from '../pty-transport-types'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import type { PtyDataMeta } from '../pty-dispatcher'
-
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
+/** Per-generation transport output callbacks and the hidden-output restore state they reset. */
 export function bindCaptureTransportOutputCallbacks(session: ConnectPanePtySession): void {
   session.captureTransportOutputCallbacks = (onError: (message: string) => void) => {
     // Why: a new stream generation cannot inherit an old replay's pending

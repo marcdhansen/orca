@@ -1,7 +1,5 @@
 import { detectAgentStatusFromTitle, isClaudeAgent } from '@/lib/agent-status'
 import { useAppStore } from '@/store'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import {
   isFreshNonDoneAgentStatus,
   type AgentStatusEntry,
@@ -16,11 +14,6 @@ import type { TuiAgent } from '../../../../../shared/tui-agent'
 import { isTuiAgent } from '../../../../../shared/tui-agent-config'
 
 import { MANUAL_AGENT_COMMAND_MAX_CHARS } from './pty-connect-limits'
-
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
@@ -50,11 +43,10 @@ export function installCommandInferredPaneAgent(session: ConnectPanePtySession):
       state.agentLaunchConfigByPaneKey[session.cacheKey]?.identity.agentType
     // Why: input inside a live TUI can spell another agent command; process or
     // pane-scoped launch ownership is stronger than typed shell inference.
-    const nextAgent =
-      state.paneForegroundAgentByPaneKey[session.cacheKey]?.agent ||
+    const hasStrongerAgentOwnership =
+      Boolean(state.paneForegroundAgentByPaneKey[session.cacheKey]?.agent) ||
       isTuiAgent(registeredLaunchAgent)
-        ? null
-        : candidateAgent
+    const nextAgent = hasStrongerAgentOwnership ? null : candidateAgent
     session.commandInferredPaneAgent = nextAgent
     session.commandInferredPaneAgentGeneration += 1
     if (nextAgent) {

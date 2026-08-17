@@ -13,13 +13,9 @@ import {
 } from './agent-task-complete-settings'
 import { isRemoteRuntimePtyId } from './paired-parked-terminal-restore'
 
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
-
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
+/** PTY visibility reporting, active-PTY binding, and the spawn/rebind/bell handlers that follow it. */
 export function installPanePtyVisibilityBind(session: ConnectPanePtySession): void {
   session.observeTerminalGitHubPRLink = createTerminalGitHubPRLinkDetector()
   session.reportPanePtyVisibility = (ptyId: string | null | undefined, visible: boolean): void => {

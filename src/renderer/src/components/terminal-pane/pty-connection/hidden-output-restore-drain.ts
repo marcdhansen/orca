@@ -1,8 +1,6 @@
 import { recordTerminalFreezeBreadcrumb } from '../terminal-freeze-breadcrumbs'
 import { redactPtyIdForDiagnostics } from '../../../../../shared/pty-delivery-diagnostics'
 import { RESET_AFTER_BYTE_GAP } from '../../../../../shared/terminal-mode-reset-profiles'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import { cancelScheduledHiddenOutputRestore } from '../hidden-output-restore-scheduler'
 
 import {
@@ -12,14 +10,10 @@ import {
 import { shouldWritePtyOutputForeground } from './foreground-output-scan'
 import { isRemoteRuntimePtyId } from './paired-parked-terminal-restore'
 
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
-
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
 export function bindHiddenOutputRestoreDrain(session: ConnectPanePtySession): void {
+  // 'drained' = painted all queued bytes; 'overflow' = queue blew its cap (stream outran fetch+replay); 'refetch' = offsets unmappable, need a fresher snapshot.
   session.drainPendingLiveChunksAfterSnapshot = function (
     snapshotSeq: number | undefined
   ): 'drained' | 'overflow' | 'refetch' {

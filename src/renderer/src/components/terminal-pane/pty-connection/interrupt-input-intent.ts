@@ -1,7 +1,5 @@
 import { detectAgentStatusFromTitle } from '@/lib/agent-status'
 import { useAppStore } from '@/store'
-// Why: a restored pane's stale-account prompt can only be raised once a PTY is
-// actually attached — nothing is inspectable while the session hydrates.
 import type { AgentStatusEntry } from '../../../../../shared/agent-status-types'
 import { createAgentInterruptInference } from '../agent-interrupt-inference'
 import { createAgentQuestionAnsweredInference } from '../agent-question-answered-inference'
@@ -9,11 +7,6 @@ import type { AgentInterruptInputIntent } from '../../../../../shared/agent-inte
 import { markTerminalBracketedPasteInterrupted } from '../terminal-bracketed-paste'
 
 import { REATTACH_IDLE_AGENT_CURSOR_RESET_DELAY_MS } from './foreground-output-scan'
-
-/**
- * Establishes a binding between a terminal pane and its corresponding PTY stream,
- * managing input, output, title synchronization, and agent status tracking.
- */
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
