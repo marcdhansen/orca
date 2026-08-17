@@ -58,7 +58,7 @@ export function bindRegisterPaneSerializer(session: ConnectPanePtySession): void
                 })
           const orderedSeq =
             session.rendererOrderedPtyId === ptyId ? session.rendererOrderedSeq : null
-          // Why snapshotFlags and not `flags`: this session.pane may itself have
+          // Why snapshotFlags and not `flags`: this pane may itself have
           // consumed an old-host snapshot that proved nothing, and its
           // conservative `0` fallback must not be republished downstream as
           // a host-proven inactive protocol.

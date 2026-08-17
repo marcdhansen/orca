@@ -136,14 +136,4 @@ export function bindHiddenOutputRestoreChunk(session: ConnectPanePtySession): vo
       meta: { ...meta, rawLength: sliced.length }
     }
   }
-
-  /**
-   * Apply an authoritative snapshot to the session.pane's kitty mirror in the order:
-   * unproven reset, replay-semantics scan of the snapshot
-   * bytes (so screen selection lands first), then the owner's proven flags.
-   *
-   * Why the reset only happens when the owner proved something: an old host
-   * omits the field, and downgrading a mirror that is already tracking live
-   * output would lose correct state instead of preserving it.
-   */
 }

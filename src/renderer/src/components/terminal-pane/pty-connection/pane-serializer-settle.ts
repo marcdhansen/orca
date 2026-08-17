@@ -41,7 +41,7 @@ export function bindSettlePaneSerializer(session: ConnectPanePtySession): void {
         return
       }
     } catch {
-      // Clear below so a failed parser/replay cannot leave the session.pane generation pending.
+      // Clear below so a failed parser/replay cannot leave the pane generation pending.
     }
     await window.api.pty.clearPendingPaneSerializer(session.cacheKey, generation).catch(() => {})
   }
@@ -128,12 +128,12 @@ export function bindSettlePaneSerializer(session: ConnectPanePtySession): void {
       useAppStore.getState(),
       session.deps.worktreeId
     )
-    // Why: xterm focus reports share this session.transport queue. Bypassing it can
+    // Why: xterm focus reports share this transport queue. Bypassing it can
     // race CSI I against the draft on ConPTY and expose a literal `[I` prefix.
     void sendAgentDraftPasteContent(settings, ptyId, session.startupDraftPrompt, async (data) => {
       const accepted = await writeTerminalPastePtyInput(session.transport, data)
       if (accepted && !startupDraftInputRecorded) {
-        // Why: this session.transport write bypasses xterm's user-input signal; keep
+        // Why: this transport write bypasses xterm's user-input signal; keep
         // the composed draft from being discarded by later hibernation.
         startupDraftInputRecorded = true
         session.recordTerminalInputForHibernation()
@@ -221,7 +221,7 @@ export function bindSettlePaneSerializer(session: ConnectPanePtySession): void {
   let sessionRestoredBannerShown: SessionRestoredBannerReason | null = null
   session.showSessionRestoredBanner = (reason: SessionRestoredBannerReason = 'restored'): void => {
     // Why: a plain 'restored' banner must not latch out the later 'resume-unavailable'
-    // upgrade — the session.pane would keep claiming a session it never got back.
+    // upgrade — the pane would keep claiming a session it never got back.
     if (
       sessionRestoredBannerShown === reason ||
       sessionRestoredBannerShown === 'resume-unavailable'

@@ -126,14 +126,14 @@ export function bindHiddenOutputRestoreSnapshot(session: ConnectPanePtySession):
               snapshot.cols,
               readProposedTerminalCols(session.pane)
             )
-          // Why: an imageless success is not proof the session.pane is empty; normal replay clears screen and scrollback.
+          // Why: an imageless success is not proof the pane is empty; normal replay clears screen and scrollback.
           const snapshotCarriesNoImage =
             snapshot.alternateScreen !== true && snapshot.data === '' && !snapshot.scrollbackAnsi
           if (snapshotCarriesNoImage) {
             // Why still ground: a restore only runs because bytes were dropped, so
             // the gap's pen outlives a snapshot that cannot repaint over it. The
             // live-path constant, not the replay baseline — nothing repaints here,
-            // so the session.pane is handed back to whatever is still running.
+            // so the pane is handed back to whatever is still running.
             session.writeReplayData(RESET_AFTER_BYTE_GAP)
           } else {
             for (const replayChunk of buildMainModelSnapshotReplayWrites(snapshot, {

@@ -149,7 +149,7 @@ export function installDirectSshRetryStatus(session: ConnectPanePtySession): voi
         })
       : undefined
   session.shouldOwnAgentStatusInRenderer = session.runtimeEnvironmentId !== null
-  // Why: the host also mirrors agent status for this pane through session.tabs.
+  // Why: the host also mirrors agent status for this pane through tabs.
   // Claiming here (decided once at transport creation, like the side-effect
   // authority below) lets the mirror keep this renderer's byte-derived status
   // instead of overwriting/deleting it on every republication.

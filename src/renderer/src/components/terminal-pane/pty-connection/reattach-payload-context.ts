@@ -11,6 +11,6 @@ export type ReattachPayloadContext = {
   revealFollowsTerminalPark: boolean
   fetchSshMainModelReattachSnapshot: () => Promise<PtyBufferSnapshot | null>
   hasStructuralReplay: boolean
-  coldRestoreStartup?: ColdRestoreAgentResumeStartup | null
+  coldRestoreStartup: ColdRestoreAgentResumeStartup | null | undefined
   reattachPayloadApplied: boolean
 }

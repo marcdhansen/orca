@@ -6,9 +6,8 @@ import { isRuntimeOwnedSshTargetId } from '../../../../../shared/execution-host'
 import { resolveSshPaneConnectGate } from '../ssh-pane-connect-gate'
 
 import {
-  type UserInitiatedSshConnectOutcome,
   isSshSessionExpiredError,
-  sshPromptConnectOutcomeForStatus,
+  waitForUserInitiatedSshConnect,
   waitForSshConnection
 } from './ssh-session-connect'
 import { isRemoteRuntimePtyId } from './paired-parked-terminal-restore'
@@ -84,63 +83,7 @@ export function runDeferredSessionAttach(session: ConnectPanePtySession): void {
           if (!alreadyConnected) {
             // Wait for the user-driven connect (sidebar card control or terminal reconnect overlay → passphrase → ssh.connect) to complete.
             // Why: resolve on terminal-failure statuses too ('auth-failed'/'error'/'reconnection-failed') so it can't hang forever if the user cancels or the connect fails.
-            const outcome = await new Promise<UserInitiatedSshConnectOutcome>((resolve) => {
-              // Why: 'disconnected' counts as terminal only after a non-disconnected status was seen (a real connect attempt that returned to 'disconnected').
-              // Treating the entry-time 'disconnected' as terminal would skip the gate, defeating the passphrase-prompt deferral.
-              let sawNonDisconnected =
-                useAppStore.getState().sshConnectionStates.get(session.connectionId)?.status !==
-                  'disconnected' &&
-                useAppStore.getState().sshConnectionStates.get(session.connectionId)?.status !==
-                  undefined
-              let resolvedOutcome: UserInitiatedSshConnectOutcome = 'cancelled'
-              let settled = false
-              const finish = (nextOutcome: UserInitiatedSshConnectOutcome): void => {
-                if (settled) {
-                  return
-                }
-                resolvedOutcome = nextOutcome
-                settled = true
-                unsub()
-                const idx = session.waitTeardowns.indexOf(teardown)
-                if (idx !== -1) {
-                  session.waitTeardowns.splice(idx, 1)
-                }
-                resolve(resolvedOutcome)
-              }
-              const teardown = (): void => finish('cancelled')
-              // Why: register a teardown so dispose() can unsubscribe+resolve if the session.pane is torn down mid-wait.
-              // Else the zustand subscriber + async IIFE leak: the callback only checks `session.disposed` when it next fires, which may never happen.
-              session.waitTeardowns.push(teardown)
-              const unsub = useAppStore.subscribe((state) => {
-                if (session.disposed) {
-                  finish('cancelled')
-                  return
-                }
-                const status = state.sshConnectionStates.get(session.connectionId)?.status
-                if (status && status !== 'disconnected') {
-                  sawNonDisconnected = true
-                }
-                const nextOutcome = sshPromptConnectOutcomeForStatus(status, sawNonDisconnected)
-                if (nextOutcome) {
-                  finish(nextOutcome)
-                }
-              })
-              // Why: re-read state after subscribing to catch a status change that landed between the alreadyConnected check and the subscribe — else we'd wait forever.
-              if (session.disposed) {
-                finish('cancelled')
-                return
-              }
-              const currentStatus = useAppStore
-                .getState()
-                .sshConnectionStates.get(session.connectionId)?.status
-              const currentOutcome = sshPromptConnectOutcomeForStatus(
-                currentStatus,
-                sawNonDisconnected
-              )
-              if (currentOutcome) {
-                finish(currentOutcome)
-              }
-            })
+            const outcome = await waitForUserInitiatedSshConnect(session)
             if (session.disposed || !session.capturedDirectSshRetryLeaseMatches()) {
               return
             }

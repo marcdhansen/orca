@@ -142,7 +142,7 @@ export function bindFreshSpawnFollowReset(session: ConnectPanePtySession): void 
     isAlternateScreen?: boolean
   ): string => {
     // Why a cold restore overrides the agent signal: liveness is read from the
-    // session.pane's status and title, both of which are persisted, so after a cold
+    // pane's status and title, both of which are persisted, so after a cold
     // restore they describe the process that died. Preserving "its" modes arms
     // mouse, focus and paste reporting against the fresh shell that replaces it,
     // which then prints the reports as junk at the prompt (#12101).
@@ -152,7 +152,7 @@ export function bindFreshSpawnFollowReset(session: ConnectPanePtySession): void 
     if (session.shouldPreserveAgentReattachModes()) {
       return buildPostReplayLiveAgentReattachReset(payload)
     }
-    // Why: an alt-screen session.pane is a live TUI Orca just does not recognise as an agent, and the
+    // Why: an alt-screen pane is a live TUI Orca just does not recognise as an agent, and the
     // replay already re-armed its mouse modes — keep them instead of wiping them (#8291).
     return (isAlternateScreen ?? session.kittyKeyboardModes.isAlternateScreen)
       ? POST_REPLAY_REATTACH_RESET_KEEP_MOUSE
@@ -173,7 +173,7 @@ export function bindFreshSpawnFollowReset(session: ConnectPanePtySession): void 
       return
     }
     // Why: fresh Windows ConPTY output paints at screen coordinates, so
-    // restored session.rows must leave the viewport before the first prompt redraw.
+    // restored rows must leave the viewport before the first prompt redraw.
     session.writeFreshShellViewportBlanking()
   }
 }

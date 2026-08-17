@@ -32,7 +32,7 @@ export function runDeferredSessionReattachChoice(session: ConnectPanePtySession)
   )?.ptyId
   const hasSleepingAgentSession = Boolean(session.getSleepingRecordForPane(storeSnapshot))
 
-  // Why: the tab-level fallback must not steal a PTY a setup sibling already published while the main session.pane waited for split geometry.
+  // Why: the tab-level fallback must not steal a PTY a setup sibling already published while the main pane waited for split geometry.
   const tabFallbackPtyId =
     existingPtyId &&
     !Array.from(session.deps.paneTransportsRef.current.entries()).some(
@@ -82,7 +82,7 @@ export function runDeferredSessionReattachChoice(session: ConnectPanePtySession)
     !isRemoteRuntimePtyId(candidateReattachSessionId) &&
     getEagerPtyBufferHandle(candidateReattachSessionId)
   )
-  // Why: a still-live locally-spawned PTY (e.g. a background automation agent) keeps an eager buffer until a session.pane adopts it.
+  // Why: a still-live locally-spawned PTY (e.g. a background automation agent) keeps an eager buffer until a pane adopts it.
   // It must be adopted via attach()+replay — connect({ sessionId }) on its non-session ptyId would spawn a fresh shell and orphan the agent.
   const eagerLivePtyId =
     candidateReattachSessionId &&
@@ -135,7 +135,7 @@ export function runDeferredSessionReattachChoice(session: ConnectPanePtySession)
         useAppStore.getState().removeDeferredSshSessionId(session.deps.tabId)
       }
     } else {
-      // Why: surface synchronous attach failures via session.reportError so the session.pane shows a diagnostic instead of a blank surface.
+      // Why: surface synchronous attach failures via session.reportError so the pane shows a diagnostic instead of a blank surface.
       // On throw, clear the stale ptyId from the tab and fresh-spawn — else the next remount reads the same dead id and loops here.
       try {
         session.clearPaneMode2031State()
@@ -177,7 +177,7 @@ export function runDeferredSessionReattachChoice(session: ConnectPanePtySession)
           }
           if (!spawnedPtyId) {
             // Why: React StrictMode can mount+spawn then immediately remount; if the first mount produced no PTY id,
-            // the remounted session.pane must issue its own spawn instead of attaching to a completed-but-empty promise (a dead surface).
+            // the remounted pane must issue its own spawn instead of attaching to a completed-but-empty promise (a dead surface).
             if (!isWebTerminalSurfaceTabId(session.deps.tabId)) {
               console.warn(
                 `Pending PTY spawn for tab ${session.deps.tabId} resolved without a PTY id, retrying fresh spawn`
@@ -203,7 +203,7 @@ export function runDeferredSessionReattachChoice(session: ConnectPanePtySession)
             callbacks: outputCallbacks.callbacks
           })
           const attachedPtyId = session.transport.getPtyId() ?? spawnedPtyId
-          // Why: this reuses a PTY spawned by an earlier mount, so no later spawn event will bind this remounted session.pane's DOM/container.
+          // Why: this reuses a PTY spawned by an earlier mount, so no later spawn event will bind this remounted pane's DOM/container.
           session.bindActivePanePty(attachedPtyId, {
             updateTabPtyId: 'if-missing',
             sampleVisibleForegroundAgent: true

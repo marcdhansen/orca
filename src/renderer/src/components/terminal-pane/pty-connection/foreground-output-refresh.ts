@@ -66,7 +66,7 @@ export function bindForegroundOutputRefresh(session: ConnectPanePtySession): voi
     })
     // Why: dropped bytes invalidate cross-chunk carry — a partial OSC-9999 prefix spanning the gap would corrupt the next live chunk.
     session.transport.resetCrossChunkParserState?.()
-    // Why gated (rc.7.perf loop): on a visible session.pane these markers come from our own restore starving ACKs; re-arming per marker kept the fetch loop alive all flood, so defer to one post-flood repaint.
+    // Why gated (rc.7.perf loop): on a visible pane these markers come from our own restore starving ACKs; re-arming per marker kept the fetch loop alive all flood, so defer to one post-flood repaint.
     if (session.isForegroundRestoreBackpressureContext()) {
       session.noteHiddenOutputRestoreFloodBackpressure()
       return
@@ -82,7 +82,7 @@ export function bindForegroundOutputRefresh(session: ConnectPanePtySession): voi
     // session.buildMainModelSnapshotReplayWrites, which grounds the pen itself, so
     // nothing is lost by skipping it here.
     session.writePtyOutputToXterm(RESET_AFTER_BYTE_GAP, true)
-    // Why: a marker during an in-flight restore means that snapshot may predate the drop, so a fresh one must follow; capture BEFORE the mark, which starts a restore synchronously on a visible session.pane.
+    // Why: a marker during an in-flight restore means that snapshot may predate the drop, so a fresh one must follow; capture BEFORE the mark, which starts a restore synchronously on a visible pane.
     const restoreWasInFlight = session.hiddenOutputRestoreInFlight !== null
     session.markHiddenOutputRestoreNeeded()
     if (restoreWasInFlight) {
@@ -223,7 +223,7 @@ export function bindForegroundOutputRefresh(session: ConnectPanePtySession): voi
 
   session.isLatencySensitiveForegroundOutput = function (data: string): boolean {
     if (!session.isActiveSplitPane()) {
-      // Why: many visible split panes each emit tiny TUI frames; a shared budget keeps them live without letting aggregate xterm work starve typing in the active session.pane.
+      // Why: many visible split panes each emit tiny TUI frames; a shared budget keeps them live without letting aggregate xterm work starve typing in the active pane.
       if (data.includes('\x1b[')) {
         return false
       }

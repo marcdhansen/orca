@@ -39,9 +39,9 @@ export function bindHiddenOutputRestoreRequest(session: ConnectPanePtySession): 
   session.requestHiddenOutputRestoreIfNeeded = function (opts?: {
     bypassScheduler?: boolean
   }): boolean {
-    // Why: once the write pipeline is probe-certified dead a restore can never parse; recovery owns the session.pane and the remount gets a fresh xterm + restore.
+    // Why: once the write pipeline is probe-certified dead a restore can never parse; recovery owns the pane and the remount gets a fresh xterm + restore.
     if (isTerminalWritePipelineCertifiedDead(session.pane.terminal)) {
-      // Why the re-kick: certification's recovery request can be budget-declined or cancelled by a sibling remount; without this, a revealed dead session.pane keeps the stale frame forever.
+      // Why the re-kick: certification's recovery request can be budget-declined or cancelled by a sibling remount; without this, a revealed dead pane keeps the stale frame forever.
       if (!session.certifiedDeadRestoreRecoveryRequested && !session.disposed) {
         session.certifiedDeadRestoreRecoveryRequested = true
         const storePtyId = useAppStore.getState().ptyIdsByTabId?.[session.deps.tabId]?.[0] ?? null
@@ -121,7 +121,7 @@ export function bindHiddenOutputRestoreRequest(session: ConnectPanePtySession): 
           if (session.hiddenOutputRestorePtyId === currentPtyId) {
             session.clearHiddenOutputRestoreState()
           }
-          // Remote-only path: the session.transport swapped PTYs mid-restore, which is a
+          // Remote-only path: the transport swapped PTYs mid-restore, which is a
           // stream change, not proof the hidden bytes are unrecoverable.
           if (
             !session.rearmRemoteHiddenOutputRestoreInsteadOfWarning(
@@ -310,7 +310,7 @@ export function bindHiddenOutputRestoreRequest(session: ConnectPanePtySession): 
     typeof document.removeEventListener === 'function'
   ) {
     const onDocumentVisibilityChange = (): void => {
-      // Why: document hide/show flips the foreground predicate with no session.pane lifecycle event; re-sync the hidden-delivery gate both ways.
+      // Why: document hide/show flips the foreground predicate with no pane lifecycle event; re-sync the hidden-delivery gate both ways.
       session.syncHiddenRendererPtyDelivery()
       if (shouldWritePtyOutputForeground(session.deps.isVisibleRef.current)) {
         session.requestHiddenOutputRestoreIfNeeded()

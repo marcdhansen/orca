@@ -19,9 +19,38 @@ import type { ColdRestoreAgentResumeStartup } from './fresh-spawn-types'
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
 import type { ReattachPayloadContext } from './reattach-payload-context'
-import { bindApplyReattachPayload } from './apply-reattach-payload'
+import { createReattachPayloadHandlers } from './apply-reattach-payload'
+import type { ReattachPayloadSession } from './reattach-payload-session'
 
-export function bindHandleReattachResult(session: ConnectPanePtySession): void {
+type ReattachResultSession = ReattachPayloadSession &
+  Pick<
+    ConnectPanePtySession,
+    | 'agentCompletionCoordinator'
+    | 'authoritativeReattachGeneration'
+    | 'capturedDirectSshRetryPtyAccepted'
+    | 'deps'
+    | 'directSshRetryAttempt'
+    | 'disposed'
+    | 'getSshMainModelSnapshotProbe'
+    | 'handleReattachResult'
+    | 'mountFollowsTerminalPark'
+    | 'registerEffectiveLaunchConfig'
+    | 'registerPaneSerializerFor'
+    | 'registerSideEffectFactConsumerForPty'
+    | 'rejectObsoleteDirectSshReattach'
+    | 'reportPanePtyVisibility'
+    | 'sampleVisiblePaneForegroundAgent'
+    | 'scheduleReattachIdleAgentCursorReset'
+    | 'serializeHiddenOutputSnapshot'
+    | 'setPanePtyFitBinding'
+    | 'startFreshColdRestoreAgentResume'
+    | 'structuralReplayCoordinator'
+    | 'syncHiddenRendererPtyDelivery'
+    | 'transportStreamGeneration'
+  >
+
+export function bindHandleReattachResult(sessionBag: ConnectPanePtySession): void {
+  const session = sessionBag as unknown as ReattachResultSession
   session.handleReattachResult = async (
     result: PtyConnectResult | string | void,
     staleSessionId?: string | null,
@@ -39,7 +68,7 @@ export function bindHandleReattachResult(session: ConnectPanePtySession): void {
       result && typeof result === 'object' && 'id' in result ? (result as PtyConnectResult) : null
 
     if (connectResult?.exitedBeforeAttach) {
-      // Why: the session.transport already delivered the dead session's final frame + exit; treat as terminal state, not a failed reattach.
+      // Why: the transport already delivered the dead session's final frame + exit; treat as terminal state, not a failed reattach.
       return true
     }
 
@@ -206,15 +235,18 @@ export function bindHandleReattachResult(session: ConnectPanePtySession): void {
       coldRestoreStartup,
       reattachPayloadApplied: !hasStructuralReplay && prefetchedParkModelSnapshot === null
     }
-    bindApplyReattachPayload(session, reattachPayload)
+    const { applyReattachPayload, fitAfterReattachRestore } = createReattachPayloadHandlers(
+      session,
+      reattachPayload
+    )
     if (hasStructuralReplay || prefetchedParkModelSnapshot) {
-      await session.structuralReplayCoordinator.run(session.applyReattachPayload, {
+      await session.structuralReplayCoordinator.run(applyReattachPayload, {
         shouldRestore: isCurrentReattachPayload,
-        afterRestore: session.fitAfterReattachRestore
+        afterRestore: fitAfterReattachRestore
       })
     } else {
-      await session.applyReattachPayload()
-      await session.fitAfterReattachRestore()
+      await applyReattachPayload()
+      await fitAfterReattachRestore()
     }
     if (!isCurrentReattachPayload() || !reattachPayload.reattachPayloadApplied) {
       return false

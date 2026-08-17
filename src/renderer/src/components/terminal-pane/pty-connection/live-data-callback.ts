@@ -48,7 +48,7 @@ export function bindLiveDataCallback(session: ConnectPanePtySession): void {
     session.resetHiddenOutputRestoreIfPtyChanged()
     session.observeLiveMode2031Chunk(data)
     if (meta?.droppedOutput === true) {
-      // Why gated (rc.7.perf loop): a visible session.pane's cap-drop during its own restore is self-caused backpressure; defer to one post-flood repaint instead of re-arming per sentinel.
+      // Why gated (rc.7.perf loop): a visible pane's cap-drop during its own restore is self-caused backpressure; defer to one post-flood repaint instead of re-arming per sentinel.
       if (meta?.background !== true && session.isForegroundRestoreBackpressureContext()) {
         session.noteHiddenOutputRestoreFloodBackpressure()
       } else {
@@ -75,7 +75,7 @@ export function bindLiveDataCallback(session: ConnectPanePtySession): void {
     if (codexBackfillNotice) {
       session.reportError(codexBackfillNotice)
     }
-    // Why: split panes have visible-but-inactive panes the user watches; throttle only when the session.pane or whole document is hidden.
+    // Why: split panes have visible-but-inactive panes the user watches; throttle only when the pane or whole document is hidden.
     const foreground =
       shouldWritePtyOutputForeground(session.deps.isVisibleRef.current) && meta?.background !== true
     // Why: latch the hidden-delivery gate from the byte path too, covering a PTY id that arrives after the initial sync (no-op when current).
@@ -94,7 +94,7 @@ export function bindLiveDataCallback(session: ConnectPanePtySession): void {
         session.clearRestoredSnapshotBaseline()
         // fall through with the ORIGINAL data/meta — post-gap bytes are new
       } else {
-        // Why: capture in-flight BEFORE the mark — on a visible session.pane the mark starts the restore synchronously and must not flag itself.
+        // Why: capture in-flight BEFORE the mark — on a visible pane the mark starts the restore synchronously and must not flag itself.
         const restoreWasInFlight = session.hiddenOutputRestoreInFlight !== null
         session.markHiddenOutputRestoreNeeded()
         if (restoreWasInFlight) {

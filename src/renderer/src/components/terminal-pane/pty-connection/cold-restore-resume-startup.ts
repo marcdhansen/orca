@@ -56,7 +56,7 @@ export function bindBuildColdRestoreAgentResumeStartup(session: ConnectPanePtySe
     const launchConfig =
       (useLiveEntry && entry ? state.getAgentLaunchConfigForStatusEntry(entry) : undefined) ??
       matchingSleepingLaunchConfig
-    // Why: the resume line is typed into this session.pane's live shell, so its quoting must
+    // Why: the resume line is typed into this pane's live shell, so its quoting must
     // follow the tab's effective Windows shell, not the win32 PowerShell default.
     const resumeTarget = resolveAgentResumeLaunchTarget({
       projectRuntime: session.projectRuntime,

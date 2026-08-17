@@ -25,7 +25,7 @@ export function bindWritePtyOutputToXterm(session: ConnectPanePtySession): void 
     foreground: boolean,
     opts?: { hiddenStartupRendererQuery?: boolean }
   ): void {
-    // Why: every application byte funnels through here, so it's the one place the kitty keyboard mirror observes the session.pane's protocol negotiation.
+    // Why: every application byte funnels through here, so it's the one place the kitty keyboard mirror observes the pane's protocol negotiation.
     session.kittyKeyboardModes.scan(data)
     if (foreground) {
       session.resetHiddenOutputRestoreIfPtyChanged()

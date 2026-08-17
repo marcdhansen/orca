@@ -129,6 +129,15 @@ export function bindHiddenOutputSeqAndSkip(session: ConnectPanePtySession): void
 
   bindHiddenStartupRendererQueryWrite(session)
   bindHiddenOutputRestoreChunk(session)
+  /**
+   * Apply an authoritative snapshot to the pane's kitty mirror in the order:
+   * unproven reset, replay-semantics scan of the snapshot
+   * bytes (so screen selection lands first), then the owner's proven flags.
+   *
+   * Why the reset only happens when the owner proved something: an old host
+   * omits the field, and downgrading a mirror that is already tracking live
+   * output would lose correct state instead of preserving it.
+   */
   session.applySnapshotKittyKeyboardModes = function (
     snapshotData: string,
     snapshot: { kittyKeyboardFlags?: number; snapshotSeq?: number }
@@ -152,7 +161,7 @@ export function bindHiddenOutputSeqAndSkip(session: ConnectPanePtySession): void
     session.kittyKeyboardModes.resetForSnapshot()
     session.kittyKeyboardModes.scanReplay(snapshotData)
     session.kittyKeyboardModes.restoreSnapshotFlags(proven)
-    // Why in the same critical section: without the baseline a quiet session.pane
+    // Why in the same critical section: without the baseline a quiet pane
     // could not publish a coherent snapshot until unrelated output arrived.
     session.recordRendererOrderedSeq({ seq: snapshot.snapshotSeq })
   }

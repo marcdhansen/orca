@@ -32,7 +32,7 @@ export function bindStartFreshSpawn(session: ConnectPanePtySession): void {
     if (useAppStore.getState().deleteStateByWorktreeId?.[session.deps.worktreeId]?.isDeleting) {
       // Why: the worktree is being deleted; its PTYs were just killed for the
       // filesystem teardown. A fresh shell must not spawn into a directory the
-      // removal is about to delete (main fences it anyway), and the session.pane is
+      // removal is about to delete (main fences it anyway), and the pane is
       // about to unmount — so skip the doomed respawn instead of racing it.
       return Promise.resolve(null)
     }
@@ -158,7 +158,7 @@ export function bindStartFreshSpawn(session: ConnectPanePtySession): void {
             typeof spawnedPtyId === 'object' &&
             spawnedPtyId.agentResumeUnavailable
           ) {
-            // Why: main dropped the resume argv, so this session.pane is a NEW session —
+            // Why: main dropped the resume argv, so this pane is a NEW session —
             // the plain restored banner would claim the old one came back.
             session.showSessionRestoredBanner('resume-unavailable')
           } else if (coldRestoreOverride?.hasSleepingRecord) {
@@ -171,7 +171,7 @@ export function bindStartFreshSpawn(session: ConnectPanePtySession): void {
         ) {
           // Why: delayed draft/follow-up delivery keys off this launch
           // registry. If spawn produced no PTY, the launch is no longer a
-          // viable delivery target and must not wait for a future session.pane.
+          // viable delivery target and must not wait for a future pane.
           session.clearRegisteredStartupLaunchConfig()
         }
         if (
@@ -183,7 +183,7 @@ export function bindStartFreshSpawn(session: ConnectPanePtySession): void {
           session.transport.getPtyId() === resolvedPtyId
         ) {
           // Why: daemon createOrAttach can turn an apparent fresh spawn into
-          // a reattach; the session.transport skips onPtySpawn there to preserve recency.
+          // a reattach; the transport skips onPtySpawn there to preserve recency.
           session.bindActivePanePty(resolvedPtyId, {
             updateTabPtyId: 'if-missing',
             sampleVisibleForegroundAgent: true
@@ -250,8 +250,8 @@ export function bindStartFreshSpawn(session: ConnectPanePtySession): void {
         session.settleDirectSshPaneRetryAttempt(session.directSshRetryAttempt, 'failed')
       })
     })
-    // Why: split panes in the same tab can spawn concurrently. Key by session.pane
-    // as well as tab so a remount cannot attach to a sibling setup session.pane's PTY.
+    // Why: split panes in the same tab can spawn concurrently. Key by pane
+    // as well as tab so a remount cannot attach to a sibling setup pane's PTY.
     pendingSpawnByPaneKey.set(session.pendingSpawnKey, trackedPromise)
     return trackedPromise
   }

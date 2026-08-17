@@ -89,7 +89,7 @@ export function bindSerializeHiddenOutputSnapshot(session: ConnectPanePtySession
   }
 
   // ── Hidden-delivery gate sync (Phase 4) ─────────────────────────────
-  // Why: marks this session.pane's PTY hidden in main while no visible view needs
+  // Why: marks this pane's PTY hidden in main while no visible view needs
   // its bytes; main then drops delivery after model ingestion and reveal
   // restores from the snapshot. The marked id is tracked locally so PTY
   // changes (reattach/restart) can never leave a stale id gated.
@@ -102,8 +102,8 @@ export function bindSerializeHiddenOutputSnapshot(session: ConnectPanePtySession
     return Date.now() < session.hiddenOutputRestoreFloodSuppressedUntil
   }
 
-  // True when a drop/gap signal on a visible session.pane is attributable to this
-  // session.pane's OWN restore backpressure (a restore is replaying right now, or
+  // True when a drop/gap signal on a visible pane is attributable to this
+  // pane's OWN restore backpressure (a restore is replaying right now, or
   // one was just cut off for outrunning the stream). Such signals must not
   // re-arm restores — that is the rc.7.perf feedback loop.
   session.isForegroundRestoreBackpressureContext = function (): boolean {

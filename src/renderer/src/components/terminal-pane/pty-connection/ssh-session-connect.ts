@@ -1,12 +1,13 @@
 import { useAppStore } from '@/store'
 import { SSH_SESSION_EXPIRED_ERROR } from './pty-connect-limits'
+import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
 // Why: when multiple panes/tabs need the same deferred SSH connection,
 // the first one calls ssh.connect() and subsequent ones must wait for it
 // rather than returning early (which would leave them disconnected). This
 // helper either connects or waits for an in-flight connect to finish.
 export type SshConnectResult = { connected: true } | { connected: false; error: string }
-export type UserInitiatedSshConnectOutcome = 'connected' | 'cancelled' | 'failed'
+type UserInitiatedSshConnectOutcome = 'connected' | 'cancelled' | 'failed'
 
 const sshConnectPromises = new Map<string, Promise<SshConnectResult>>()
 
@@ -14,7 +15,7 @@ export function isSshSessionExpiredError(err: unknown): boolean {
   return (err instanceof Error ? err.message : String(err)).includes(SSH_SESSION_EXPIRED_ERROR)
 }
 
-export function sshPromptConnectOutcomeForStatus(
+function sshPromptConnectOutcomeForStatus(
   status: string | undefined,
   sawNonDisconnected: boolean
 ): UserInitiatedSshConnectOutcome | null {
@@ -30,6 +31,60 @@ export function sshPromptConnectOutcomeForStatus(
     return 'cancelled'
   }
   return null
+}
+
+export function waitForUserInitiatedSshConnect(
+  session: ConnectPanePtySession
+): Promise<UserInitiatedSshConnectOutcome> {
+  return new Promise((resolve) => {
+    // Entry-time disconnected means authentication has not started; it only cancels after another status was observed.
+    let sawNonDisconnected = !['disconnected', undefined].includes(
+      useAppStore.getState().sshConnectionStates.get(session.connectionId)?.status
+    )
+    let settled = false
+    const finish = (outcome: UserInitiatedSshConnectOutcome): void => {
+      if (settled) {
+        return
+      }
+      settled = true
+      unsubscribe()
+      const index = session.waitTeardowns.indexOf(teardown)
+      if (index !== -1) {
+        session.waitTeardowns.splice(index, 1)
+      }
+      resolve(outcome)
+    }
+    const teardown = (): void => finish('cancelled')
+    // Disposal must resolve the wait even if the SSH store never emits again.
+    session.waitTeardowns.push(teardown)
+    const readOutcome = (status: string | undefined): UserInitiatedSshConnectOutcome | null => {
+      if (status && status !== 'disconnected') {
+        sawNonDisconnected = true
+      }
+      return sshPromptConnectOutcomeForStatus(status, sawNonDisconnected)
+    }
+    const unsubscribe = useAppStore.subscribe((state) => {
+      if (session.disposed) {
+        finish('cancelled')
+        return
+      }
+      const outcome = readOutcome(state.sshConnectionStates.get(session.connectionId)?.status)
+      if (outcome) {
+        finish(outcome)
+      }
+    })
+    if (session.disposed) {
+      finish('cancelled')
+      return
+    }
+    // Catch a status change that landed between the caller's check and this subscription.
+    const currentOutcome = readOutcome(
+      useAppStore.getState().sshConnectionStates.get(session.connectionId)?.status
+    )
+    if (currentOutcome) {
+      finish(currentOutcome)
+    }
+  })
 }
 
 export async function waitForSshConnection(connectionId: string): Promise<SshConnectResult> {

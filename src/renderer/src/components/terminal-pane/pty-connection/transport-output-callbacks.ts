@@ -62,7 +62,7 @@ export function bindCaptureTransportOutputCallbacks(session: ConnectPanePtySessi
         },
         onRecoveryStateChange: (state: PtyTransportRecoveryState): void => {
           if (isCurrent()) {
-            // Why: cached pixels remain visible while detached; expose session.transport truth for diagnostics and recovery UI.
+            // Why: cached pixels remain visible while detached; expose transport truth for diagnostics and recovery UI.
             session.pane.container.dataset.ptyRecoveryState = state.phase
             session.deps.onPtyRecoveryStateRef?.current?.(session.pane.id, state)
           }
@@ -94,7 +94,7 @@ export function bindCaptureTransportOutputCallbacks(session: ConnectPanePtySessi
   session.hiddenOutputRestoreRemoteAbandonCycles = 0
   session.hiddenOutputSnapshotScrollRestore = null
   // Why: hidden recovery state belongs to one PTY stream. Reattach/restart
-  // can reuse the session.pane object for a different session before visibility.
+  // can reuse the pane object for a different session before visibility.
   session.hiddenOutputRestorePtyId = null
   // One recovery re-kick per xterm instance. Generation-aware cooldown and
   // window-cap retries keep a fresh-but-wedged replacement from fossilizing.

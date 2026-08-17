@@ -22,14 +22,17 @@ import { isRemoteRuntimePtyId } from './paired-parked-terminal-restore'
  * managing input, output, title synchronization, and agent status tracking.
  */
 
-import type { ConnectPanePtySession } from './connect-pane-pty-session'
 import type { ReattachPayloadContext } from './reattach-payload-context'
+import type { ReattachPayloadSession } from './reattach-payload-session'
 
-export function bindApplyReattachPayload(
-  session: ConnectPanePtySession,
+export function createReattachPayloadHandlers(
+  session: ReattachPayloadSession,
   ctx: ReattachPayloadContext
-): void {
-  session.applyReattachPayload = async (): Promise<void> => {
+): {
+  applyReattachPayload: () => Promise<void>
+  fitAfterReattachRestore: () => Promise<void>
+} {
+  const applyReattachPayload = async (): Promise<void> => {
     if (!ctx.isCurrentReattachPayload()) {
       return
     }
@@ -280,7 +283,7 @@ export function bindApplyReattachPayload(
     }
   }
 
-  session.fitAfterReattachRestore = async (): Promise<void> => {
+  const fitAfterReattachRestore = async (): Promise<void> => {
     if (!ctx.isCurrentReattachPayload()) {
       return
     }
@@ -312,4 +315,6 @@ export function bindApplyReattachPayload(
       window.api.pty.signal(reattachPtyId, 'SIGWINCH')
     }
   }
+
+  return { applyReattachPayload, fitAfterReattachRestore }
 }
