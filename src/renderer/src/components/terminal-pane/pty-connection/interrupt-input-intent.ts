@@ -162,7 +162,10 @@ export function installInterruptInputIntent(session: ConnectPanePtySession): voi
     session.questionAnsweredInference.observeSentTerminalInput(data)
   }
   session.pendingTerminalInputWrite = null
-  session.sequencedInterruptStatusBaseline = 0
+  // Why: an unset baseline must differ from the first `?? null` snapshot so the
+  // first acknowledged input still advances the sequence.
+  session.sequencedInterruptStatusBaseline = undefined
+  session.interruptStatusBaselineSequence = 0
   session.setPendingTerminalInputWrite = (promise: Promise<boolean | null>): void => {
     session.pendingTerminalInputWrite = promise
     void promise.finally(() => {

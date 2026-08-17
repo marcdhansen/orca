@@ -57,13 +57,15 @@ export function bindHandleReattachResult(sessionBag: ConnectPanePtySession): voi
     coldRestoreStartup?: ColdRestoreAgentResumeStartup | null,
     attemptGeneration = session.transportStreamGeneration
   ): Promise<boolean> => {
-    session.authoritativeReattachGeneration += 1
     if (session.disposed) {
       return false
     }
     if (attemptGeneration !== session.transportStreamGeneration) {
       return false
     }
+    // Why: bump only once this attempt owns the stream, or a superseded result
+    // would cancel the current attempt's in-flight snapshot prepaint.
+    session.authoritativeReattachGeneration += 1
     const connectResult =
       result && typeof result === 'object' && 'id' in result ? (result as PtyConnectResult) : null
 

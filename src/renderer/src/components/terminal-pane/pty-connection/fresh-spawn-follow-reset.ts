@@ -85,7 +85,9 @@ export function bindFreshSpawnFollowReset(session: ConnectPanePtySession): void 
         return ''
       }
     }
-    return tail.slice(-TERMINAL_RENDERER_RISK_SCAN_TAIL_CHARS)
+    // Why: keep the head — a suffix slice of an oversized parameter run drops
+    // the `\x1b[` the next scan needs to recognize the carried sequence.
+    return tail.slice(0, TERMINAL_RENDERER_RISK_SCAN_TAIL_CHARS)
   }
 
   session.foregroundRendererRiskOutputPrefersRenderRefresh = function (data: string): boolean {

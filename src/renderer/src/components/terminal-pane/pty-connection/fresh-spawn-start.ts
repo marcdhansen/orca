@@ -114,6 +114,12 @@ export function bindStartFreshSpawn(session: ConnectPanePtySession): void {
               : session.transport.getPtyId()
         if (resolvedPtyId && !session.claimCapturedDirectSshRetryPty(resolvedPtyId)) {
           session.finishReattachLiveDataDeferral(false, outputCallbacks.generation)
+          // Why: an outstanding declare keeps main's cooperation gate suppressing
+          // this paneKey's daemon-snapshot seed until something releases it.
+          const gen = await preSignalPromise
+          if (typeof gen === 'number') {
+            void window.api.pty.clearPendingPaneSerializer(session.cacheKey, gen).catch(() => {})
+          }
           return null
         }
         const connectResult =
@@ -193,7 +199,9 @@ export function bindStartFreshSpawn(session: ConnectPanePtySession): void {
           session.reconcilePtySizeAfterSpawn(resolvedPtyId, session.cols, session.rows)
         }
         const gen = await preSignalPromise
-        if (resolvedPtyId && (typeof gen === 'number' || isRemoteRuntimePtyId(resolvedPtyId))) {
+        // Why: a bound PTY owns the renderer serializer even when the declare was
+        // rejected; the gen token only settles or clears the pending declaration.
+        if (resolvedPtyId) {
           if (!isRemoteRuntimePtyId(resolvedPtyId) || !hasPtySerializer(resolvedPtyId)) {
             session.registerPaneSerializerFor(resolvedPtyId)
           }
