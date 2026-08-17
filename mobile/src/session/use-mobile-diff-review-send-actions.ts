@@ -12,7 +12,7 @@ import {
   readMobileReviewTerminalTabs
 } from './mobile-diff-review-rpc'
 import { healMobileNativeChatStaleInput } from './mobile-native-chat-stale-input'
-import { buildIdentityCreateTerminalParams } from './identity-create-terminal-params'
+import { resolveIdentityCreateTerminalParams } from './identity-create-terminal-params'
 import { readMobileVaultResumeCreateOutcome } from './ai-vault-resume-outcome'
 import type { ReviewScreenState, SendSheetState } from './mobile-diff-review-screen-model'
 
@@ -106,8 +106,9 @@ export function useMobileDiffReviewSendActions(input: SendActionsInput) {
       if (!client || connState !== 'connected') {
         throw new Error('Waiting for desktop...')
       }
+      const createParams = await resolveIdentityCreateTerminalParams(client, worktreeId)
       const response = await client.sendRequest('session.tabs.createTerminal', {
-        ...buildIdentityCreateTerminalParams(worktreeId),
+        ...createParams,
         activate: false,
         select: true,
         navigation: 'caller'

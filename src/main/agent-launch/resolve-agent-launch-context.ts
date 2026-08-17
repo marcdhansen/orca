@@ -42,7 +42,7 @@ export type LaunchContext = {
  *  without importing the soon-private helper). */
 function builtInArgsTemplate(base: BuiltInTuiAgent, settings: GlobalSettings): string {
   const configured = settings.agentDefaultArgs
-  if (configured && Object.prototype.hasOwnProperty.call(configured, base)) {
+  if (configured && Object.hasOwn(configured, base)) {
     return configured[base] ?? ''
   }
   return getTuiAgentDefaultArgs(base)
@@ -50,7 +50,7 @@ function builtInArgsTemplate(base: BuiltInTuiAgent, settings: GlobalSettings): s
 
 function builtInEnv(base: BuiltInTuiAgent, settings: GlobalSettings): Record<string, string> {
   const configured = settings.agentDefaultEnv
-  if (configured && Object.prototype.hasOwnProperty.call(configured, base)) {
+  if (configured && Object.hasOwn(configured, base)) {
     return { ...configured[base] }
   }
   return getTuiAgentDefaultEnv(base)

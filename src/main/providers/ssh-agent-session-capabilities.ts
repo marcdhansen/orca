@@ -1,12 +1,15 @@
 import type { SshChannelMultiplexer } from '../ssh/ssh-channel-multiplexer'
 import { proveSshAgentSessionClaimCapability } from './ssh-agent-session-claim-validation'
 import { sshSupportsAgentSessionCreateOperations } from './ssh-agent-session-create-operation'
+import { sshEchoesLaunchTokens } from './ssh-launch-token-echo-capability'
 import { waitForSshCapabilityProbe } from './ssh-capability-probe-waiter'
 
 export class SshAgentSessionCapabilities {
   private claimProbe: Promise<void> | null = null
   private claimSupported = false
   private createOperationProbe: Promise<boolean> | null = null
+  private launchTokenEchoProbe: Promise<boolean> | null = null
+  private launchTokenEchoSupported = false
 
   constructor(private readonly mux: SshChannelMultiplexer) {}
 
@@ -46,5 +49,29 @@ export class SshAgentSessionCapabilities {
       this.createOperationProbe = null
     }
     return supported
+  }
+
+  async supportsLaunchTokenEcho(options: { signal?: AbortSignal } = {}): Promise<boolean> {
+    const probe = this.launchTokenEchoProbe ?? sshEchoesLaunchTokens(this.mux)
+    this.launchTokenEchoProbe = probe
+    let supported: boolean
+    try {
+      supported = await waitForSshCapabilityProbe(probe, options.signal)
+    } catch {
+      // Why: one canceled waiter must not cancel or evict the shared physical probe used by peers.
+      return false
+    }
+    if (!supported && this.launchTokenEchoProbe === probe) {
+      // Why: negative capability results must follow a relay upgraded on the same connection.
+      this.launchTokenEchoProbe = null
+    }
+    this.launchTokenEchoSupported = supported
+    return supported
+  }
+
+  /** Sync read of the last probe: a re-list cannot await, and an unprobed or old
+   *  relay must never let a missing launchToken count as absence proof. */
+  providesLaunchTokenListings(): boolean {
+    return this.launchTokenEchoSupported
   }
 }

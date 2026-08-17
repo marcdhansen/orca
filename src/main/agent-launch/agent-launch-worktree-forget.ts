@@ -8,14 +8,16 @@
 //   - clears the public pending metadata and the unknown failure card.
 // Guards, in order: idempotency replay first (a double-submit after a successful
 // forget replays `forgotten` instead of hitting the now-empty pending), then the
-// operation-id anti-race guard, then the "only from matching launch_state_unknown"
-// gate. `expectedOperationId` is an anti-race guard, never authorization.
+// operation-id anti-race guard, then the caller-principal owner check, then the
+// "only from matching launch_state_unknown" gate. `expectedOperationId` is an
+// anti-race guard, never authorization — `callerPrincipal` is the authorization.
 // Electron-free and injectable.
 
 import type {
   AgentLaunchFailureCode,
   AgentLaunchRequestError
 } from '../../shared/agent-launch-contract'
+import { admissionPrincipalOwns, type AdmissionPrincipal } from './agent-launch-admission-store'
 import {
   canonicalPayloadDigest,
   type AgentLaunchOperationStore,
@@ -29,6 +31,11 @@ export type ForgetUnknownAgentLaunchParams = {
   scope: string
   expectedOperationId: string
   clientMutationId: string
+  /** The authenticated caller. When present, the launch's stored admission
+   *  principal must belong to it, so one paired device cannot forget another
+   *  device's launch. Omitted only by host-internal overrides that carry their
+   *  own gate (the revoked-remote forget). */
+  callerPrincipal?: AdmissionPrincipal
 }
 
 // The client-safe forget result lives in shared so renderer, preload, and this
@@ -87,6 +94,17 @@ export function runForgetUnknownAgentLaunch(
   //    name the operation the client believes it is forgetting.
   const pending = deps.loadPendingSnapshot()
   if (!pending || pending.operationId !== params.expectedOperationId) {
+    return rejected('stale_agent_launch_failure')
+  }
+
+  // 2b. Owner check: the stored admission principal must be the caller's. Same
+  //     rejection as a missing pending, so a foreign device learns nothing about
+  //     another device's launch. A pre-device-principal row matches any device of
+  //     its kind and so stays forgettable.
+  if (
+    params.callerPrincipal &&
+    !admissionPrincipalOwns(params.callerPrincipal, pending.principal)
+  ) {
     return rejected('stale_agent_launch_failure')
   }
 

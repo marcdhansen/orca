@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentLaunchSnapshot } from '../../shared/agent-launch-host-contract'
 import {
+  admissionPrincipalOwns,
   AgentLaunchAdmissionStore,
   LaunchAdmissionCoordinator,
   MAX_PENDING_LAUNCHES_PER_HOST,
@@ -337,6 +338,69 @@ describe('AgentLaunchAdmissionStore reservations', () => {
       failure: { code: 'launch_capacity_exceeded', reason: 'capacity' }
     })
     expect(admitReservedOne(store, 'never-issued').ok).toBe(false)
+  })
+})
+
+describe('AgentLaunchAdmissionStore device-scoped principals', () => {
+  const phoneA: AdmissionPrincipal = { kind: 'remote', id: 'mobile', deviceId: 'device-a' }
+  const phoneB: AdmissionPrincipal = { kind: 'remote', id: 'mobile', deviceId: 'device-b' }
+  // A row admitted before per-device principals landed: clientKind only.
+  const legacyMobile: AdmissionPrincipal = { kind: 'remote', id: 'mobile' }
+
+  it('gives each paired device of the same kind its own per-principal cap', () => {
+    const store = new AgentLaunchAdmissionStore()
+    for (let i = 0; i < MAX_PENDING_LAUNCHES_PER_PRINCIPAL; i += 1) {
+      expect(admitOne(store, phoneA).ok).toBe(true)
+    }
+    expect(admitOne(store, phoneA).ok).toBe(false)
+    // The second phone is unaffected by the first phone's exhausted bucket.
+    expect(store.pendingForPrincipal(phoneB)).toBe(0)
+    expect(admitOne(store, phoneB).ok).toBe(true)
+  })
+
+  it('scopes capacity-recovery rows to the admitting device', () => {
+    const store = new AgentLaunchAdmissionStore()
+    admitOne(store, phoneA, 'wt-a')
+    admitOne(store, phoneB, 'wt-b')
+
+    expect(store.capacitySummaryFor(phoneA).map((row) => row.scope)).toEqual(['wt-a'])
+    expect(store.summarizeFor(phoneB).map((row) => row.scope)).toEqual(['wt-b'])
+  })
+
+  it('keeps pre-device rows visible and claimable by any device of their kind', () => {
+    const store = new AgentLaunchAdmissionStore()
+    admitOne(store, legacyMobile, 'wt-legacy')
+
+    expect(store.capacitySummaryFor(phoneA).map((row) => row.scope)).toEqual(['wt-legacy'])
+    expect(admissionPrincipalOwns(phoneA, legacyMobile)).toBe(true)
+    // ...but never by another client kind or the local host.
+    expect(store.capacitySummaryFor({ kind: 'remote', id: 'runtime' })).toEqual([])
+    expect(store.capacitySummaryFor({ kind: 'local' })).toEqual([])
+  })
+
+  it('never lets one device claim another device-scoped launch', () => {
+    expect(admissionPrincipalOwns(phoneA, phoneB)).toBe(false)
+    expect(admissionPrincipalOwns(phoneA, phoneA)).toBe(true)
+    // A caller with no device identity cannot claim a device-scoped launch.
+    expect(admissionPrincipalOwns(legacyMobile, phoneA)).toBe(false)
+    // A record with no principal at all (oldest durable shape) stays forgettable.
+    expect(admissionPrincipalOwns(phoneA, undefined)).toBe(true)
+    expect(admissionPrincipalOwns({ kind: 'local' }, phoneA)).toBe(false)
+  })
+
+  it('rebuildFrom rehydrates legacy and device-scoped rows into separate buckets', () => {
+    const store = new AgentLaunchAdmissionStore()
+    const legacy = admitOne(store, legacyMobile, 'wt-legacy')
+    const scoped = admitOne(store, phoneA, 'wt-a')
+    if (!legacy.ok || !scoped.ok) {
+      throw new Error('fixture admit failed')
+    }
+    store.rebuildFrom([legacy.record, scoped.record])
+
+    expect(store.pendingCount()).toBe(2)
+    expect(store.pendingForPrincipal(legacyMobile)).toBe(1)
+    expect(store.pendingForPrincipal(phoneA)).toBe(1)
+    expect(store.pendingForPrincipal(phoneB)).toBe(0)
   })
 })
 

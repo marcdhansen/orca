@@ -18,7 +18,13 @@ const mocks = vi.hoisted(() => ({
   activateAndRevealWorktree: vi.fn(),
   setPendingAutomationRunNavigation: vi.fn(),
   openAutomationsPage: vi.fn(),
-  onChanged: vi.fn((_cb: () => void) => () => {})
+  onChanged: vi.fn((_cb: () => void) => () => {}),
+  subscribeRuntimeClientEvents: vi.fn(),
+  unsubscribeRuntimeClientEvents: vi.fn()
+}))
+
+vi.mock('@/runtime/runtime-client-events', () => ({
+  subscribeRuntimeClientEvents: mocks.subscribeRuntimeClientEvents
 }))
 
 vi.mock('@/store', () => ({
@@ -91,6 +97,9 @@ beforeEach(() => {
     mock.mockReset()
   }
   mocks.onChanged.mockReturnValue(() => {})
+  mocks.subscribeRuntimeClientEvents.mockResolvedValue({
+    unsubscribe: mocks.unsubscribeRuntimeClientEvents
+  })
   mocks.fetchPendingAgentLaunchSummary.mockImplementation(async () => {
     if (summaryBox.reject) {
       throw new Error('boom')
@@ -212,5 +221,48 @@ describe('AgentLaunchCapacityRecoverySheet', () => {
       await Promise.resolve()
     })
     expect(mocks.fetchPendingAgentLaunchSummary).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not open a remote event stream for a local target', async () => {
+    await render()
+    expect(mocks.subscribeRuntimeClientEvents).not.toHaveBeenCalled()
+  })
+
+  it('refetches on the remote runtime worktreesChanged event', async () => {
+    storeBox.state = {
+      ...(storeBox.state as object),
+      modalData: { target: { kind: 'environment', environmentId: 'env-1' } }
+    }
+    await render()
+    expect(mocks.subscribeRuntimeClientEvents).toHaveBeenCalledWith('env-1', expect.any(Function))
+    const onEvent = mocks.subscribeRuntimeClientEvents.mock.calls[0][1]
+
+    await act(async () => {
+      onEvent({ type: 'reposChanged' })
+      await Promise.resolve()
+    })
+    expect(mocks.fetchPendingAgentLaunchSummary).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      onEvent({ type: 'worktreesChanged', repoId: 'repo-1' })
+      await Promise.resolve()
+    })
+    expect(mocks.fetchPendingAgentLaunchSummary).toHaveBeenCalledTimes(2)
+  })
+
+  it('closes the remote event stream when the sheet unmounts', async () => {
+    storeBox.state = {
+      ...(storeBox.state as object),
+      modalData: { target: { kind: 'environment', environmentId: 'env-1' } }
+    }
+    await render()
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    for (const root of mountedRoots.splice(0)) {
+      act(() => root.unmount())
+    }
+    expect(mocks.unsubscribeRuntimeClientEvents).toHaveBeenCalledTimes(1)
   })
 })

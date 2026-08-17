@@ -7,12 +7,14 @@ import {
   COMPLETION_PROCESS_INSPECTION_PROTOCOL_VERSION,
   GET_FOREGROUND_PROCESS_PROTOCOL_VERSION,
   HISTORY_SEED_TRANSFER_PROTOCOL_VERSION,
+  LAUNCH_TOKEN_ECHO_DAEMON_PROTOCOL_VERSION,
   MODE_2031_UNSUBSCRIBE_FACT_PROTOCOL_VERSION,
   SNAPSHOT_SERIALIZER_FIDELITY_DAEMON_PROTOCOL_VERSION,
   STABLE_PANE_ATTACH_ONLY_DAEMON_PROTOCOL_VERSION,
   WSL_POSIX_CWD_DAEMON_PROTOCOL_VERSION,
   PREVIOUS_DAEMON_PROTOCOL_VERSIONS,
   PROTOCOL_VERSION,
+  supportsLaunchTokenEcho,
   supportsMode2031UnsubscribeFact
 } from './daemon-protocol-version'
 
@@ -45,5 +47,12 @@ describe('daemon protocol version', () => {
     for (const version of PREVIOUS_DAEMON_PROTOCOL_VERSIONS.filter((version) => version < 29)) {
       expect(supportsMode2031UnsubscribeFact(version)).toBe(false)
     }
+  })
+
+  it('withholds launch-token echo authority from pre-v34 daemons', () => {
+    expect(LAUNCH_TOKEN_ECHO_DAEMON_PROTOCOL_VERSION).toBe(34)
+    expect(supportsLaunchTokenEcho(PROTOCOL_VERSION)).toBe(true)
+    expect(supportsLaunchTokenEcho(34)).toBe(true)
+    expect(supportsLaunchTokenEcho(33)).toBe(false)
   })
 })

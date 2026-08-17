@@ -5,8 +5,8 @@
 
 import os from 'node:os'
 import { performance } from 'node:perf_hooks'
-import { describe, expect, it } from 'vitest'
-import type { CustomTuiAgent, CustomTuiAgentId } from '../../shared/types'
+import { describe, expect, it, vi } from 'vitest'
+import type { CustomTuiAgent, CustomTuiAgentId, GlobalSettings } from '../../shared/types'
 import type { AgentCatalog } from '../../shared/agent-catalog-normalization'
 import { resolveAgentLaunch, type ResolveAgentLaunchOutcome } from './resolve-agent-launch'
 import {
@@ -16,6 +16,22 @@ import {
   requestOf,
   settingsOf
 } from './agent-launch-test-catalog'
+import type * as AgentCatalogProjectionsModule from './agent-catalog-projections'
+
+// The pure-resolver gates below inject a PREBUILT catalog, so they never see the
+// normalize pass production pays per launch. This counter lets the production-
+// path gate assert that pass count directly.
+const normalizeCatalogCalls = vi.hoisted(() => ({ count: 0 }))
+vi.mock('./agent-catalog-projections', async (importOriginal) => {
+  const actual = await importOriginal<typeof AgentCatalogProjectionsModule>()
+  return {
+    ...actual,
+    normalizeCatalogFromSettings: (settings: GlobalSettings) => {
+      normalizeCatalogCalls.count += 1
+      return actual.normalizeCatalogFromSettings(settings)
+    }
+  }
+})
 
 type ScanCounts = { get: number; iterate: number; arrayScan: number }
 
@@ -28,12 +44,12 @@ function makeEnv(entries: number): Record<string, string> {
   return env
 }
 
-/** A catalog of `size` live custom agents on one resumable base; the middle agent
- *  is the launch target and carries `envEntries` env entries. */
-function buildFixture(
+/** `size` live custom agents on one resumable base; the middle agent is the
+ *  launch target and carries `envEntries` env entries. */
+function buildAgents(
   size: number,
   envEntries: number
-): { catalog: AgentCatalog; selectedId: CustomTuiAgentId } {
+): { agents: CustomTuiAgent[]; selectedId: CustomTuiAgentId } {
   const selectIndex = Math.floor(size / 2)
   const agents: CustomTuiAgent[] = []
   let selectedId: CustomTuiAgentId | null = null
@@ -54,6 +70,15 @@ function buildFixture(
   if (!selectedId) {
     throw new Error('fixture size must be positive')
   }
+  return { agents, selectedId }
+}
+
+/** Prebuilt catalog for the PURE resolver gates. */
+function buildFixture(
+  size: number,
+  envEntries: number
+): { catalog: AgentCatalog; selectedId: CustomTuiAgentId } {
+  const { agents, selectedId } = buildAgents(size, envEntries)
   return { catalog: catalogOf({ customTuiAgents: agents }), selectedId }
 }
 

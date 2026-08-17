@@ -74,7 +74,7 @@ describe('stripLegacyReplayEnv — non-team config', () => {
     const env = JSON.parse('{"__proto__": "poison", "MY_TOKEN": "keep"}') as Record<string, string>
     const cleaned = stripLegacyReplayEnv(env, 'posix')
     expect(Object.getPrototypeOf(cleaned)).toBeNull()
-    expect(Object.prototype.hasOwnProperty.call(cleaned, '__proto__')).toBe(true)
+    expect(Object.hasOwn(cleaned, '__proto__')).toBe(true)
     expect(cleaned.MY_TOKEN).toBe('keep')
   })
 })

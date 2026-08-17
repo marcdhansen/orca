@@ -1308,14 +1308,12 @@ function sanitizeRepoActionOverrideAgentReferences(
     normalizeRepoSourceControlAiOverrides(storedRepoOverrides)?.actionOverrides
   for (const actionId of Object.keys(actionOverrides) as SourceControlActionId[]) {
     const row = actionOverrides[actionId]
-    if (!row || !Object.prototype.hasOwnProperty.call(row, 'agentId')) {
+    if (!row || !Object.hasOwn(row, 'agentId')) {
       continue
     }
     const storedRow = storedActionOverrides?.[actionId]
     const storedAgent =
-      storedRow && Object.prototype.hasOwnProperty.call(storedRow, 'agentId')
-        ? storedRow.agentId
-        : undefined
+      storedRow && Object.hasOwn(storedRow, 'agentId') ? storedRow.agentId : undefined
     const decision = decideAgentField({
       incoming: row.agentId,
       stored: storedAgent ?? null,

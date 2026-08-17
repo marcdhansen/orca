@@ -1,6 +1,9 @@
 import { toast } from 'sonner'
 import { useAppStore } from '@/store'
-import { isTuiAgentEnabled, pickTuiAgent } from '../../../shared/tui-agent-selection'
+import {
+  loadDirectLaunchAgentCatalog,
+  resolveDirectLaunchAgent
+} from '@/lib/launch-work-item-direct-agent-selection'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { getWorkspaceIntentName, getWorkspaceSeedName } from '@/lib/new-workspace'
 import {
@@ -15,7 +18,7 @@ import {
 } from '@/lib/agent-launch-failure-copy'
 import { ensureHooksConfirmed } from '@/lib/ensure-hooks-confirmed'
 import type { AgentLaunchSpawnRequest } from '../../../shared/agent-launch-spawn-request'
-import type { GitPushTarget, SetupDecision, TuiAgent } from '../../../shared/types'
+import type { GitPushTarget, SetupDecision } from '../../../shared/types'
 import { getLinearIssueWorkspaceName } from '../../../shared/workspace-name'
 import { resolveGitHubWorkItemIdentity } from '@/lib/github-work-item-identity'
 import { getDirectWorkItemDraftContent } from '@/lib/launch-work-item-direct-draft'
@@ -88,6 +91,9 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
   const detectedAgentsPromise = repoConnectionId
     ? store.ensureRemoteDetectedAgents(repoConnectionId)
     : store.ensureDetectedAgents()
+  // Why: custom agents live in the local catalog, not in detection or settings,
+  // so the selection below needs both before it can validate the request.
+  const localAgentCatalogPromise = loadDirectLaunchAgentCatalog()
 
   const setupResolution = await resolveDirectSetupDecision(repoId, repo, repoOwnerSettings)
   if (setupResolution.kind === 'needs-modal') {
@@ -139,22 +145,16 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
   // ride the host `agentLaunch` request. The host owns command/args/env
   // resolution and prompt delivery; the client only names the agent — parity
   // with the new-workspace composer.
-  const detectedAgents = await detectedAgentsPromise
-  let requestedAgent: TuiAgent | null
-  let agentOverrideUnavailable = false
-  if (agentOverride) {
-    const overrideUsable =
-      detectedAgents.includes(agentOverride) &&
-      isTuiAgentEnabled(agentOverride, settings?.disabledTuiAgents)
-    requestedAgent = overrideUsable ? agentOverride : null
-    agentOverrideUnavailable = !overrideUsable
-  } else {
-    requestedAgent = pickTuiAgent(
-      settings?.defaultTuiAgent,
-      new Set(detectedAgents),
-      settings?.disabledTuiAgents
-    )
-  }
+  const [detectedAgents, localAgentCatalog] = await Promise.all([
+    detectedAgentsPromise,
+    localAgentCatalogPromise
+  ])
+  const { requestedAgent, agentOverrideUnavailable } = resolveDirectLaunchAgent({
+    agentOverride,
+    detectedAgents,
+    localAgentCatalog,
+    settings
+  })
   // Why: the host resolves the launch and spawns the primary agent terminal, so
   // the request carries only the agent identity, the interactive prompt (host
   // applies its per-surface max), the draft-vs-submit policy, and — for recipe

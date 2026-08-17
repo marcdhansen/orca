@@ -12,6 +12,7 @@ import { translate } from '@/i18n/i18n'
 import { getAgentLabel } from '@/lib/agent-catalog'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import type { RuntimeClientTarget } from '@/runtime/runtime-rpc-client'
+import { subscribeRuntimeClientEvents } from '@/runtime/runtime-client-events'
 import type { PendingAgentLaunchSummaryRow } from '../../../../shared/agent-launch-pending-summary'
 import {
   capacityActionCopy,
@@ -96,7 +97,8 @@ function CapacityRecoveryRow({
  *  target-host display name, admitted time, liveness, and a worktree deep link
  *  when one exists. Every field is host-redacted; the sheet never sees a prompt,
  *  custom id/label, argv, path, token, or env. Fetches once on open and refetches
- *  on the existing worktrees:changed event — no poller. */
+ *  on the existing worktrees:changed event — locally from preload, and for a
+ *  remote runtime target from that environment's client-event stream. No poller. */
 export default function AgentLaunchCapacityRecoverySheet(): React.JSX.Element | null {
   const open = useAppStore((s) => s.activeModal === 'agent-launch-capacity-recovery')
   const target = useAppStore((s) => s.modalData.target as RuntimeClientTarget | undefined)
@@ -135,10 +137,32 @@ export default function AgentLaunchCapacityRecoverySheet(): React.JSX.Element | 
     // Refetch on the host's worktree change stream (a settled/forgotten launch
     // clears its row) instead of polling; clearing the last row updates the
     // empty state from the same event.
-    const unsubscribe = window.api.worktrees.onChanged(() => void load())
+    const unsubscribeLocal = window.api.worktrees.onChanged(() => void load())
+    // Why: a remote/SSH runtime settles its launches on the host, and that never
+    // reaches the local preload event — mirror the refetch off the environment's
+    // own client-event stream so the sheet live-refreshes there too.
+    let unsubscribeRemote: (() => void) | null = null
+    if (target?.kind === 'environment') {
+      void subscribeRuntimeClientEvents(target.environmentId, (event) => {
+        if (event.type === 'worktreesChanged') {
+          void load()
+        }
+      })
+        .then((subscription) => {
+          if (cancelled) {
+            subscription.unsubscribe()
+            return
+          }
+          unsubscribeRemote = subscription.unsubscribe
+        })
+        .catch(() => {
+          // Live refresh is best-effort; the fetched rows still render.
+        })
+    }
     return () => {
       cancelled = true
-      unsubscribe()
+      unsubscribeLocal()
+      unsubscribeRemote?.()
     }
   }, [open, target, fetchSummary])
 

@@ -19,7 +19,7 @@ import type { AgentLaunchExecutionHostId } from '../../shared/agent-launch-host-
 import { isBuiltInTuiAgent } from '../../shared/tui-agent-config'
 import { toRuntimeExecutionHostId, toSshExecutionHostId } from '../../shared/execution-host'
 import { isWindowsAbsolutePathLike } from '../../shared/cross-platform-path'
-import { isWslUncPath } from '../../shared/wsl-paths'
+import { parseWslUncPath } from '../../shared/wsl-paths'
 import { resolveLocalWindowsAgentStartupShell } from '../../shared/windows-terminal-shell'
 import type { AgentLaunchSpawnTarget } from './agent-launch-spawn'
 
@@ -27,9 +27,9 @@ import type { AgentLaunchSpawnTarget } from './agent-launch-spawn'
  *  derived from this shape; nothing is copied from a client payload. */
 export type AgentLaunchHostDescriptor =
   | { kind: 'local'; platform: NodeJS.Platform; shell?: AgentStartupShell }
-  // Forward scaffolding: today's callers describe WSL workspaces as 'local'
-  // (divergent shell, honest-unknown detection/home); distro-aware callers adopt
-  // this arm when they can probe the distro's own PATH/$HOME.
+  // A WSL surface is never 'local': its `wsl:` host id is what makes the
+  // resolver translate Windows/UNC values to Linux form. Detection/home stay
+  // honest unknowns until a caller can probe the distro's own PATH/$HOME.
   | { kind: 'wsl'; distro: string; shell?: AgentStartupShell }
   | { kind: 'ssh'; connectionId: string; platform: NodeJS.Platform; shell?: AgentStartupShell }
   | {
@@ -117,10 +117,10 @@ export function toStockBaseAgentSet(
  *  An SSH target (connectionId present) infers platform from the remote cwd's
  *  path shape — the same heuristic the runtime uses — because the IPC boundary
  *  has no synchronous remote-platform probe; its home/detection stay honest
- *  unknowns until a caller that can probe supplies them. A local target uses
- *  this machine's platform, except a WSL UNC cwd whose shell runs a Linux
- *  userland — matching the runtime's buildTerminalAgentLaunchDescriptor, whose
- *  divergent-platform local host keeps honest-unknown home/detection. */
+ *  unknowns until a caller that can probe supplies them. A WSL UNC cwd is its
+ *  own `wsl:` host (never local, or its UNC/drive paths would reach the Linux
+ *  argv untranslated) — matching the runtime's buildTerminalAgentLaunchDescriptor
+ *  — and keeps honest-unknown home/detection. Every other target is local. */
 export function describeSpawnExecutionHost(args: {
   connectionId?: string | null
   cwd?: string | null
@@ -133,15 +133,18 @@ export function describeSpawnExecutionHost(args: {
       platform: args.cwd && isWindowsAbsolutePathLike(args.cwd) ? 'win32' : 'linux'
     }
   }
-  const platform = args.cwd && isWslUncPath(args.cwd) ? 'linux' : process.platform
+  const wslDistro = args.cwd ? parseWslUncPath(args.cwd)?.distro : undefined
+  if (wslDistro) {
+    return { kind: 'wsl', distro: wslDistro }
+  }
   const shell = resolveLocalWindowsAgentStartupShell({
-    platform,
+    platform: process.platform,
     isRemote: false,
     terminalWindowsShell: args.terminalWindowsShell
   })
   return {
     kind: 'local',
-    platform,
+    platform: process.platform,
     ...(shell ? { shell } : {})
   }
 }

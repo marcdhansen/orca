@@ -328,6 +328,10 @@ const DispatchShowParams = z.object({
 
 const DispatchForgetParams = z.object({
   task: requiredString('Missing --task'),
+  // Owner scoping, same shape as dispatch/taskUpdate. Both optional on the wire so
+  // an older client still parses; the handler falls back to the attested caller.
+  from: OptionalString,
+  run: OptionalString,
   // Anti-race guard: only forget the exact stranded failure the caller saw. The
   // failureId comes from the dispatch's structured agent_launch_failure (never a
   // secret). Absent = skip the anti-race check; the launch_state_unknown
@@ -1827,11 +1831,28 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
     // 'failed' projection) so the current renderer renders the forgotten state; the
     // task moves to 'blocked' and requires an explicit Retry (taskUpdate → 'ready').
     // Single-dispatch and task-scoped: never bulk, never spawns/kills.
-    handler: (params, { runtime }) => {
+    handler: (params, { orchestrationCompatibilityEvidence, runtime, legacyCoordinatorRunId }) => {
       const db = runtime.getOrchestrationDb()
       const ctx = db.getDispatchContext(params.task)
       if (!ctx) {
         throw new Error(`No dispatch context for task: ${params.task}`)
+      }
+      // Owner authorization, before any mutation or replay settle: the caller must
+      // hold the Run the task belongs to, exactly like taskUpdate. Older callers send
+      // no --from, so fall back to the attested handle their envelope already carries.
+      const run = resolveRunScope(runtime, {
+        runId: params.run,
+        callerTerminalHandle: params.from ?? orchestrationCompatibilityEvidence?.terminalHandle,
+        requireCurrentConsumer: true,
+        legacyCoordinatorRunId,
+        callerEvidence: orchestrationCompatibilityEvidence
+      })
+      const task = db.getTask(params.task)
+      if (!task || task.run_id !== run.id) {
+        throw new OrchestrationError(
+          'task_not_found',
+          `Task ${params.task} was not found in Run ${run.id}.`
+        )
       }
       // Idempotent: a repeat forget on an already-forgotten dispatch is a
       // success. Why: a crash between db.forgetDispatch and the op-store

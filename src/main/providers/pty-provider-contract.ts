@@ -134,6 +134,10 @@ export type IPtyProvider = {
   providesAgentSessionOwnerListings?: (ptyId: string) => boolean
   /** Whether fresh structured creates can replay one spawn across a lost relay response. */
   supportsAgentSessionCreateOperations?: (options?: PtyProbeOptions) => boolean | Promise<boolean>
+  /** Whether a missing launchToken in this host's process listing proves the launch is
+   *  absent. False for peers that predate the token echo — reconciliation must then fall
+   *  back to non-token identification instead of settling spawn_failed. */
+  providesLaunchTokenListings?: (options?: PtyProbeOptions) => boolean | Promise<boolean>
   attach(id: string): Promise<Pick<PtySpawnResult, 'providerSequence'> | void>
   hasPty?: (id: string) => boolean
   /** Exact provider readback: false only when the provider answered that the PTY is absent. */

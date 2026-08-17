@@ -4,13 +4,14 @@
 // launch token, so the whole record set is encrypted at rest via Electron
 // safeStorage (the secret-settings standard), with a permission-hardened plaintext
 // fallback only when OS-backed encryption is unavailable. Written with the same
-// atomic tmp+rename discipline as the launch-operation store. The encode/decode
-// core takes an injected cipher so the envelope round-trip is testable without
-// Electron. This file is never client-synced.
+// atomic tmp+rename + fsync discipline as the launch-operation store — a record
+// whose bytes never reached the platter is a session that cannot be resumed. The
+// encode/decode core takes an injected cipher so the envelope round-trip is
+// testable without Electron. This file is never client-synced.
 
 import { join } from 'node:path'
 import { safeStorage } from 'electron'
-import { readSecureJsonFile, writeSecureJsonFile } from '../../shared/secure-file'
+import { readSecureJsonFile, writeDurableSecureJsonFile } from '../../shared/secure-file'
 import type {
   AgentSessionRecordStore,
   AgentSessionRecordStoreDurableState,
@@ -147,7 +148,7 @@ export function writeAgentSessionRecordStoreState(
   state: AgentSessionRecordStoreDurableState,
   cipher: AgentSessionRecordCipher
 ): void {
-  writeSecureJsonFile(path, encodeAgentSessionRecordStore(state, cipher))
+  writeDurableSecureJsonFile(path, encodeAgentSessionRecordStore(state, cipher))
 }
 
 /** Boot-time wiring: rehydrate durable records, then attach the write-back sink so
@@ -168,14 +169,11 @@ export function initAgentSessionRecordStorePersistence(
 ): void {
   const state = loadAgentSessionRecordStoreState(path, cipher)
   store.rebuildRecordsFrom(state.records)
+  // The write THROWS to the mutating caller: a bind that reports success while
+  // its record never reached disk is a session the owner loses on restart.
   const attachWriteBackSink = (): void => {
     store.setDurablePersistence((next) => {
-      try {
-        writeAgentSessionRecordStoreState(path, next, cipher)
-      } catch {
-        // A failed persist must not break an in-flight bind; the in-memory store
-        // stays authoritative and the next mutation retries the write.
-      }
+      writeAgentSessionRecordStoreState(path, next, cipher)
     })
   }
   if (!state.persistedStateUnreadable) {
@@ -196,13 +194,11 @@ export function initAgentSessionRecordStorePersistence(
       // Still degraded — write nothing and keep the recovery sink armed.
       return
     }
-    try {
-      store.mergeRehydratedRecords(onDisk.records)
-      store.recordCompleteness.markComplete()
-      attachWriteBackSink()
-      writeAgentSessionRecordStoreState(path, store.durableState(), cipher)
-    } catch {
-      // Keep the recovery sink armed; the next mutation retries.
-    }
+    store.mergeRehydratedRecords(onDisk.records)
+    // Hand over to the plain sink only AFTER the merged write lands, so a failed
+    // write both reaches the caller and leaves the recovery sink armed.
+    writeAgentSessionRecordStoreState(path, store.durableState(), cipher)
+    store.recordCompleteness.markComplete()
+    attachWriteBackSink()
   })
 }

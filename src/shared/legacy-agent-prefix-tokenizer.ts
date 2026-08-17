@@ -10,9 +10,12 @@
 //   with `\" \\ \$ \`` backslash escapes; backslash outside quotes escapes the
 //   next char.
 // - powershell: whitespace splits with double- AND single-quote grouping;
-//   backslashes are literal; the U+2018-U+201B smart-quote class groups like '.
+//   backslashes are literal; the U+2018-U+201B smart-quote class groups like ';
+//   backtick escapes the next char outside quotes and `` `" `` / ``` `` ``` /
+//   `` `$ `` inside double quotes (never inside single quotes).
 // - cmd: whitespace splits with double-quote grouping only; backslashes literal;
-//   single quotes are ordinary characters.
+//   single quotes are ordinary characters; caret escapes the next char OUTSIDE
+//   quotes only — inside double quotes a caret is a literal character.
 // All shells reject NUL/control chars and unquoted shell operators so these
 // overrides stay visible for Settings repair rather than being reinterpreted.
 
@@ -66,9 +69,14 @@ function scanLiteralQuote(input: string, openIndex: number, closers: Set<string>
   return { ok: false, reason: 'unterminated_quote' }
 }
 
-/** POSIX double-quote scan: only `\" \\ \$ \`` drop the backslash; any other
- *  backslash stays literal alongside the following character. */
-function scanPosixDoubleQuote(input: string, openIndex: number): QuoteScan {
+/** Double-quote scan where `escape` drops before one of `escapable`; any other
+ *  occurrence stays literal alongside the following character. */
+function scanEscapableDoubleQuote(
+  input: string,
+  openIndex: number,
+  escape: string,
+  escapable: Set<string>
+): QuoteScan {
   let value = ''
   let i = openIndex + 1
   while (i < input.length) {
@@ -79,9 +87,9 @@ function scanPosixDoubleQuote(input: string, openIndex: number): QuoteScan {
     if (isDisallowedControl(inner)) {
       return { ok: false, reason: 'control_char' }
     }
-    if (inner === '\\' && i + 1 < input.length) {
+    if (inner === escape && i + 1 < input.length) {
       const next = input[i + 1]
-      if (next === '"' || next === '\\' || next === '$' || next === '`') {
+      if (escapable.has(next)) {
         value += next
         i += 2
         continue
@@ -96,10 +104,12 @@ function scanPosixDoubleQuote(input: string, openIndex: number): QuoteScan {
 type ShellGrammar = {
   /** Chars that open a literal single-quote group, mapped to their closer set. */
   singleQuoteOpeners: Map<string, Set<string>>
-  /** Double quotes group; posix additionally decodes backslash escapes inside. */
-  posixDoubleQuoteEscapes: boolean
-  /** Outside quotes, backslash escapes the next char (posix only). */
-  backslashEscapesOutsideQuotes: boolean
+  /** Escape char decoded inside double quotes, with the chars it drops before.
+   *  Null when double quotes are a literal group (cmd). */
+  doubleQuoteEscape: { char: string; escapable: Set<string> } | null
+  /** Outside quotes, this char escapes the next one: posix `\`, powershell
+   *  backtick, cmd caret. */
+  escapeOutsideQuotes: string | null
 }
 
 const DOUBLE_QUOTE_CLOSERS = new Set(['"'])
@@ -108,8 +118,8 @@ function grammarFor(shell: AgentStartupShell): ShellGrammar {
   if (shell === 'posix') {
     return {
       singleQuoteOpeners: new Map([["'", new Set(["'"])]]),
-      posixDoubleQuoteEscapes: true,
-      backslashEscapesOutsideQuotes: true
+      doubleQuoteEscape: { char: '\\', escapable: new Set(['"', '\\', '$', '`']) },
+      escapeOutsideQuotes: '\\'
     }
   }
   if (shell === 'powershell') {
@@ -119,15 +129,16 @@ function grammarFor(shell: AgentStartupShell): ShellGrammar {
     }
     return {
       singleQuoteOpeners: openers,
-      posixDoubleQuoteEscapes: false,
-      backslashEscapesOutsideQuotes: false
+      doubleQuoteEscape: { char: '`', escapable: new Set(['"', '`', '$']) },
+      escapeOutsideQuotes: '`'
     }
   }
-  // cmd: double-quote grouping only; single quotes and backslashes are literal.
+  // cmd: double-quote grouping only; single quotes and backslashes are literal,
+  // and the caret escape is suppressed inside quotes.
   return {
     singleQuoteOpeners: new Map(),
-    posixDoubleQuoteEscapes: false,
-    backslashEscapesOutsideQuotes: false
+    doubleQuoteEscape: null,
+    escapeOutsideQuotes: '^'
   }
 }
 
@@ -163,8 +174,9 @@ export function tokenizeLegacyAgentPrefix(
     }
 
     if (char === '"') {
-      const scan = grammar.posixDoubleQuoteEscapes
-        ? scanPosixDoubleQuote(prefix, i)
+      const escape = grammar.doubleQuoteEscape
+      const scan = escape
+        ? scanEscapableDoubleQuote(prefix, i, escape.char, escape.escapable)
         : scanLiteralQuote(prefix, i, DOUBLE_QUOTE_CLOSERS)
       if (!scan.ok) {
         return scan
@@ -187,7 +199,7 @@ export function tokenizeLegacyAgentPrefix(
       continue
     }
 
-    if (char === '\\' && grammar.backslashEscapesOutsideQuotes && i + 1 < prefix.length) {
+    if (char === grammar.escapeOutsideQuotes && i + 1 < prefix.length) {
       const next = prefix[i + 1]
       if (isDisallowedControl(next)) {
         return { ok: false, reason: 'control_char' }
@@ -216,6 +228,29 @@ function tokensEqual(a: readonly string[], b: readonly string[]): boolean {
     return false
   }
   return a.every((token, index) => token === b[index])
+}
+
+// Characters no shell grammar reinterprets, so a token made only of them needs
+// no quoting. Anything else is double-quoted, which groups on all three shells.
+const UNQUOTED_TOKEN_RE = /^[A-Za-z0-9_@%+=:,./~-]+$/
+
+/** Inverse of {@link tokenizeLegacyAgentPrefix}: renders argv back to an args
+ *  string that re-tokenizes to exactly these tokens under EVERY shell grammar,
+ *  so quoted boundaries survive the round trip (a plain `join(' ')` re-splits a
+ *  grouped token). Null when a token cannot be rendered that way — the caller
+ *  reports it as platform-ambiguous rather than emitting a lossy string. */
+export function formatLegacyAgentPrefixArgs(tokens: readonly string[]): string | null {
+  if (tokens.length === 0) {
+    return ''
+  }
+  const rendered = tokens
+    .map((token) => (UNQUOTED_TOKEN_RE.test(token) ? token : `"${token}"`))
+    .join(' ')
+  const roundTrips = ALL_SHELLS.every((shell) => {
+    const result = tokenizeLegacyAgentPrefix(rendered, shell)
+    return result.ok && tokensEqual(result.tokens, tokens)
+  })
+  return roundTrips ? rendered : null
 }
 
 /** True when the prefix does not read to identical argv under all three shell

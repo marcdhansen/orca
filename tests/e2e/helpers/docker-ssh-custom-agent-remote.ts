@@ -109,7 +109,7 @@ export async function connectDockerRemoteWorktree(
         void window.api.ssh.submitCredential({ requestId: request.requestId, value: null })
       })
       try {
-        const createdTarget = await window.api.ssh.addTarget({
+        const { target: createdTarget, repoReadoptions } = await window.api.ssh.addTarget({
           target: {
             label: `Docker SSH Custom Agent ${Date.now()}`,
             host: '127.0.0.1',
@@ -120,14 +120,21 @@ export async function connectDockerRemoteWorktree(
             relayGracePeriodSeconds: 1
           }
         })
+        store.getState().recordSshRepoReadoptions(repoReadoptions)
         const state = await window.api.ssh.connect({ targetId: createdTarget.id })
         if (!state || state.status !== 'connected') {
           throw new Error(`SSH target did not connect: ${JSON.stringify(state)}`)
+        }
+        // Worktree hydration over direct SSH needs a complete authority; without
+        // it fetchWorktrees silently returns nothing instead of failing here.
+        if (!state.providerEpoch || !Number.isSafeInteger(state.connectionGeneration)) {
+          throw new Error(`SSH target returned incomplete authority: ${JSON.stringify(state)}`)
         }
         store.getState().setSshConnectionState(createdTarget.id, state)
         const labels = new Map(store.getState().sshTargetLabels)
         labels.set(createdTarget.id, createdTarget.label)
         store.getState().setSshTargetLabels(labels)
+        const executionHostId = `ssh:${encodeURIComponent(createdTarget.id)}` as const
 
         const result = await window.api.repos.addRemote({
           connectionId: createdTarget.id,
@@ -138,8 +145,10 @@ export async function connectDockerRemoteWorktree(
           throw new Error(result.error)
         }
         await store.getState().fetchRepos()
-        await store.getState().fetchWorktrees(result.repo.id)
-        const worktree = (store.getState().worktreesByRepo[result.repo.id] ?? [])[0]
+        await store.getState().fetchWorktrees(result.repo.id, { executionHostId })
+        const worktree = (store.getState().worktreesByRepo[result.repo.id] ?? []).find(
+          (candidate) => candidate.hostId === executionHostId
+        )
         if (!worktree) {
           throw new Error(`No remote worktree found for ${result.repo.path}`)
         }

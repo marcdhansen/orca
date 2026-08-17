@@ -4,7 +4,7 @@
 // (16 MiB) and remote-projection (512 KiB) payload budgets before any write.
 
 import type { Store } from '../persistence'
-import type { BuiltInTuiAgent, CustomTuiAgentId, GlobalSettings } from '../../shared/types'
+import type { BuiltInTuiAgent, CustomTuiAgentId } from '../../shared/types'
 import type {
   AgentCatalogMutationRequest,
   AgentCatalogMutationResult,
@@ -40,6 +40,11 @@ import {
   type AgentCatalogMigrationBlockedError
 } from './agent-catalog-write-policy'
 import { computeBaseDisableImpact } from './agent-catalog-base-disable-impact'
+import {
+  commitAuthoringPatchDurable,
+  type AgentCatalogWriteFailedError,
+  type AgentReferenceWriteFailedError
+} from './agent-catalog-durable-write'
 import { applyAgentReferenceMutation } from './agent-reference-mutations'
 import type {
   AgentReferenceMutationRequest,
@@ -197,7 +202,10 @@ export class AgentCatalogService {
 
   mutateReferences(
     request: AgentReferenceMutationRequest
-  ): AgentReferenceMutationResult<LocalAgentReferenceSnapshot> | AgentCatalogMigrationBlockedError {
+  ):
+    | AgentReferenceMutationResult<LocalAgentReferenceSnapshot>
+    | AgentCatalogMigrationBlockedError
+    | AgentReferenceWriteFailedError {
     // The failed-backup invariant is "no v1 write": reference mutations stamp
     // agentReferenceRevision, so they are blocked alongside catalog mutations.
     const blocked = agentCatalogMigrationBlockedError(this.store)
@@ -229,11 +237,12 @@ export class AgentCatalogService {
     // The 512 KiB remote-projection budget is checked on the post-mutation
     // snapshot; a non-growing write still commits so an over-budget profile can
     // always be edited back under budget (mirrors mutate()'s security-reducing
-    // allowlist).
-    const projected = measureAgentReferenceProjection({
-      ...settings,
-      ...application.patch
-    } as GlobalSettings)
+    // allowlist). Why preview: persistence normalizes the patch and derives
+    // legacy commitMessageAi from sourceControlAi, so the patch as written is
+    // smaller than the projection that actually ships.
+    const projected = measureAgentReferenceProjection(
+      this.store.previewSettingsUpdate(application.patch)
+    )
     if (projected.tooLarge && projected.bytes > measureAgentReferenceProjection(settings).bytes) {
       return {
         ok: false,
@@ -244,7 +253,14 @@ export class AgentCatalogService {
     }
     // Owner change commits before any prune; a failure between the two leaves
     // the tombstone conservatively retained for the next indexed recheck.
-    this.store.updateSettings(application.patch, { notifyListeners: true })
+    if (!commitAuthoringPatchDurable(this.store, application.patch)) {
+      return {
+        ok: false,
+        code: 'agent_reference_write_failed',
+        referenceRevision: currentReferenceRevision,
+        catalogRevision: this.getRevision()
+      }
+    }
     this.pruneUnreferencedTombstonesAfterReferenceRemoval()
     return {
       ok: true,
@@ -269,10 +285,13 @@ export class AgentCatalogService {
       return
     }
     const newRevision = (settings.agentCatalogRevision ?? 1) + 1
-    this.store.updateSettings(
-      { ...prunePatch, agentCatalogRevision: newRevision },
-      { notifyListeners: true }
-    )
+    // GC only: a rolled-back prune keeps the tombstone retained, and the next
+    // indexed recheck retries it — the reference mutation is already durable.
+    if (
+      !commitAuthoringPatchDurable(this.store, { ...prunePatch, agentCatalogRevision: newRevision })
+    ) {
+      return
+    }
     for (const listener of this.changeListeners) {
       listener(newRevision)
     }
@@ -280,7 +299,7 @@ export class AgentCatalogService {
 
   mutate(
     request: AgentCatalogMutationRequest
-  ): AgentCatalogMutationResult | AgentCatalogMigrationBlockedError {
+  ): AgentCatalogMutationResult | AgentCatalogMigrationBlockedError | AgentCatalogWriteFailedError {
     // A failed pinned pre-v1 backup means no v1 write may land on the profile;
     // fail closed here so authoring cannot bypass the migration invariant.
     const blocked = agentCatalogMigrationBlockedError(this.store)
@@ -312,11 +331,12 @@ export class AgentCatalogService {
       }
     }
 
-    // Payload budgets are checked on the post-mutation state; while a budget is
-    // exceeded only the security-reducing allowlist may still commit.
-    const nextSettings = { ...settings, ...application.patch }
-    const localStorageStatus = measureLocalAgentCatalogStorage(nextSettings as GlobalSettings)
-    const projectionStatus = measureAgentCatalogProjection(nextSettings as GlobalSettings)
+    // Payload budgets are checked on the post-mutation state as persistence will
+    // normalize it (not the raw patch); while a budget is exceeded only the
+    // security-reducing allowlist may still commit.
+    const nextSettings = this.store.previewSettingsUpdate(application.patch)
+    const localStorageStatus = measureLocalAgentCatalogStorage(nextSettings)
+    const projectionStatus = measureAgentCatalogProjection(nextSettings)
     if (localStorageStatus.status === 'too-large' && !isSecurityReducingMutation(request)) {
       return { ok: false, code: 'agent_catalog_local_payload_too_large', revision: currentRevision }
     }
@@ -324,7 +344,10 @@ export class AgentCatalogService {
       return { ok: false, code: 'agent_catalog_payload_too_large', revision: currentRevision }
     }
 
-    this.store.updateSettings(application.patch, { notifyListeners: true })
+    // Durable before the ack: a lost create/delete would otherwise be reported as saved.
+    if (!commitAuthoringPatchDurable(this.store, application.patch)) {
+      return { ok: false, code: 'agent_catalog_write_failed', revision: currentRevision }
+    }
     for (const listener of this.changeListeners) {
       listener(application.newRevision)
     }

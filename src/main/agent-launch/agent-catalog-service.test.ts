@@ -43,14 +43,30 @@ type StoreStubState = {
   failAutomationScan?: boolean
   failWorktreeScan?: boolean
   agentCatalogMigrationError?: string | null
+  failDurableWrite?: boolean
+  // Stands in for persistence-side normalization/derivation of a patch.
+  expandOnPersist?: (updates: Partial<GlobalSettings>) => Partial<GlobalSettings>
 }
 
 function makeStoreStub(state: StoreStubState): Store {
+  const preview = (updates: Partial<GlobalSettings>): GlobalSettings => ({
+    ...state.settings,
+    ...updates,
+    ...state.expandOnPersist?.(updates)
+  })
   const stub = {
     getSettings: () => state.settings,
     getAgentCatalogMigrationError: () => state.agentCatalogMigrationError ?? null,
+    previewSettingsUpdate: preview,
+    updateSettingsDurable: (updates: Partial<GlobalSettings>) => {
+      if (state.failDurableWrite) {
+        throw new Error('disk failure')
+      }
+      state.settings = preview(updates)
+      return state.settings
+    },
     updateSettings: (updates: Partial<GlobalSettings>) => {
-      state.settings = { ...state.settings, ...updates }
+      state.settings = preview(updates)
       return state.settings
     },
     getRepos: () => state.repos,
@@ -730,5 +746,105 @@ describe('reference payload budget (L1-#2)', () => {
       mutation: { kind: 'source-control-update', changes: { customAgentCommand: 'ok' } }
     })
     expect(result.ok).toBe(true)
+  })
+
+  it('budgets the persisted projection, not the pre-persistence patch', () => {
+    // Persistence derives legacy commitMessageAi from sourceControlAi, so an
+    // under-budget patch lands as a projection carrying the instructions twice.
+    const state: StoreStubState = {
+      settings: baseSettings(),
+      repos: [],
+      automations: [],
+      expandOnPersist: (updates) =>
+        updates.sourceControlAi
+          ? {
+              commitMessageAi: {
+                enabled: true,
+                agentId: null,
+                selectedModelByAgent: {},
+                selectedThinkingByModel: {},
+                customPrompt: updates.sourceControlAi.instructionsByOperation?.commitMessage ?? '',
+                customAgentCommand: ''
+              } as GlobalSettings['commitMessageAi']
+            }
+          : {}
+    }
+    const service = new AgentCatalogService(makeStoreStub(state))
+    const before = state.settings
+    const result = service.mutateReferences({
+      expectedReferenceRevision: 1,
+      mutation: {
+        kind: 'source-control-update',
+        changes: { instructionsByOperation: { commitMessage: 'x'.repeat(300_000) } }
+      }
+    })
+    expect(result).toMatchObject({ ok: false, code: 'agent_reference_payload_too_large' })
+    expect(state.settings).toBe(before)
+  })
+})
+
+describe('durable authoring acknowledgement (P0-2)', () => {
+  function serviceWith(state: StoreStubState): AgentCatalogService {
+    const store = makeStoreStub(state)
+    // Any debounced write here would ack before the bytes are durable.
+    Object.assign(store, {
+      updateSettings: () => {
+        throw new Error('authoring must not use the debounced settings write')
+      }
+    })
+    return new AgentCatalogService(store)
+  }
+
+  const createCodex = {
+    expectedRevision: 1,
+    mutation: {
+      kind: 'create' as const,
+      baseAgent: 'codex' as const,
+      draft: { label: 'Durable', commandOverride: null, args: '', env: {}, syncEnv: false }
+    }
+  }
+
+  it('commits catalog and reference mutations through the durable write path', () => {
+    const state: StoreStubState = { settings: baseSettings(), repos: [], automations: [] }
+    const service = serviceWith(state)
+    expect(service.mutate(createCodex).ok).toBe(true)
+    expect(state.settings.customTuiAgents).toHaveLength(1)
+    const referenceResult = service.mutateReferences({
+      expectedReferenceRevision: 1,
+      mutation: { kind: 'source-control-update', changes: { customAgentCommand: 'ok' } }
+    })
+    expect(referenceResult.ok).toBe(true)
+  })
+
+  it('reports a typed failure and keeps state unchanged when the durable write fails', () => {
+    const state: StoreStubState = {
+      settings: baseSettings(),
+      repos: [],
+      automations: [],
+      failDurableWrite: true
+    }
+    const service = serviceWith(state)
+    const revisions: number[] = []
+    service.onDidChange((revision) => revisions.push(revision))
+    const before = state.settings
+
+    expect(service.mutate(createCodex)).toEqual({
+      ok: false,
+      code: 'agent_catalog_write_failed',
+      revision: 1
+    })
+    expect(
+      service.mutateReferences({
+        expectedReferenceRevision: 1,
+        mutation: { kind: 'source-control-update', changes: { customAgentCommand: 'ok' } }
+      })
+    ).toEqual({
+      ok: false,
+      code: 'agent_reference_write_failed',
+      referenceRevision: 1,
+      catalogRevision: 1
+    })
+    expect(state.settings).toBe(before)
+    expect(revisions).toEqual([])
   })
 })

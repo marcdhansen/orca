@@ -10,21 +10,29 @@ export function pinnedPreV1BackupPath(dataFile: string): string {
   return `${dataFile}.pre-agent-catalog-v1.backup`
 }
 
-/** True when an existing pinned backup is still a usable recovery point. Only a
- *  demonstrably torn backup (present, readable, not JSON) may be rewritten — an
- *  unreadable one is left alone rather than destroyed on a guess. */
-function existingPinnedBackupIsUsable(backupFile: string): boolean {
+export type PinnedPreV1BackupState =
+  /** Readable and parses: a real rollback point, keep it. */
+  | { state: 'usable' }
+  /** Readable but not JSON: demonstrably torn, safe to rewrite. */
+  | { state: 'torn' }
+  /** EISDIR/EACCES/EIO: not a rollback point, and not safely overwritable either. */
+  | { state: 'unreadable'; error: string }
+
+/** Classify an existing pinned backup. Unreadable is its own state: treating it
+ *  as usable would claim a rollback point nobody can read, and treating it as
+ *  torn would destroy an unknown path on a guess. */
+export function classifyPinnedPreV1Backup(backupFile: string): PinnedPreV1BackupState {
   let contents: string
   try {
     contents = readFileSync(backupFile, 'utf-8')
-  } catch {
-    return true
+  } catch (error) {
+    return { state: 'unreadable', error: error instanceof Error ? error.message : String(error) }
   }
   try {
     JSON.parse(contents)
-    return true
+    return { state: 'usable' }
   } catch {
-    return false
+    return { state: 'torn' }
   }
 }
 
@@ -37,8 +45,17 @@ function existingPinnedBackupIsUsable(backupFile: string): boolean {
 export function createPinnedPreV1Backup(dataFile: string, rawContents: string): PinnedBackupResult {
   const backupFile = pinnedPreV1BackupPath(dataFile)
   try {
-    if (existsSync(backupFile) && existingPinnedBackupIsUsable(backupFile)) {
-      return { ok: true, created: false }
+    if (existsSync(backupFile)) {
+      const existing = classifyPinnedPreV1Backup(backupFile)
+      // PinnedBackupResult cannot express "no pinned backup", and claiming one we
+      // cannot read is the bug: fail the migration so the profile stays pre-v1
+      // and Settings offers a retry once the path is fixed by hand.
+      if (existing.state === 'unreadable') {
+        return { ok: false, error: `The pre-update backup could not be read: ${existing.error}` }
+      }
+      if (existing.state === 'usable') {
+        return { ok: true, created: false }
+      }
     }
     const mode = statSync(dataFile).mode & 0o777
     writeFileDurableSync(durableWriteTempPath(backupFile), backupFile, rawContents, { mode })

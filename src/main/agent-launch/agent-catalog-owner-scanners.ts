@@ -5,10 +5,40 @@
 // retained.
 
 import type { Store } from '../persistence'
-import type { GlobalSettings, TerminalQuickCommand } from '../../shared/types'
+import type { CustomTuiAgentId, GlobalSettings, TerminalQuickCommand } from '../../shared/types'
 import type { AgentTombstoneReferenceIndex } from './agent-tombstone-reference-index'
+import type { TombstoneReferenceCount } from './agent-catalog-draft-validation'
+import type { TombstoneReferenceCounter } from './agent-catalog-tombstone-gc'
 import { getHostAgentSessionRecordStore } from './agent-session-record-store-host'
 import { getHostBackgroundAgentLaunchStore } from './background-agent-launch-store-host'
+
+/** Batch counter for tombstone GC: scans every owner ONCE and tallies each
+ *  requested id from that pass, instead of a full rescan per tombstone. The
+ *  matcher accepts any id in the batch, so `complete: false` carries exactly the
+ *  per-id `countReferences` meaning — an unreadable owner makes every count in
+ *  the batch 'unknown' and the tombstones are conservatively retained. */
+export function createBatchTombstoneReferenceCounter(
+  index: AgentTombstoneReferenceIndex
+): TombstoneReferenceCounter {
+  return {
+    countForIds: (ids) => {
+      const wanted = new Set<string>(ids)
+      const matched = new Map<string, number>()
+      const { complete } = index.countMatchingReferences((value) => {
+        if (typeof value !== 'string' || !wanted.has(value)) {
+          return false
+        }
+        matched.set(value, (matched.get(value) ?? 0) + 1)
+        return true
+      })
+      const counts = new Map<CustomTuiAgentId, TombstoneReferenceCount>()
+      for (const id of ids) {
+        counts.set(id, complete ? (matched.get(id) ?? 0) : 'unknown')
+      }
+      return counts
+    }
+  }
+}
 
 /** Register the desktop's built-in reference owners against the shared index.
  *  Later units add their own owner scanners through the same index. */

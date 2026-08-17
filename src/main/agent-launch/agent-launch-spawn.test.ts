@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   resolveAgentLaunchSpawn,
   sanitizeClientAgentLaunchSourceRecord,
@@ -18,7 +18,21 @@ import type {
   ResolveAgentLaunchRequest
 } from '../../shared/agent-launch-host-contract'
 import type { ResolveAgentLaunchOutcome } from './resolve-agent-launch'
-import { customId } from './agent-launch-test-catalog'
+import { customId, settingsOf } from './agent-launch-test-catalog'
+import type * as AgentCatalogProjectionsModule from './agent-catalog-projections'
+
+// Counts the real per-launch normalize pass so a rebuild regression is visible.
+const normalizeCatalogCalls = vi.hoisted(() => ({ count: 0 }))
+vi.mock('./agent-catalog-projections', async (importOriginal) => {
+  const actual = await importOriginal<typeof AgentCatalogProjectionsModule>()
+  return {
+    ...actual,
+    normalizeCatalogFromSettings: (settings: GlobalSettings) => {
+      normalizeCatalogCalls.count += 1
+      return actual.normalizeCatalogFromSettings(settings)
+    }
+  }
+})
 
 function makeSnapshot(): AgentLaunchSnapshot {
   return {
@@ -263,6 +277,62 @@ describe('resolveAgentLaunchSpawn', () => {
       ok: false,
       failure: { code: 'base_agent_unavailable', baseAgent: 'claude' }
     })
+  })
+})
+
+// P1-21: the boundary re-invokes the host-state resolve closure (initial pass +
+// coordinator re-resolve), and each pass used to rebuild the whole normalized
+// catalog. Reuse is keyed on the settings object identity, which the store
+// replaces on every write — so a real config change still re-normalizes.
+describe('normalized catalog reuse across one launch (P1-21)', () => {
+  beforeEach(() => {
+    normalizeCatalogCalls.count = 0
+  })
+
+  function depsFor(getSettings: () => GlobalSettings): AgentLaunchSpawnDeps {
+    return {
+      getSettings,
+      getCatalogRevision: () => 7,
+      boundary: new AgentLaunchBoundary({
+        admissionStore: new AgentLaunchAdmissionStore(),
+        coordinator: new LaunchAdmissionCoordinator()
+      }),
+      resolve: () => ({ ok: true as const, launch: makeLaunch() })
+    }
+  }
+
+  it('normalizes once even though the boundary resolves twice', async () => {
+    const settings = settingsOf()
+    const result = await resolveAgentLaunchSpawn(
+      depsFor(() => settings),
+      baseInput()
+    )
+    expect(result.ok).toBe(true)
+    expect(normalizeCatalogCalls.count).toBe(1)
+  })
+
+  it('re-normalizes when the settings object is replaced between the two resolves', async () => {
+    const revisions = [settingsOf(), settingsOf()]
+    let read = 0
+    const result = await resolveAgentLaunchSpawn(
+      depsFor(() => revisions[Math.min(read++, revisions.length - 1)]!),
+      baseInput()
+    )
+    expect(result.ok).toBe(true)
+    expect(normalizeCatalogCalls.count).toBe(2)
+  })
+
+  it('reuses one normalize across repeated launches on an unchanged settings revision', async () => {
+    const settings = settingsOf()
+    const deps = depsFor(() => settings)
+    for (let i = 0; i < 5; i += 1) {
+      const result = await resolveAgentLaunchSpawn(deps, baseInput())
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        deps.boundary.settleAgentLaunch(result.receipt.launchToken, 'failed')
+      }
+    }
+    expect(normalizeCatalogCalls.count).toBe(1)
   })
 })
 

@@ -82,6 +82,7 @@ import {
   isAgentSessionSurfaceBinding,
   type AgentSessionOwnerBinding
 } from '../shared/agent-session-host-authority'
+import { LAUNCH_TOKEN_ECHO_PROTOCOL_VERSION } from '../shared/agent-launch-token-echo-protocol'
 import { createPtySlaveEchoProbe, readPtySlavePath } from '../shared/pty-slave-line-discipline-echo'
 import {
   deleteRelayFishHistory,
@@ -922,7 +923,8 @@ export class PtyHandler {
     this.dispatcher.onRequest('pty.getCapabilities', async () => ({
       startupIngressVersion: PTY_STARTUP_INGRESS_VERSION,
       agentSessionClaimVersion: AGENT_SESSION_EXECUTION_OWNER_PROTOCOL_VERSION,
-      agentSessionCreateOperationVersion: AGENT_SESSION_CREATE_OPERATION_PROTOCOL_VERSION
+      agentSessionCreateOperationVersion: AGENT_SESSION_CREATE_OPERATION_PROTOCOL_VERSION,
+      launchTokenEchoVersion: LAUNCH_TOKEN_ECHO_PROTOCOL_VERSION
     }))
     this.dispatcher.onRequest('pty.listProcesses', () => this.listProcesses())
     this.dispatcher.onRequest('pty.getDefaultShell', async () => resolveDefaultShell())

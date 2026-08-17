@@ -9,8 +9,8 @@
 //      durably persisted to the host-private store so a terminal that outlives a
 //      main crash still self-identifies by token during reconciliation.
 //   2. recentAgentLaunchOperations — a bounded settled ledger (newest 16 per
-//      scope) that makes the create/retry mutation idempotent across process
-//      restart. Entries carry digests, status, terminal id, and failure id only:
+//      scope, newest 256 scopes) that makes the create/retry mutation idempotent
+//      across process restart. Entries carry digests, status, and ids only:
 //      never raw command, paths, prompts, labels, token, or env.
 
 import { createHash, randomBytes } from 'node:crypto'
@@ -19,6 +19,11 @@ import type { AgentLaunchIntentKind, AgentLaunchReceipt } from '../../shared/age
 import { principalKey, type AdmissionPrincipal } from './agent-launch-admission-store'
 
 export const MAX_SETTLED_OPERATIONS_PER_SCOPE = 16
+
+/** Global companion to the per-scope bound: scopes are minted per worktree/run/
+ *  attempt and never reused, so capping only within a scope still lets the ledger
+ *  — which EVERY durable mutation re-serializes in full — grow without limit. */
+export const MAX_SETTLED_OPERATION_SCOPES = 256
 
 export type SettledAgentLaunchStatus = 'launched' | 'failed' | 'forgotten'
 
@@ -248,7 +253,29 @@ export class AgentLaunchOperationStore {
     if (next.length > MAX_SETTLED_OPERATIONS_PER_SCOPE) {
       next.splice(0, next.length - MAX_SETTLED_OPERATIONS_PER_SCOPE)
     }
+    // Re-insert so Map order is least-recently-settled first; the global bound
+    // below evicts from that end.
+    this.settledByScope.delete(entry.scope)
     this.settledByScope.set(entry.scope, next)
+    this.evictOldestSettledScopes()
+  }
+
+  /** Drop whole scopes, least-recently-settled first, once the ledger exceeds the
+   *  global bound. A scope with a live pending launch is skipped: its entries are
+   *  the idempotency replay a retry of that in-flight launch still needs. */
+  private evictOldestSettledScopes(): void {
+    if (this.settledByScope.size <= MAX_SETTLED_OPERATION_SCOPES) {
+      return
+    }
+    const pendingScopes = new Set([...this.pendingByToken.values()].map((pending) => pending.scope))
+    for (const scope of Array.from(this.settledByScope.keys())) {
+      if (this.settledByScope.size <= MAX_SETTLED_OPERATION_SCOPES) {
+        return
+      }
+      if (!pendingScopes.has(scope)) {
+        this.settledByScope.delete(scope)
+      }
+    }
   }
 
   /** Newest settled entry matching the idempotency key within the scope, or

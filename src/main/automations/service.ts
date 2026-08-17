@@ -8,6 +8,7 @@ import {
   type AutomationPrecheckResult,
   type AutomationRun
 } from '../../shared/automations-types'
+import { clearFinalRunTerminalPointers } from './final-run-terminal-pointer-cleanup'
 import {
   classifyAutomationLaunchDispatchFailure,
   type AutomationAgentLaunchClassifier
@@ -146,7 +147,7 @@ export class AutomationService {
     // (dispatch_failed + agentLaunchForgottenAt); its settled outcome stands.
     const current = this.store.listAutomationRuns().find((entry) => entry.id === result.runId)
     if (current && isFinalAutomationRunStatus(current.status)) {
-      return current
+      return clearFinalRunTerminalPointers(this.store, current, result)
     }
     const run = this.store.updateAutomationRun(stampAutomationDispatchLaunchFailure(result))
     clearAutomationDispatchTokens(run.automationId, run.id)

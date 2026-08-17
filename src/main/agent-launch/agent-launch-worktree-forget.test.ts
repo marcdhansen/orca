@@ -162,6 +162,69 @@ describe('runForgetUnknownAgentLaunch', () => {
     expect(deps.releaseReservation).not.toHaveBeenCalled()
   })
 
+  it('refuses to forget a launch admitted by another paired device', () => {
+    const store = new AgentLaunchOperationStore()
+    store.beginPending({
+      ...pending(),
+      principal: { kind: 'remote', id: 'mobile', deviceId: 'device-a' }
+    })
+    const deps = buildDeps(store)
+
+    const result = runForgetUnknownAgentLaunch(deps, {
+      scope: WORKTREE_ID,
+      expectedOperationId: OPERATION_ID,
+      clientMutationId: CLIENT_MUTATION_ID,
+      callerPrincipal: { kind: 'remote', id: 'mobile', deviceId: 'device-b' }
+    })
+
+    // Same rejection as a missing pending: the other device learns nothing.
+    expect(result).toEqual({
+      status: 'rejected',
+      requestError: { code: 'stale_agent_launch_failure' }
+    })
+    expect(store.getPending('token-unknown-1')).not.toBeNull()
+    expect(deps.releaseReservation).not.toHaveBeenCalled()
+    expect(deps.clearPublicState).not.toHaveBeenCalled()
+  })
+
+  it('forgets its own device launch and a pre-device-principal launch', () => {
+    const caller = { kind: 'remote', id: 'mobile', deviceId: 'device-a' } as const
+    const own = new AgentLaunchOperationStore()
+    own.beginPending({ ...pending(), principal: caller })
+    expect(
+      runForgetUnknownAgentLaunch(buildDeps(own), {
+        scope: WORKTREE_ID,
+        expectedOperationId: OPERATION_ID,
+        clientMutationId: CLIENT_MUTATION_ID,
+        callerPrincipal: caller
+      })
+    ).toEqual({ status: 'forgotten' })
+
+    // A durable row persisted before per-device principals carries the coarse
+    // clientKind (or none at all) and must not become unforgettable.
+    const legacy = new AgentLaunchOperationStore()
+    legacy.beginPending({ ...pending(), principal: { kind: 'remote', id: 'mobile' } })
+    expect(
+      runForgetUnknownAgentLaunch(buildDeps(legacy), {
+        scope: WORKTREE_ID,
+        expectedOperationId: OPERATION_ID,
+        clientMutationId: CLIENT_MUTATION_ID,
+        callerPrincipal: caller
+      })
+    ).toEqual({ status: 'forgotten' })
+
+    const principalLess = new AgentLaunchOperationStore()
+    principalLess.beginPending(pending())
+    expect(
+      runForgetUnknownAgentLaunch(buildDeps(principalLess), {
+        scope: WORKTREE_ID,
+        expectedOperationId: OPERATION_ID,
+        clientMutationId: CLIENT_MUTATION_ID,
+        callerPrincipal: caller
+      })
+    ).toEqual({ status: 'forgotten' })
+  })
+
   it('returns idempotency_conflict when the key was used with a different payload', () => {
     const store = new AgentLaunchOperationStore()
     store.recordSettled({

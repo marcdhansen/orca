@@ -112,7 +112,7 @@ function agentEnvEquals(a: Readonly<Record<string, string>>, b: Record<string, s
     return false
   }
   for (const key of aKeys) {
-    if (!Object.prototype.hasOwnProperty.call(b, key) || a[key] !== b[key]) {
+    if (!Object.hasOwn(b, key) || a[key] !== b[key]) {
       return false
     }
   }
@@ -158,7 +158,7 @@ export function resolveMobileRemoveOnlyReplayEnv(
   let withheld = false
   for (const key of Object.keys(input.snapshot.agentEnv)) {
     const lookupKey = caseInsensitive ? key.toLowerCase() : key
-    const currentValue = Object.prototype.hasOwnProperty.call(currentLookup, lookupKey)
+    const currentValue = Object.hasOwn(currentLookup, lookupKey)
       ? currentLookup[lookupKey]
       : undefined
     if (currentValue !== undefined && currentValue === input.snapshot.agentEnv[key]) {

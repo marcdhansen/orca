@@ -29,6 +29,7 @@ import type {
 import { isSourceControlActionId } from '../../shared/source-control-ai-actions'
 import { resolveSourceControlActionRecipe } from '../../shared/source-control-ai'
 import { normalizeCatalogFromSettings } from './agent-catalog-projections'
+import type { AgentCatalog } from '../../shared/agent-catalog-normalization'
 import { STARTUP_COMMAND_TEXT_MAX_CHARS } from '../providers/windows-shell-args'
 import { resolveAgentLaunch, type ResolveAgentLaunchOutcome } from './resolve-agent-launch'
 import type {
@@ -152,6 +153,26 @@ function resolvePerLaunchArgs(
     : { ok: true }
 }
 
+/** Normalized catalogs keyed by the settings object that produced them. The
+ *  boundary re-invokes `resolve` 2-3 times per launch (initial, coordinator
+ *  re-resolve, and the two-stage worktree pre/post-create pair) and the settings
+ *  store REPLACES the settings object on every write — so an identical reference
+ *  is proof the catalog inputs are unchanged and the O(n) normalize pass can be
+ *  reused. A changed reference still re-normalizes, keeping the coordinator's
+ *  agent_configuration_changed detection exact. Weak so a superseded settings
+ *  revision's catalog is collectible. */
+const normalizedCatalogBySettings = new WeakMap<GlobalSettings, AgentCatalog>()
+
+function normalizedCatalogFor(settings: GlobalSettings): AgentCatalog {
+  const cached = normalizedCatalogBySettings.get(settings)
+  if (cached) {
+    return cached
+  }
+  const catalog = normalizeCatalogFromSettings(settings)
+  normalizedCatalogBySettings.set(settings, catalog)
+  return catalog
+}
+
 /** Build the boundary's `resolve` closure from the surface deps + input. Each
  *  call re-reads live settings and the normalized catalog and runs the total
  *  resolver over the fixed request; it does no async I/O, so the boundary can
@@ -173,7 +194,7 @@ export function buildHostStateResolve(
         catalogRevision: deps.getCatalogRevision()
       }
     }
-    const catalog = normalizeCatalogFromSettings(settings)
+    const catalog = normalizedCatalogFor(settings)
     const outcome: ResolveAgentLaunchOutcome = resolveFn(
       {
         selection: input.request.selection,

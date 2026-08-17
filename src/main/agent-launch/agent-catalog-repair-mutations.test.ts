@@ -468,7 +468,7 @@ describe('resolve-duplicate-id covering a base-mismatch corrupt row (L1-#4)', ()
   })
 })
 
-describe('repair-token registry eviction (L1-#8)', () => {
+describe('repair-token registry derivation (L1-#8)', () => {
   function corruptRowWith(index: number) {
     return {
       label: null,
@@ -479,24 +479,99 @@ describe('repair-token registry eviction (L1-#8)', () => {
     }
   }
 
-  it('caps the registry instead of growing one entry per historical corrupt-row state', () => {
+  it('holds no per-record state that grows with the corrupt-row count', () => {
     const registry = new AgentCatalogRepairTokenRegistry()
     for (let i = 0; i < 1000; i += 1) {
       registry.tokenFor(corruptRowWith(i))
     }
-    const size = (registry as unknown as { tokensByRecordKey: Map<string, string> })
-      .tokensByRecordKey.size
-    expect(size).toBeLessThanOrEqual(256)
+    const collections = Object.values(registry as unknown as Record<string, unknown>).filter(
+      (value) => value instanceof Map || value instanceof Set || Array.isArray(value)
+    )
+    expect(collections).toEqual([])
   })
 
-  it('keeps recently re-requested tokens stable across unrelated churn', () => {
+  it('keeps every token stable across unrelated churn', () => {
     const registry = new AgentCatalogRepairTokenRegistry()
     const pinned = corruptRowWith(0)
     const pinnedToken = registry.tokenFor(pinned)
-    for (let i = 1; i < 300; i += 1) {
+    for (let i = 1; i < 1000; i += 1) {
       registry.tokenFor(corruptRowWith(i))
-      // Re-request as snapshots would on every revision; recency keeps it live.
+      // Re-request as snapshots would on every revision.
       expect(registry.tokenFor(pinned)).toBe(pinnedToken)
     }
+  })
+
+  it('mints distinct tokens per record and per registry instance', () => {
+    const registry = new AgentCatalogRepairTokenRegistry()
+    const other = new AgentCatalogRepairTokenRegistry()
+    expect(registry.tokenFor(corruptRowWith(0))).not.toBe(registry.tokenFor(corruptRowWith(1)))
+    expect(registry.tokenFor(corruptRowWith(0))).not.toBe(other.tokenFor(corruptRowWith(0)))
+  })
+
+  it('resolves every token when the catalog holds more corrupt rows than any cache cap', () => {
+    // Regression: a snapshot mints a token per corrupt row, so a 256-entry LRU
+    // evicted the earliest rows and every repair token went permanently stale.
+    const registry = new AgentCatalogRepairTokenRegistry()
+    const rows = Array.from({ length: 257 }, (_, index) => corruptRowWith(index))
+    const minted = rows.map((row) => registry.tokenFor(row))
+    for (const [index, token] of minted.entries()) {
+      expect(registry.resolve(token, rows)).toBe(rows[index])
+    }
+  })
+})
+
+describe('repair-corrupt beyond the historical token cache cap', () => {
+  function corruptCatalogSettings(count: number) {
+    const rows = Array.from({ length: count }, (_, index) => ({
+      id: `custom-agent:codex:not-a-uuid-${index}`,
+      baseAgent: 'codex',
+      label: `Bad ${index}`,
+      args: '',
+      env: {},
+      syncEnv: false
+    }))
+    return settingsWith({ customTuiAgents: rows as unknown as CustomTuiAgent[] })
+  }
+
+  it('repairs the first row of a 257-row corrupt catalog', () => {
+    const settings = corruptCatalogSettings(257)
+    const registry = new AgentCatalogRepairTokenRegistry()
+    const rows = corruptRowsOf(settings)
+    expect(rows).toHaveLength(257)
+    // Snapshot generation requests a token for EVERY corrupt row first.
+    const tokens = rows.map((row) => registry.tokenFor(row))
+    const result = apply({
+      settings,
+      repairTokens: registry,
+      mutation: { kind: 'repair-corrupt', repairToken: tokens[0], action: { kind: 'discard' } }
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.patch.customTuiAgents).toHaveLength(256)
+  })
+
+  it('repairs the last row of a 257-row corrupt catalog', () => {
+    const settings = corruptCatalogSettings(257)
+    const registry = new AgentCatalogRepairTokenRegistry()
+    const rows = corruptRowsOf(settings)
+    const tokens = rows.map((row) => registry.tokenFor(row))
+    const result = apply({
+      settings,
+      repairTokens: registry,
+      mutation: {
+        kind: 'repair-corrupt',
+        repairToken: tokens[256],
+        action: { kind: 'replace', baseAgent: 'codex', draft: draft({ label: 'Repaired' }) }
+      }
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    const live = result.patch.customTuiAgents ?? []
+    expect(live).toHaveLength(257)
+    expect(live[256]).toMatchObject({ label: 'Repaired', baseAgent: 'codex' })
   })
 })

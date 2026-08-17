@@ -9,12 +9,14 @@
 //     main crash is what lets reconciliation re-attribute a terminal by its
 //     token, so this map must be durable, not memory-only.
 // The file is written with the same atomic tmp+rename + permission-hardening
-// discipline as the other host credential stores (writeSecureJsonFile). The
+// discipline as the other host credential stores, through the fsync'd writer:
+// this state IS the crash-recovery record, so a rename that survives the crash
+// but whose bytes do not would lose exactly what it exists to preserve. The
 // encode/decode core takes an injected cipher so it is testable without Electron.
 
 import { join } from 'node:path'
 import { safeStorage } from 'electron'
-import { readSecureJsonFile, writeSecureJsonFile } from '../../shared/secure-file'
+import { readSecureJsonFile, writeDurableSecureJsonFile } from '../../shared/secure-file'
 import type {
   AgentLaunchOperationStore,
   AgentLaunchOperationStoreDurableState,
@@ -207,7 +209,7 @@ export function writeAgentLaunchOperationStoreState(
   state: AgentLaunchOperationStoreDurableState,
   cipher: AgentLaunchOperationCipher
 ): void {
-  writeSecureJsonFile(path, encodeAgentLaunchOperationStore(state, cipher))
+  writeDurableSecureJsonFile(path, encodeAgentLaunchOperationStore(state, cipher))
 }
 
 /** Reconstruct the admission records the rehydrated pending snapshots hold
@@ -256,8 +258,10 @@ export function initAgentLaunchOperationStorePersistence(
   }
 ): void {
   const state = loadAgentLaunchOperationStoreState(path, cipher)
-  store.rebuildSettledFrom(state.settled)
+  // Pending first: the global settled-scope bound pins the scopes an in-flight
+  // launch still needs, and it can only see them once they are rehydrated.
   store.rebuildPendingFrom(state.pending)
+  store.rebuildSettledFrom(state.settled)
   // Re-take the capacity these rehydrated launches held before the restart;
   // Forget/reconcile then release the exact slot instead of no-opping.
   deps.rebuildAdmission(
@@ -266,14 +270,12 @@ export function initAgentLaunchOperationStorePersistence(
       now: deps.now ?? Date.now
     })
   )
+  // The write THROWS to the mutating caller: this file is the idempotency,
+  // recovery, and capacity record, so a launch whose snapshot never reached disk
+  // must fail rather than report success and vanish on the next restart.
   const attachWriteBackSink = (): void => {
     store.setDurablePersistence((next) => {
-      try {
-        writeAgentLaunchOperationStoreState(path, next, cipher)
-      } catch {
-        // A failed persist must not break the in-flight launch; the in-memory
-        // store stays authoritative and the next mutation retries the write.
-      }
+      writeAgentLaunchOperationStoreState(path, next, cipher)
     })
   }
   if (!state.persistedStateUnreadable) {
@@ -288,23 +290,23 @@ export function initAgentLaunchOperationStorePersistence(
   store.setDurablePersistence(() => {
     const onDisk = loadAgentLaunchOperationStoreState(path, cipher)
     if (onDisk.persistedStateUnreadable) {
+      // Still degraded: writing now would destroy intact bytes. Deferred, not
+      // failed — the recovery sink stays armed and the next mutation retries.
       return
     }
-    try {
-      const live = store.durableState()
-      // Maps key pendings by token and the ledger replaces by operationId in
-      // settledAt order, so disk-first + live-second prefers the live state.
-      const liveTokens = new Set(live.pending.map((entry) => entry.launchToken))
-      store.rebuildPendingFrom([
-        ...onDisk.pending.filter((entry) => !liveTokens.has(entry.launchToken)),
-        ...live.pending
-      ])
-      store.rebuildSettledFrom([...onDisk.settled, ...live.settled])
-      attachWriteBackSink()
-      writeAgentLaunchOperationStoreState(path, store.durableState(), cipher)
-    } catch {
-      // Keep the recovery sink armed; the next mutation retries.
-    }
+    const live = store.durableState()
+    // Maps key pendings by token and the ledger replaces by operationId in
+    // settledAt order, so disk-first + live-second prefers the live state.
+    const liveTokens = new Set(live.pending.map((entry) => entry.launchToken))
+    store.rebuildPendingFrom([
+      ...onDisk.pending.filter((entry) => !liveTokens.has(entry.launchToken)),
+      ...live.pending
+    ])
+    store.rebuildSettledFrom([...onDisk.settled, ...live.settled])
+    // Hand over to the plain sink only AFTER the merged write lands, so a failed
+    // write both reaches the caller and leaves the recovery sink armed.
+    writeAgentLaunchOperationStoreState(path, store.durableState(), cipher)
+    attachWriteBackSink()
   })
 }
 

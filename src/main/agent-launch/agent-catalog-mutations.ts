@@ -21,10 +21,9 @@ import {
   applyCreate,
   applyDelete,
   applyDuplicate,
-  applySetDefault,
-  applySetEnabled,
   applyUpdateCustom
 } from './agent-catalog-lifecycle-mutations'
+import { applySetDefault, applySetEnabled } from './agent-catalog-availability-mutations'
 import { applyRepairCorrupt, applyResolveDuplicateId } from './agent-catalog-repair-mutations'
 import type { AgentCatalogRepairTokenRegistry } from './agent-catalog-repair-mutations'
 import { applyUpdateBuiltIn } from './agent-built-in-override-mutations'

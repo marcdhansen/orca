@@ -2,7 +2,8 @@
 // Admission is the launch linearization point (I24): inside one short critical
 // section the host revalidates the relevant-input fingerprint and commits the
 // token/snapshot/provider intent BEFORE any provider I/O. Records are bounded:
-// 256 per host, 64 per authenticated principal, remote principals collectively
+// 256 per host, 64 per authenticated principal (per paired device for remote
+// callers, so one phone cannot spend another's slots), remote principals collectively
 // capped so 64 slots stay reserved for local desktop/host work. Rejection is
 // launch_capacity_exceeded before provider I/O and before any owner mutation.
 
@@ -23,14 +24,16 @@ export const MAX_PENDING_LAUNCHES_REMOTE_TOTAL = 192
 export const MAX_PENDING_LAUNCHES_PER_WORKTREE = 8
 
 /** Stable authenticated principal: the remote caller's clientKind ('mobile' |
- *  'runtime') for remote callers, the local desktop/host otherwise. Never a
- *  per-connection value.
- *  U10 marker (§U9 ledger #18): despite "id", this is TODAY the coarse clientKind,
- *  NOT a per-device id — every same-kind paired device shares one principal. Do not
- *  treat `id` as device-granular until per-device admission principals land (the
- *  revoked-principal forget override reads revocation at clientKind granularity for
- *  exactly this reason). */
-export type AdmissionPrincipal = { kind: 'local' } | { kind: 'remote'; id: string }
+ *  'runtime') plus the paired device it authenticated as, the local desktop/host
+ *  otherwise. Never a per-connection value.
+ *  `deviceId` is what makes caps, recovery rows, and idempotency keys per-device;
+ *  it is OPTIONAL only because rows persisted before per-device principals landed
+ *  carry the coarse clientKind alone. Such a legacy row keeps the coarse bucket and
+ *  stays claimable by any device of its kind (see admissionPrincipalOwns) so it
+ *  never becomes unforgettable; every new remote principal must carry a deviceId. */
+export type AdmissionPrincipal =
+  | { kind: 'local' }
+  | { kind: 'remote'; id: string; deviceId?: string }
 
 export type AdmittedLaunchRecord = {
   launchToken: string
@@ -88,7 +91,38 @@ export type ReservationResult =
   | { ok: false; failure: AgentLaunchFailure }
 
 export function principalKey(principal: AdmissionPrincipal): string {
-  return principal.kind === 'local' ? 'local' : `remote:${principal.id}`
+  if (principal.kind === 'local') {
+    return 'local'
+  }
+  // A device-scoped key gives each paired device its own cap bucket; a legacy
+  // principal (no deviceId) keeps the pre-device key so persisted rows rebuild
+  // into the bucket they were counted in.
+  return principal.deviceId
+    ? `remote:${principal.id}#${principal.deviceId}`
+    : `remote:${principal.id}`
+}
+
+/** Does `caller` own a record admitted by `stored`? Exact device match for a
+ *  device-scoped record; a legacy record (persisted with no deviceId, or with no
+ *  principal at all) stays owned by any device of the same kind so it never
+ *  becomes unforgettable after the upgrade. */
+export function admissionPrincipalOwns(
+  caller: AdmissionPrincipal,
+  stored: AdmissionPrincipal | undefined
+): boolean {
+  if (!stored) {
+    return true
+  }
+  if (caller.kind !== stored.kind) {
+    return false
+  }
+  if (caller.kind !== 'remote' || stored.kind !== 'remote') {
+    return true
+  }
+  if (caller.id !== stored.id) {
+    return false
+  }
+  return stored.deviceId === undefined || caller.deviceId === stored.deviceId
 }
 
 export class AgentLaunchAdmissionStore {
@@ -297,14 +331,15 @@ export class AgentLaunchAdmissionStore {
   }
 
   /** Secret-free rows for the capacity-recovery surface: never snapshot, argv,
-   *  env, prompt, label, or the token of another principal's row. */
+   *  env, prompt, label, or the token of another device's row. Ownership — not the
+   *  cap bucket — filters, so a device still sees pre-device-principal rows of its
+   *  own kind and never another device's. */
   summarizeFor(principal: AdmissionPrincipal): {
     intent: AgentLaunchIntentKind
     scope: string
     admittedAt: number
     launchToken: string
   }[] {
-    const key = principalKey(principal)
     const rows: {
       intent: AgentLaunchIntentKind
       scope: string
@@ -312,7 +347,7 @@ export class AgentLaunchAdmissionStore {
       launchToken: string
     }[] = []
     for (const record of this.byToken.values()) {
-      if (principalKey(record.principal) === key) {
+      if (admissionPrincipalOwns(principal, record.principal)) {
         rows.push({
           intent: record.intent,
           scope: record.scope,
@@ -326,12 +361,11 @@ export class AgentLaunchAdmissionStore {
 
   /** Redacted capacity-recovery rows for one principal: the summarize set plus the
    *  two non-secret snapshot fields the sheet needs. Filters strictly to the
-   *  principal's own records; never another principal's row. */
+   *  caller's own records; never another device's row. */
   capacitySummaryFor(principal: AdmissionPrincipal): AdmissionCapacityRow[] {
-    const key = principalKey(principal)
     const rows: AdmissionCapacityRow[] = []
     for (const record of this.byToken.values()) {
-      if (principalKey(record.principal) === key) {
+      if (admissionPrincipalOwns(principal, record.principal)) {
         rows.push({
           intent: record.intent,
           scope: record.scope,

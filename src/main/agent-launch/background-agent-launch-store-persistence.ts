@@ -4,12 +4,13 @@
 // disk, not memory-only. Every field is client-safe by construction (ids,
 // display attribution, code+hint failure — never argv/env/token; see
 // shared/background-agent-launch.ts), so the file is plaintext JSON, written
-// with the same atomic tmp+rename + permission-hardening discipline as the
-// sibling launch stores. Each row re-validates through the strict shared schema
-// on load so one corrupt entry never aborts rehydrating the rest.
+// with the same atomic tmp+rename + fsync + permission-hardening discipline as
+// the sibling launch stores — surviving reload is the store's whole contract, so
+// the bytes must outlive a power loss too. Each row re-validates through the
+// strict shared schema on load so one corrupt entry never aborts the rest.
 
 import { join } from 'node:path'
-import { readSecureJsonFile, writeSecureJsonFile } from '../../shared/secure-file'
+import { readSecureJsonFile, writeDurableSecureJsonFile } from '../../shared/secure-file'
 import {
   parseBackgroundAgentLaunchAttempt,
   type BackgroundAgentLaunchAttempt
@@ -71,7 +72,7 @@ export function writeBackgroundAgentLaunchAttempts(
   attempts: readonly BackgroundAgentLaunchAttempt[]
 ): void {
   const file: PersistedFile = { version: 1, attempts: [...attempts] }
-  writeSecureJsonFile(path, file)
+  writeDurableSecureJsonFile(path, file)
 }
 
 /** Path-injected core of the boot wiring, split out so the rebuild + sink
@@ -82,14 +83,11 @@ export function initBackgroundAgentLaunchStorePersistence(
 ): void {
   const state = loadBackgroundAgentLaunchAttempts(path)
   store.rebuildFrom(state.attempts)
+  // The write THROWS to the mutating caller: an attempt that reports success
+  // while its row never reached disk loses the recovery card on the next reload.
   const attachWriteBackSink = (): void => {
     store.setDurablePersistence((next) => {
-      try {
-        writeBackgroundAgentLaunchAttempts(path, next.attempts)
-      } catch {
-        // A failed persist must not break the in-flight attempt; the in-memory
-        // store stays authoritative and the next mutation retries the write.
-      }
+      writeBackgroundAgentLaunchAttempts(path, next.attempts)
     })
   }
   if (!state.persistedStateUnreadable) {
@@ -104,16 +102,15 @@ export function initBackgroundAgentLaunchStorePersistence(
   store.setDurablePersistence(() => {
     const onDisk = loadBackgroundAgentLaunchAttempts(path)
     if (onDisk.persistedStateUnreadable) {
+      // Still degraded — write nothing and keep the recovery sink armed.
       return
     }
-    try {
-      store.mergeRehydratedAttempts(onDisk.attempts)
-      store.attemptCompleteness.markComplete()
-      attachWriteBackSink()
-      writeBackgroundAgentLaunchAttempts(path, store.durableState().attempts)
-    } catch {
-      // Keep the recovery sink armed; the next mutation retries.
-    }
+    store.mergeRehydratedAttempts(onDisk.attempts)
+    // Hand over to the plain sink only AFTER the merged write lands, so a failed
+    // write both reaches the caller and leaves the recovery sink armed.
+    writeBackgroundAgentLaunchAttempts(path, store.durableState().attempts)
+    store.attemptCompleteness.markComplete()
+    attachWriteBackSink()
   })
 }
 

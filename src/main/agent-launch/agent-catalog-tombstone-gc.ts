@@ -12,17 +12,51 @@ import type {
 import type { AgentCatalog } from '../../shared/custom-tui-agents'
 import type { TombstoneReferenceCount } from './agent-catalog-draft-validation'
 
+/** Reference counter for a prune batch. The per-id function rescans every owner
+ *  once per tombstone (quadratic once both grow); `countForIds` indexes the
+ *  owners a single time and answers the whole batch from that pass. */
+export type TombstoneReferenceCounter =
+  | ((id: CustomTuiAgentId) => TombstoneReferenceCount)
+  | {
+      countForIds: (
+        ids: readonly CustomTuiAgentId[]
+      ) => ReadonlyMap<CustomTuiAgentId, TombstoneReferenceCount>
+    }
+
+function countTombstoneReferences(
+  tombstones: readonly DeletedCustomTuiAgent[],
+  counter: TombstoneReferenceCounter
+): ReadonlyMap<CustomTuiAgentId, TombstoneReferenceCount> {
+  const ids: CustomTuiAgentId[] = []
+  const seen = new Set<CustomTuiAgentId>()
+  for (const tombstone of tombstones) {
+    if (!seen.has(tombstone.id)) {
+      seen.add(tombstone.id)
+      ids.push(tombstone.id)
+    }
+  }
+  if (typeof counter !== 'function') {
+    return counter.countForIds(ids)
+  }
+  const counts = new Map<CustomTuiAgentId, TombstoneReferenceCount>()
+  for (const id of ids) {
+    counts.set(id, counter(id))
+  }
+  return counts
+}
+
 /** Conservative unreferenced-tombstone prune: authoritative zero references
  *  frees the tombstone (and its label); 'unknown' retains. */
 export function pruneTombstones(
   tombstones: readonly DeletedCustomTuiAgent[],
-  countReferences: (id: CustomTuiAgentId) => TombstoneReferenceCount
+  countReferences: TombstoneReferenceCounter
 ): { retained: DeletedCustomTuiAgent[]; prunedIds: CustomTuiAgentId[] } {
+  const counts = countTombstoneReferences(tombstones, countReferences)
   const retained: DeletedCustomTuiAgent[] = []
   const prunedIds: CustomTuiAgentId[] = []
   for (const tombstone of tombstones) {
-    const count = countReferences(tombstone.id)
-    if (count === 0) {
+    // A counter that omits an id is treated as unreadable, never as zero.
+    if (counts.get(tombstone.id) === 0) {
       prunedIds.push(tombstone.id)
     } else {
       retained.push(tombstone)
@@ -80,7 +114,7 @@ export function stripRowsSuppressedByPrunedTombstones(
 export function buildUnreferencedTombstonePrunePatch(
   settings: GlobalSettings,
   catalog: AgentCatalog,
-  countReferences: (id: CustomTuiAgentId) => TombstoneReferenceCount
+  countReferences: TombstoneReferenceCounter
 ): Partial<GlobalSettings> | null {
   const tombstones = Array.isArray(settings.deletedCustomTuiAgents)
     ? settings.deletedCustomTuiAgents

@@ -27,7 +27,6 @@ import { rehydrateSessionRecord } from './agent-session-record-rehydrate-validat
 import {
   getAgentSessionOwnershipKey,
   isResumableTuiAgent,
-  normalizeAgentProviderSession,
   providerSessionKeyForResumableBase,
   type AgentProviderSessionMetadata,
   type AgentSessionOwnershipKey,
@@ -38,6 +37,8 @@ import {
   AgentSessionVaultSnapshotIndex,
   type VaultSnapshotOwnerResolution
 } from './agent-session-vault-snapshot-index'
+import { recordsNotForgotten, sessionRecordKeysToEvict } from './agent-session-record-retention'
+import { AgentSessionStagingRegistry } from './agent-session-staging-registry'
 
 export type { VaultSnapshotOwnerResolution } from './agent-session-vault-snapshot-index'
 
@@ -101,7 +102,7 @@ export type AgentSessionRecordStoreDurableState = {
 export class AgentSessionRecordStore {
   // Spawn-time registrations, keyed by launch token (the stable handle both the
   // spawn caller and the hook carry), before a session binds.
-  private readonly staging = new Map<string, StagedLaunchRegistration>()
+  private readonly staging = new AgentSessionStagingRegistry()
   // Durable resume records, keyed by ownership key.
   private readonly records = new Map<string, HostSessionLaunchRecord>()
   private readonly vaultIndex = new AgentSessionVaultSnapshotIndex()
@@ -150,7 +151,7 @@ export class AgentSessionRecordStore {
   /** §577 spawn-time registration, keyed by launch token. Held in staging; not
    *  resumable until a hook binds its provider session. */
   register(registration: Omit<StagedLaunchRegistration, 'registeredAt'>): void {
-    this.staging.set(registration.launchToken, { ...registration, registeredAt: this.now() })
+    this.staging.add({ ...registration, registeredAt: this.now() })
   }
 
   /** Drop a staged registration on spawn failure. If it was already promoted, the
@@ -169,14 +170,16 @@ export class AgentSessionRecordStore {
 
   /** Drop the in-flight staging for a pane when its PTY ends. The durable record
    *  (if the session bound) is intentionally KEPT so a slept session resumes; only
-   *  the unbound staging handle is cleared. Staging is small (bounded by concurrent
-   *  unbound launches), so a scan is cheaper than a second index. */
+   *  the unbound staging handle is cleared. */
   disposeStagingForPane(paneKey: string): void {
-    for (const [token, staged] of this.staging) {
-      if (staged.paneKey === paneKey) {
-        this.staging.delete(token)
-      }
-    }
+    this.staging.disposeForPane(paneKey)
+  }
+
+  /** The same teardown by terminal id, for the runtime/mobile surfaces that
+   *  register a terminal but never a pane key — without it their staging is
+   *  unreachable by any cleanup and leaks a launch snapshot per launch. */
+  disposeStagingForTerminal(terminalId: string): void {
+    this.staging.disposeForTerminal(terminalId)
   }
 
   /** Promote a staged registration to a durable resume record once a hook reports
@@ -235,8 +238,16 @@ export class AgentSessionRecordStore {
     // cheap no-op (no duplicate durable write); rollback still finds the bound
     // record via the ownership index.
     this.staging.delete(launchToken)
+    this.evictOverflowRecords()
     this.persistDurable()
     return record
+  }
+
+  /** Enforce the global retention bound after an insert. */
+  private evictOverflowRecords(): void {
+    for (const ownershipKey of sessionRecordKeysToEvict(this.records)) {
+      this.deleteDurableRecord(ownershipKey)
+    }
   }
 
   /** Re-key an already-bound launch to a ROTATED provider session id. The
@@ -283,6 +294,7 @@ export class AgentSessionRecordStore {
     this.records.set(ownershipKey, record)
     this.vaultIndex.add(ownershipKey, record)
     this.ownershipByToken.set(launchToken, ownershipKey)
+    this.evictOverflowRecords()
     this.persistDurable()
     return record
   }
@@ -364,6 +376,7 @@ export class AgentSessionRecordStore {
     }
     this.records.set(ownershipKey, record)
     this.vaultIndex.add(ownershipKey, record)
+    this.evictOverflowRecords()
     this.persistDurable()
     return record
   }
@@ -383,24 +396,10 @@ export class AgentSessionRecordStore {
    *  fresh bind wins its ownership key), excluding keys forgotten since boot so
    *  a locked-keychain recovery merge cannot resurrect a forgotten session. */
   mergeRehydratedRecords(records: Iterable<HostSessionLaunchRecord>): void {
-    const incoming = [...records].filter((record) => {
-      const providerSession = normalizeAgentProviderSession(record?.providerSession)
-      if (!providerSession || typeof record?.worktreeId !== 'string') {
-        // Malformed entries are dropped by rebuildRecordsFrom regardless.
-        return true
-      }
-      if (!isResumableTuiAgent(record.baseAgent)) {
-        return true
-      }
-      return !this.forgottenSinceRebuild.has(
-        getAgentSessionOwnershipKey({
-          worktreeId: record.worktreeId,
-          baseAgent: record.baseAgent,
-          providerSessionId: providerSession.id
-        })
-      )
-    })
-    this.rebuildRecordsFrom([...incoming, ...this.records.values()])
+    this.rebuildRecordsFrom([
+      ...recordsNotForgotten(records, this.forgottenSinceRebuild),
+      ...this.records.values()
+    ])
   }
 
   /** Rehydrate durable records at startup. Not routed through the sink. */
@@ -420,5 +419,8 @@ export class AgentSessionRecordStore {
         this.ownershipByToken.set(rehydrated.record.launchToken, rehydrated.ownershipKey)
       }
     }
+    // A file written before the bound existed can exceed it; trim at rehydrate so
+    // the first mutation does not re-serialize an unbounded history.
+    this.evictOverflowRecords()
   }
 }

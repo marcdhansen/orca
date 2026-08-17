@@ -13,6 +13,12 @@ export type AdmissionFingerprintBasis = 'explicit' | 'default' | 'snapshot'
 
 export type AdmissionFingerprintInputs = {
   basis: AdmissionFingerprintBasis
+  /** Digest of the resolved argv, and of the env this launch actually ships
+   *  (a replay's remove-only authorization can drop a rotated entry while every
+   *  coarse input stays identical). Both embed the volatile repo/worktree paths,
+   *  so both are cleared in the config-only stable digest. */
+  argvDigest: string
+  envDigest: string
   requestedAgent: TuiAgent
   baseAgent: BuiltInTuiAgent
   mode: 'built-in' | 'custom' | 'safe-fallback'

@@ -3,7 +3,7 @@ import {
   readMobileReviewCreatedTerminal,
   readMobileReviewTerminalSendAccepted
 } from './mobile-diff-review-rpc'
-import { buildIdentityCreateTerminalParams } from './identity-create-terminal-params'
+import { resolveIdentityCreateTerminalParams } from './identity-create-terminal-params'
 import { readMobileVaultResumeCreateOutcome } from './ai-vault-resume-outcome'
 
 // Pure launch path for the PR triage actions ("Fix checks with AI" / "Resolve
@@ -17,8 +17,9 @@ export async function createTerminalAndSendPrompt(
   worktreeId: string,
   prompt: string
 ): Promise<void> {
+  const createParams = await resolveIdentityCreateTerminalParams(client, worktreeId)
   const created = await client.sendRequest('session.tabs.createTerminal', {
-    ...buildIdentityCreateTerminalParams(worktreeId),
+    ...createParams,
     activate: false,
     select: true,
     navigation: 'caller'

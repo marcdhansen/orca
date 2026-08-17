@@ -16,6 +16,14 @@ export type DataRecoveryDialogProps = {
   onOpenChange: (open: boolean) => void
 }
 
+/** `restorable` is optional so a host that predates the readability probe still
+ *  lists its points; only an explicit `false` withdraws the restore affordance. */
+type ListedRecoveryPoint = RecoveryPointDto & { restorable?: boolean }
+
+function isRestorable(point: ListedRecoveryPoint): boolean {
+  return point.restorable !== false
+}
+
 function pointTitle(point: RecoveryPointDto): string {
   switch (point.id) {
     case 'agent-catalog-pre-v1':
@@ -40,8 +48,8 @@ function pointLossSummary(point: RecoveryPointDto): string {
  *  points by metadata only; the pinned pre-v1 point restores via Prepare
  *  downgrade — Orca restores atomically and quits without relaunching. */
 export function DataRecoveryDialog({ open, onOpenChange }: DataRecoveryDialogProps) {
-  const [points, setPoints] = useState<RecoveryPointDto[] | null>(null)
-  const [confirming, setConfirming] = useState<RecoveryPointDto | null>(null)
+  const [points, setPoints] = useState<ListedRecoveryPoint[] | null>(null)
+  const [confirming, setConfirming] = useState<ListedRecoveryPoint | null>(null)
   const [restoring, setRestoring] = useState(false)
   const [restored, setRestored] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -156,7 +164,7 @@ export function DataRecoveryDialog({ open, onOpenChange }: DataRecoveryDialogPro
                         'Creation time unknown'
                       )}
                 </p>
-                {point.compatibility === 'previous-binary' ? (
+                {point.compatibility === 'previous-binary' && isRestorable(point) ? (
                   <p className="text-muted-foreground">
                     {translate(
                       'auto.components.dataRecovery.previousBinary',
@@ -164,8 +172,17 @@ export function DataRecoveryDialog({ open, onOpenChange }: DataRecoveryDialogPro
                     )}
                   </p>
                 ) : null}
-                <p className="mt-1 text-muted-foreground">{pointLossSummary(point)}</p>
-                {confirming?.id === point.id ? (
+                {!isRestorable(point) ? (
+                  <p className="mt-1 text-destructive">
+                    {translate(
+                      'auto.components.dataRecovery.unreadable',
+                      'This recovery point cannot be read, so it cannot be restored. Check its file permissions, or move whatever now occupies its path, then reopen Data recovery.'
+                    )}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-muted-foreground">{pointLossSummary(point)}</p>
+                )}
+                {!isRestorable(point) ? null : confirming?.id === point.id ? (
                   <div className="mt-2 flex items-center gap-2">
                     <Button
                       type="button"

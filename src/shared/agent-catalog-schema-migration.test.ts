@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { migrateAgentCatalogSchema } from './agent-catalog-schema-migration'
+import {
+  AGENT_CATALOG_SCHEMA_VERSION,
+  migrateAgentCatalogSchema
+} from './agent-catalog-schema-migration'
 
 describe('migrateAgentCatalogSchema', () => {
   it('maps shipped legacy null (and missing) defaults to auto exactly once', () => {
@@ -127,5 +130,41 @@ describe('corrupted schema-version stamp (L1-#8)', () => {
     })
     expect(outcome.settingsPatch.defaultTuiAgent).toBe('auto')
     expect(outcome.settingsPatch.agentCatalogSchemaVersion).toBe(1)
+  })
+})
+
+describe('schema newer than this build', () => {
+  it('refuses to write instead of normalizing a newer profile', () => {
+    const outcome = migrateAgentCatalogSchema({
+      settings: {
+        agentCatalogSchemaVersion: AGENT_CATALOG_SCHEMA_VERSION + 1,
+        defaultTuiAgent: null,
+        agentCatalogRevision: 7
+      },
+      preV1RawContents: '{}',
+      createBackup: () => {
+        throw new Error('a newer profile must not re-run the pre-v1 backup step')
+      }
+    })
+    expect(outcome.settingsPatch).toEqual({})
+    expect(outcome.didMigrate).toBe(false)
+    expect(outcome.schemaNewerThanSupported).toEqual({
+      persistedVersion: AGENT_CATALOG_SCHEMA_VERSION + 1,
+      supportedVersion: AGENT_CATALOG_SCHEMA_VERSION
+    })
+  })
+
+  it('leaves the exactly-supported version writable', () => {
+    const outcome = migrateAgentCatalogSchema({
+      settings: {
+        agentCatalogSchemaVersion: AGENT_CATALOG_SCHEMA_VERSION,
+        agentCatalogRevision: 7,
+        agentReferenceRevision: 3
+      },
+      preV1RawContents: '{}',
+      createBackup: () => ({ ok: true, created: false })
+    })
+    expect(outcome.schemaNewerThanSupported).toBeUndefined()
+    expect(outcome.didMigrate).toBe(false)
   })
 })

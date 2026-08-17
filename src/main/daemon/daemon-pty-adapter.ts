@@ -41,7 +41,8 @@ import {
   GET_SIZE_PROTOCOL_VERSION,
   HISTORY_SEED_TRANSFER_PROTOCOL_VERSION,
   SNAPSHOT_SERIALIZER_FIDELITY_DAEMON_PROTOCOL_VERSION,
-  STABLE_PANE_ATTACH_ONLY_DAEMON_PROTOCOL_VERSION
+  STABLE_PANE_ATTACH_ONLY_DAEMON_PROTOCOL_VERSION,
+  supportsLaunchTokenEcho
 } from './daemon-protocol-version'
 import {
   isAgentSessionClaimedSpawnResult,
@@ -430,6 +431,13 @@ export class DaemonPtyAdapter implements IPtyProvider {
     return this.protocolVersion >= AGENT_SESSION_CREATE_OPERATION_DAEMON_PROTOCOL_VERSION
   }
 
+  // Why: a pre-v34 daemon drops the token it was handed, so a missing token in ITS
+  // listing proves nothing. Reconciliation must fall back to non-token identification
+  // rather than settling the launch absent (which duplicates a still-running agent).
+  providesLaunchTokenListings(): boolean {
+    return supportsLaunchTokenEcho(this.protocolVersion)
+  }
+
   async spawn(opts: PtySpawnOptions): Promise<PtySpawnResult> {
     const spawnOpts = this.withHistoryIsolation(opts)
     const sessionId = spawnOpts.sessionId ?? mintPtySessionId(spawnOpts.worktreeId)
@@ -646,7 +654,12 @@ export class DaemonPtyAdapter implements IPtyProvider {
         startupCommandDelivery: attachOnly ? undefined : opts.startupCommandDelivery,
         launchAgent: attachOnly ? undefined : opts.launchAgent,
         ...(attachOnly && !emulateLegacyAttachOnly ? { attachOnly: true } : {}),
-        ...(!attachOnly && opts.launchToken ? { launchToken: opts.launchToken } : {}),
+        // Why gated: only a peer that echoes the token back can complete the round trip
+        // reconciliation depends on; handing it to one that silently drops it just invents
+        // a phantom capability at re-list time.
+        ...(!attachOnly && opts.launchToken && this.providesLaunchTokenListings()
+          ? { launchToken: opts.launchToken }
+          : {}),
         // Why: without forwarding the override, the daemon falls back to cmd.exe/PowerShell, ignoring the shell the renderer chose; this matches LocalPtyProvider.
         shellOverride: attachOnly ? undefined : opts.shellOverride,
         terminalWindowsWslDistro: attachOnly ? undefined : opts.terminalWindowsWslDistro,

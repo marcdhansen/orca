@@ -84,6 +84,7 @@ import {
   TERMINAL_INPUT_TOO_LARGE_ERROR
 } from '../../shared/terminal-input'
 import { MAX_QUICK_COMMANDS } from '../../shared/terminal-quick-commands'
+import type { TerminalQuickCommand } from '../../shared/terminal-quick-command-types'
 import {
   AGENT_PROMPT_BRACKETED_PASTE_END,
   AGENT_PROMPT_BRACKETED_PASTE_START,
@@ -1468,6 +1469,39 @@ const store = {
   getProjects: () => []
 }
 
+function createQuickCommandRuntime(terminalQuickCommands: readonly TerminalQuickCommand[]): {
+  runtime: OrcaRuntimeService
+  updateSettings: ReturnType<typeof vi.fn>
+  events: unknown[]
+} {
+  let settings = { ...store.getSettings(), terminalQuickCommands, agentReferenceRevision: 7 }
+  const listeners = new Set<(updates: Record<string, unknown>) => void>()
+  const updateSettings = vi.fn((updates: Record<string, unknown>) => {
+    settings = { ...settings, ...updates }
+    for (const listener of listeners) {
+      listener(updates)
+    }
+  })
+  const catalogStore = {
+    ...store,
+    getSettings: () => settings,
+    updateSettings,
+    getAgentCatalogMigrationError: () => null,
+    previewSettingsUpdate: (patch: Record<string, unknown>) => ({ ...settings, ...patch }),
+    updateSettingsDurable: updateSettings,
+    onSettingsChanged: (listener: (updates: Record<string, unknown>) => void) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    }
+  }
+  const runtime = new OrcaRuntimeService(catalogStore as never, undefined, {
+    agentCatalogStore: catalogStore as never
+  })
+  const events: unknown[] = []
+  runtime.onClientEvent((event) => events.push(event))
+  return { runtime, updateSettings, events }
+}
+
 function createRuntimeWithSshLease(
   ptyId: string,
   tabId: string,
@@ -1804,15 +1838,7 @@ describe('OrcaRuntimeService', () => {
       appendEnter: true,
       scope: { type: 'global' as const }
     }
-    let settings = { ...store.getSettings(), terminalQuickCommands: [existing] }
-    const updateSettings = vi.fn((updates: Partial<typeof settings>) => {
-      settings = { ...settings, ...updates }
-    })
-    const runtime = new OrcaRuntimeService({
-      ...store,
-      getSettings: () => settings,
-      updateSettings
-    } as never)
+    const { runtime, updateSettings } = createQuickCommandRuntime([existing])
     const command = {
       id: 'status',
       label: 'Status',
@@ -1825,10 +1851,48 @@ describe('OrcaRuntimeService', () => {
 
     expect(runtime.updateClientTerminalQuickCommands({ type: 'upsert', command })).toEqual(commands)
     expect(updateSettings).toHaveBeenCalledWith(
-      { terminalQuickCommands: commands },
+      { terminalQuickCommands: commands, agentReferenceRevision: 8 },
       { notifyListeners: true }
     )
     expect(runtime.getClientSettings()).not.toHaveProperty('terminalQuickCommands')
+  })
+
+  it('bumps the reference revision and emits a change event for a paired quick-command write', () => {
+    const { runtime, events } = createQuickCommandRuntime([])
+
+    runtime.updateClientTerminalQuickCommands({
+      type: 'upsert',
+      command: {
+        id: 'status',
+        label: 'Status',
+        action: 'terminal-command',
+        command: 'git status',
+        appendEnter: true,
+        scope: { type: 'global' }
+      }
+    })
+
+    expect(runtime.getAgentReferenceRevision()).toBe(8)
+    expect(events).toContainEqual({ type: 'agentReferencesChanged', revision: 8 })
+  })
+
+  it('rejects a paired quick-command write naming an agent that is not live', () => {
+    const { runtime, updateSettings } = createQuickCommandRuntime([])
+
+    expect(() =>
+      runtime.updateClientTerminalQuickCommands({
+        type: 'upsert',
+        command: {
+          id: 'ask',
+          label: 'Ask',
+          action: 'agent-prompt',
+          agent: 'deleted-custom-agent' as never,
+          prompt: 'explain this',
+          scope: { type: 'global' }
+        }
+      })
+    ).toThrow('invalid_agent_reference')
+    expect(updateSettings).not.toHaveBeenCalled()
   })
 
   it('rejects a concurrent add after the quick command limit is reached', () => {
@@ -1840,12 +1904,7 @@ describe('OrcaRuntimeService', () => {
       appendEnter: true,
       scope: { type: 'global' as const }
     }))
-    const updateSettings = vi.fn()
-    const runtime = new OrcaRuntimeService({
-      ...store,
-      getSettings: () => ({ ...store.getSettings(), terminalQuickCommands }),
-      updateSettings
-    } as never)
+    const { runtime, updateSettings } = createQuickCommandRuntime(terminalQuickCommands)
 
     expect(() =>
       runtime.updateClientTerminalQuickCommands({

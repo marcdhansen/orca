@@ -36,7 +36,7 @@ function collectSourceFiles(dir: string, out: string[]): void {
       continue
     }
     const dot = entry.lastIndexOf('.')
-    if (dot >= 0 && SOURCE_EXT.has(entry.slice(dot))) {
+    if (dot !== -1 && SOURCE_EXT.has(entry.slice(dot))) {
       out.push(full)
     }
   }

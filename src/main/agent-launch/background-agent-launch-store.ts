@@ -40,6 +40,13 @@ export type BackgroundAgentLaunchStoreDurableState = {
   attempts: readonly BackgroundAgentLaunchAttempt[]
 }
 
+/** Retained SETTLED attempts (launched/failed/forgotten). Creation AND settlement
+ *  each rewrite the whole ledger, so an unbounded tail makes every background
+ *  launch pay for every attempt the host ever ran. `pending` attempts are never
+ *  evicted — they are in-flight or awaiting proof, and their reservation, private
+ *  snapshot, and recovery card all outlive the write that would drop them. */
+export const MAX_SETTLED_BACKGROUND_ATTEMPTS = 200
+
 export class BackgroundAgentLaunchStore {
   private readonly attempts = new Map<string, BackgroundAgentLaunchAttempt>()
   // Attempt ids retention-pruned since the last rebuild, so a deferred recovery
@@ -88,8 +95,27 @@ export class BackgroundAgentLaunchStore {
       forgottenAt: null
     }
     this.attempts.set(attempt.attemptId, attempt)
+    this.pruneSettledAttempts()
     this.persistDurable()
     return attempt
+  }
+
+  /** Evict the oldest settled attempts past the global bound. Oldest-updated
+   *  first, so an attempt that just settled (or a pending one at any age) is
+   *  never the candidate. Recorded like an explicit delete so a deferred
+   *  recovery merge cannot resurrect what retention already dropped. */
+  private pruneSettledAttempts(): void {
+    const settled = [...this.attempts.values()].filter((attempt) => attempt.state !== 'pending')
+    if (settled.length <= MAX_SETTLED_BACKGROUND_ATTEMPTS) {
+      return
+    }
+    const evicted = settled
+      .sort((a, b) => a.updatedAt - b.updatedAt)
+      .slice(0, settled.length - MAX_SETTLED_BACKGROUND_ATTEMPTS)
+    for (const attempt of evicted) {
+      this.deletedSinceRebuild.add(attempt.attemptId)
+      this.attempts.delete(attempt.attemptId)
+    }
   }
 
   get(attemptId: string): BackgroundAgentLaunchAttempt | null {
@@ -130,6 +156,7 @@ export class BackgroundAgentLaunchStore {
       updatedAt: this.now()
     }
     this.attempts.set(attemptId, next)
+    this.pruneSettledAttempts()
     this.persistDurable()
     return next
   }
@@ -210,6 +237,7 @@ export class BackgroundAgentLaunchStore {
       }
       this.attempts.set(attempt.attemptId, attempt)
     }
+    this.pruneSettledAttempts()
   }
 
   /** Rehydrate attempts at startup. Not routed through the sink. */
@@ -219,5 +247,8 @@ export class BackgroundAgentLaunchStore {
     for (const attempt of attempts) {
       this.attempts.set(attempt.attemptId, attempt)
     }
+    // A file written before the bound existed can exceed it; trim at rehydrate so
+    // the first mutation does not re-serialize an unbounded ledger.
+    this.pruneSettledAttempts()
   }
 }

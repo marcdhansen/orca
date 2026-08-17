@@ -10,19 +10,16 @@ import type {
   SshPtyReplayCallback
 } from './ssh-pty-provider-contract'
 import { SshPtyProviderOutputState } from './ssh-pty-provider-output-state'
-import { spawnFreshSshPty } from './ssh-agent-session-create-operation'
 import { mapSshPtyProcessList } from './ssh-agent-session-process-list'
 import {
   requestSshPtyAttach,
-  reattachSshPtySessionForSpawn,
   type PtySourceRecoveryRequest,
   type SshPtyAttachResult
 } from './ssh-pty-session-reattach'
-import { buildSshPtySpawnRequest } from './ssh-pty-spawn-request'
+import { dispatchSshPtySpawn, type SshPtySpawnContext } from './ssh-pty-spawn-dispatch'
 import { SshPtySpawnExitRaceTracker } from './ssh-pty-spawn-exit-race'
 import { SshAgentSessionCapabilities } from './ssh-agent-session-capabilities'
 import type { PtyProcessInspection } from './pty-process-inspection'
-import { writeToSshPty, writeToSshPtyWithSettlement } from './ssh-pty-write'
 
 // Why: sequential relay teardown calls share one absolute budget; convert to the mux-relative timeout only at dispatch.
 function relayTimeoutOptions(deadlineMs: number | undefined): { timeoutMs: number } | undefined {
@@ -38,9 +35,6 @@ export class SshPtyProvider implements IPtyProvider {
   private readonly agentSessionCapabilities: SshAgentSessionCapabilities
   private spawnExitRaces = new SshPtySpawnExitRaceTracker()
   private readonly outputState: SshPtyProviderOutputState
-
-  requestHostRpc: NonNullable<IPtyProvider['requestHostRpc']> = (method, params, options) =>
-    this.mux.request(method, params as Record<string, unknown>, options)
 
   constructor(
     connectionId: string,
@@ -77,63 +71,23 @@ export class SshPtyProvider implements IPtyProvider {
   private toAppPtyId = (id: string): string => toAppSshPtyId(this.connectionId, id)
 
   async spawn(opts: PtySpawnOptions): Promise<PtySpawnResult> {
-    if (opts.agentSessionEnsure && opts.sessionId) {
-      throw new Error('agent_session_claim_unavailable')
-    }
-    if (opts.agentSessionEnsure) {
-      const supportsClaims = await this.supportsAgentSessionClaims({ signal: opts.signal })
-      if (opts.signal?.aborted) {
-        throw new Error('client_disconnected')
-      }
-      if (!supportsClaims) {
-        throw new Error('agent_session_claim_unavailable')
-      }
-    }
-    if (opts.sessionId) {
-      return await reattachSshPtySessionForSpawn({
-        mux: this.mux,
-        connectionId: this.connectionId,
-        sessionId: opts.sessionId,
-        options: opts,
-        exitRaceTracker: this.spawnExitRaces,
-        installSourceActivation: (relayPtyId, activation) =>
-          this.outputState.installReceivingActivation(relayPtyId, activation),
-        rememberPtyIncarnation: (relayPtyId, incarnationId) =>
-          this.outputState.rememberPtyIncarnation(relayPtyId, incarnationId),
-        acceptLivePty: (relayPtyId) => this.livePtyIds.add(relayPtyId)
-      })
-    }
-
-    const supportsCreateOperation = opts.agentSessionCreateOperationId
-      ? await this.supportsAgentSessionCreateOperations({ signal: opts.signal })
-      : false
-    if (opts.signal?.aborted) {
-      throw new Error('client_disconnected')
-    }
-    if (opts.agentSessionCreateOperationId && !supportsCreateOperation) {
-      // Why: host routing owns legacy selection; a changed relay must not downgrade after dispatch.
-      throw new Error('execution_owner_unavailable')
-    }
-    return await spawnFreshSshPty({
-      mux: this.mux,
-      options: opts,
-      params: buildSshPtySpawnRequest({
-        options: opts,
-        remoteCliBridgeEnv: this.remoteCliBridgeEnv,
-        supportsCreateOperation
-      }),
-      exitRaceTracker: this.spawnExitRaces,
-      installSourceActivation: (id, activation) =>
-        this.outputState.installReceivingActivation(id, activation),
-      rememberPtyIncarnation: (id, incarnation) =>
-        this.outputState.rememberPtyIncarnation(id, incarnation),
-      acceptLivePty: (id) => this.livePtyIds.add(id),
-      toAppPtyId: this.toAppPtyId
-    })
+    return await dispatchSshPtySpawn(this.spawnContext(), opts)
   }
 
-  async deleteWorktreeHistory(worktreeId: string): Promise<void> {
-    await this.mux.request('pty.deleteWorktreeHistory', { worktreeId })
+  private spawnContext(): SshPtySpawnContext {
+    return {
+      mux: this.mux,
+      connectionId: this.connectionId,
+      exitRaceTracker: this.spawnExitRaces,
+      outputState: this.outputState,
+      acceptLivePty: (id) => this.livePtyIds.add(id),
+      toAppPtyId: this.toAppPtyId,
+      remoteCliBridgeEnv: this.remoteCliBridgeEnv,
+      supportsAgentSessionClaims: (options) => this.supportsAgentSessionClaims(options),
+      supportsAgentSessionCreateOperations: (options) =>
+        this.supportsAgentSessionCreateOperations(options),
+      supportsLaunchTokenEcho: (options) => this.supportsLaunchTokenEcho(options)
+    }
   }
 
   async supportsAgentSessionClaims(options: { signal?: AbortSignal } = {}): Promise<boolean> {
@@ -148,6 +102,14 @@ export class SshPtyProvider implements IPtyProvider {
     options: { signal?: AbortSignal } = {}
   ): Promise<boolean> {
     return await this.agentSessionCapabilities.supportsCreateOperations(options)
+  }
+
+  async supportsLaunchTokenEcho(options: { signal?: AbortSignal } = {}): Promise<boolean> {
+    return await this.agentSessionCapabilities.supportsLaunchTokenEcho(options)
+  }
+
+  providesLaunchTokenListings(): boolean {
+    return this.agentSessionCapabilities.providesLaunchTokenListings()
   }
 
   async attach(id: string): Promise<void> {
@@ -193,12 +155,8 @@ export class SshPtyProvider implements IPtyProvider {
     })
   }
 
-  write(id: string, data: string): boolean {
-    return writeToSshPty(this.mux, this.toRelayPtyId(id), data)
-  }
-
-  writeWithSettlement(id: string, data: string): Promise<boolean> {
-    return writeToSshPtyWithSettlement(this.mux, this.toRelayPtyId(id), data)
+  write(id: string, data: string): void {
+    this.mux.notify('pty.data', { id: this.toRelayPtyId(id), data })
   }
 
   resize(id: string, cols: number, rows: number): void {
@@ -292,7 +250,9 @@ export class SshPtyProvider implements IPtyProvider {
     return processes
   }
 
-  hasPty = (id: string): boolean => this.livePtyIds.has(id)
+  hasPty(id: string): boolean {
+    return this.livePtyIds.has(id)
+  }
 
   async getDefaultShell(): Promise<string> {
     const result = await this.mux.request('pty.getDefaultShell')

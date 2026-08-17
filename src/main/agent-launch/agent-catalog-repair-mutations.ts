@@ -2,7 +2,7 @@
 // revision-scoped, per-physical-record handles; duplicate-id groups resolve
 // atomically. Never persisted, synced, or logged.
 
-import { createHash } from 'node:crypto'
+import { createHash, createHmac, randomBytes } from 'node:crypto'
 import type { BuiltInTuiAgent, CustomTuiAgent, CustomTuiAgentId } from '../../shared/types'
 import type { CustomAgentDraft } from '../../shared/agent-catalog-snapshot'
 import {
@@ -23,18 +23,16 @@ import {
 } from './agent-catalog-tombstone-gc'
 import type { MutationContext } from './agent-catalog-mutations'
 
-/** Repair tokens are minted per physical corrupt record and stay stable while
+/** Repair tokens are derived per physical corrupt record and stay stable while
  *  that record (content and position) is unchanged, so editor focus/drafts do
  *  not remount on unrelated revisions. They are never persisted, synced, or
  *  logged, and resolve only with the exact current catalog revision. */
 export class AgentCatalogRepairTokenRegistry {
-  // Record keys churn with every content/position change of a corrupt row and
-  // the old keys are never queried again, so the registry is a small LRU:
-  // without eviction it grows by one entry per historical corrupt-row state
-  // for the life of the process.
-  private static readonly MAX_ENTRIES = 256
-
-  private readonly tokensByRecordKey = new Map<string, string>()
+  // Tokens are DERIVED from the record key under a per-process secret, never
+  // cached: a snapshot mints one per corrupt row, so any bounded cache evicted
+  // live rows once the catalog held more corrupt rows than the cap and every
+  // repair token went stale. Derivation is O(1) memory for any row count.
+  private readonly secret = randomBytes(32)
 
   private recordKey(row: CorruptCatalogRow): string {
     const contentHash = createHash('sha256')
@@ -44,27 +42,7 @@ export class AgentCatalogRepairTokenRegistry {
   }
 
   tokenFor(row: CorruptCatalogRow): string {
-    const key = this.recordKey(row)
-    const existing = this.tokensByRecordKey.get(key)
-    if (existing) {
-      // Re-insert so currently-live records stay at the recent end of the map.
-      this.tokensByRecordKey.delete(key)
-      this.tokensByRecordKey.set(key, existing)
-      return existing
-    }
-    const token = createHash('sha256')
-      .update(`${key}:${crypto.randomUUID()}`)
-      .digest('hex')
-      .slice(0, 32)
-    this.tokensByRecordKey.set(key, token)
-    while (this.tokensByRecordKey.size > AgentCatalogRepairTokenRegistry.MAX_ENTRIES) {
-      const oldest = this.tokensByRecordKey.keys().next().value
-      if (oldest === undefined) {
-        break
-      }
-      this.tokensByRecordKey.delete(oldest)
-    }
-    return token
+    return createHmac('sha256', this.secret).update(this.recordKey(row)).digest('hex').slice(0, 32)
   }
 
   resolve(token: string, rows: readonly CorruptCatalogRow[]): CorruptCatalogRow | null {

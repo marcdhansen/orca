@@ -544,11 +544,7 @@ import { parseAppSshPtyId } from '../../shared/ssh-pty-id'
 import { getPtyExecutionHost } from '../../shared/terminal-execution-host'
 import { isValidHostTerminalTabId, isValidTerminalTabId } from '../../shared/terminal-tab-id'
 import { isWslHookRelayConnectionId } from '../../shared/wsl-hook-relay-contract'
-import {
-  applyTerminalQuickCommandMutation,
-  MAX_QUICK_COMMANDS,
-  type TerminalQuickCommandMutation
-} from '../../shared/terminal-quick-commands'
+import type { TerminalQuickCommandMutation } from '../../shared/terminal-quick-commands'
 import type { PtyIncarnationId } from '../../shared/pty-incarnation'
 import {
   buildAgentDraftLaunchPlan,
@@ -4290,19 +4286,25 @@ export class OrcaRuntimeService {
   updateClientTerminalQuickCommands(
     mutation: TerminalQuickCommandMutation
   ): TerminalQuickCommand[] {
-    if (!this.store?.getSettings || !this.store.updateSettings) {
+    if (!this.store?.getSettings || !this.store.updateSettings || !this.agentCatalogStore) {
       throw new Error('runtime_unavailable')
     }
-    const current = this.getClientTerminalQuickCommands()
-    if (
-      mutation.type === 'upsert' &&
-      !current.some((command) => command.id === mutation.command.id) &&
-      current.length >= MAX_QUICK_COMMANDS
-    ) {
-      throw new Error('Quick command limit reached')
+    const service = getOrCreateAgentCatalogService(this.agentCatalogStore)
+    const result = service.mutateReferences({
+      expectedReferenceRevision: service.getReferenceRevision(),
+      mutation:
+        mutation.type === 'delete'
+          ? { kind: 'quick-command-delete', id: mutation.id }
+          : { kind: 'quick-command-save', command: mutation.command }
+    })
+    if (!result.ok) {
+      // Preserve the limit message paired clients already surface; every other rejection travels as its typed authority code.
+      throw new Error(
+        result.code === 'invalid_reference_field' && 'field' in result && result.field === 'count'
+          ? 'Quick command limit reached'
+          : result.code
+      )
     }
-    const next = applyTerminalQuickCommandMutation(current, mutation)
-    this.store.updateSettings({ terminalQuickCommands: next }, { notifyListeners: true })
     return this.getClientTerminalQuickCommands()
   }
 
@@ -35286,7 +35288,9 @@ export class OrcaRuntimeService {
     const selectedLivePtyIds = new Set<string>()
     // SSH relay connections that evidenced a live re-list in this pass, so the
     // reconcile below can speak authoritatively for their execution hosts.
-    const relistedConnectionIds = new Set<string>()
+    const relistedConnectionIds = new Set<string>(
+      typeof connectionId === 'string' ? [connectionId] : []
+    )
     const relistedTokenPtyIds = new Map<string, string>()
     for (const session of sessions) {
       // The owning inventory positively observed this PTY again; prior lost-contact doubt is stale.

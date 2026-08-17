@@ -7,6 +7,7 @@ export function buildSshPtySpawnRequest(args: {
   options: PtySpawnOptions
   remoteCliBridgeEnv?: RemoteCliBridgeEnv
   supportsCreateOperation: boolean
+  supportsLaunchTokenEcho?: boolean
 }): Record<string, unknown> {
   const { options } = args
   return {
@@ -43,8 +44,11 @@ export function buildSshPtySpawnRequest(args: {
           startupIngress: options.startupIngress
         }
       : {}),
-    // Why: relay persistence must receive admission identity in the spawn request.
-    ...(options.launchToken ? { launchToken: options.launchToken } : {}),
+    // Why: relay persistence must receive admission identity in the spawn request — but only
+    // from a relay that echoes it back on re-list, since a dropped token later reads as absence.
+    ...(options.launchToken && args.supportsLaunchTokenEcho
+      ? { launchToken: options.launchToken }
+      : {}),
     ...(options.agentSessionEnsure ? { agentSessionEnsure: options.agentSessionEnsure } : {}),
     ...(args.supportsCreateOperation
       ? { agentSessionCreateOperationId: options.agentSessionCreateOperationId }

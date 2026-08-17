@@ -23,6 +23,10 @@ export type AgentCatalogSchemaMigrationOutcome = {
   /** Present when the pinned backup failed; the profile stays pre-v1 and Settings
    *  must surface a local migration error. */
   backupError?: string
+  /** Present when the persisted stamp is newer than this build understands. The
+   *  profile is read-only: callers must block every catalog/reference write
+   *  rather than rewrite fields whose newer meaning they cannot represent. */
+  schemaNewerThanSupported?: { persistedVersion: number; supportedVersion: number }
 }
 
 function normalizeRevision(value: unknown, fallback: number): number {
@@ -51,6 +55,18 @@ export function migrateAgentCatalogSchema(args: {
   const currentVersion = stampCorrupted
     ? AGENT_CATALOG_SCHEMA_VERSION
     : normalizeRevision(rawVersion, 0)
+  // A newer stamp can only come from a newer build (or a synced profile). Even
+  // the revision normalization below would be a write, so refuse outright.
+  if (currentVersion > AGENT_CATALOG_SCHEMA_VERSION) {
+    return {
+      settingsPatch: {},
+      didMigrate: false,
+      schemaNewerThanSupported: {
+        persistedVersion: currentVersion,
+        supportedVersion: AGENT_CATALOG_SCHEMA_VERSION
+      }
+    }
+  }
   if (currentVersion >= AGENT_CATALOG_SCHEMA_VERSION) {
     // Revisions must remain monotonic non-negative integers even if hand-edited.
     const catalogRevision = normalizeRevision(settings?.agentCatalogRevision, 1)
