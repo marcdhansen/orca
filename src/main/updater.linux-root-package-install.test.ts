@@ -90,7 +90,9 @@ describe('updater', () => {
     // advance libuv, so the quit timer needs fake time while the read needs real event-loop turns.
     const settleQuitAndInstall = async (): Promise<void> => {
       await vi.advanceTimersByTimeAsync(100)
-      for (let turn = 0; turn < 40; turn += 1) {
+      // Full Node 26 shards can briefly starve the libuv poll phase while other workers transform
+      // tests; keep the operation alive long enough to avoid leaking it into the next test.
+      for (let turn = 0; turn < 200; turn += 1) {
         await new Promise((resolve) => realSetTimeout(resolve, 0))
       }
       await vi.advanceTimersByTimeAsync(0)
