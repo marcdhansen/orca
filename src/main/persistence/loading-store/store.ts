@@ -510,6 +510,11 @@ export type PtyBindingSourceExpectation = {
   incarnationId?: string
 }
 
+type AgentCatalogSchemaTooNew = {
+  persistedVersion: number
+  supportedVersion: number
+}
+
 export class Store {
   // Why readonly: the operations wrappers below capture this reference once and are memoized.
   private readonly state: PersistedState
@@ -541,6 +546,7 @@ export class Store {
   private readonly protectedSecrets = new ProtectedSecretPersistence()
   private loadNeedsSave = false
   private agentCatalogMigrationError: string | null = null
+  private agentCatalogSchemaTooNew: AgentCatalogSchemaTooNew | null = null
   private preV1RawContentsAwaitingBackup: string | null = null
   private settingsChangeListeners = new Set<
     (
@@ -834,7 +840,9 @@ export class Store {
           preV1RawContents: raw,
           createBackup: () => createPinnedPreV1Backup(dataFile, raw)
         })
-        if (agentCatalogMigration.didMigrate || agentCatalogMigration.backupError) {
+        if (agentCatalogMigration.schemaNewerThanSupported) {
+          this.agentCatalogSchemaTooNew = agentCatalogMigration.schemaNewerThanSupported
+        } else if (agentCatalogMigration.didMigrate || agentCatalogMigration.backupError) {
           this.loadNeedsSave = this.loadNeedsSave || agentCatalogMigration.didMigrate
           this.agentCatalogMigrationError = agentCatalogMigration.backupError ?? null
           if (agentCatalogMigration.backupError) {
@@ -2654,6 +2662,10 @@ export class Store {
     return this.agentCatalogMigrationError
   }
 
+  getAgentCatalogSchemaTooNew(): AgentCatalogSchemaTooNew | null {
+    return this.agentCatalogSchemaTooNew
+  }
+
   /** Absolute path of the live data file; recovery operations key off it. */
   getDataFilePath(): string {
     return this.dataFile
@@ -2683,6 +2695,15 @@ export class Store {
       preV1RawContents: raw,
       createBackup: () => createPinnedPreV1Backup(this.dataFile, raw ?? '')
     })
+    if (migration.schemaNewerThanSupported) {
+      this.agentCatalogSchemaTooNew = migration.schemaNewerThanSupported
+      this.agentCatalogMigrationError = null
+      this.preV1RawContentsAwaitingBackup = null
+      return {
+        ok: false,
+        error: 'Agent catalog schema is newer than this build supports; profile is read-only'
+      }
+    }
     if (migration.backupError) {
       this.agentCatalogMigrationError = migration.backupError
       return { ok: false, error: migration.backupError }
@@ -2748,6 +2769,49 @@ export class Store {
     options: { notifyListeners?: boolean; originWebContentsId?: number } = {}
   ): GlobalSettings {
     return updateSettingsOperation(this.getSettingsMutationOperations(), updates, options)
+  }
+
+  previewSettingsUpdate(updates: Partial<GlobalSettings>): GlobalSettings {
+    const previewState = {
+      ...this.state,
+      settings: { ...this.state.settings }
+    }
+    return updateSettingsOperation(
+      {
+        state: previewState,
+        removeRetainedBlob: () => {},
+        scheduleSave: () => {},
+        notifySettingsChanged: () => {}
+      },
+      updates
+    )
+  }
+
+  updateSettingsDurable(
+    updates: Partial<GlobalSettings>,
+    options: { notifyListeners?: boolean; originWebContentsId?: number } = {}
+  ): GlobalSettings {
+    if (this.writesFrozen) {
+      throw new Error('Cannot durably persist settings while writes are frozen')
+    }
+    if (this.agentCatalogSchemaTooNew) {
+      throw new Error(
+        'Agent catalog schema is newer than this build supports; profile is read-only'
+      )
+    }
+    const previousSettings = this.state.settings
+    const settings = this.updateSettings(updates, { notifyListeners: false })
+    try {
+      this.flushOrThrow()
+    } catch (error) {
+      this.state.settings = previousSettings
+      this.scheduleSave()
+      throw error
+    }
+    if (options.notifyListeners === true) {
+      this.notifySettingsChanged(updates, options.originWebContentsId)
+    }
+    return settings
   }
 
   // ── UI State ───────────────────────────────────────────────────────
