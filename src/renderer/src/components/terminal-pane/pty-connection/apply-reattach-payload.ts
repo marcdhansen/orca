@@ -12,6 +12,10 @@ import {
   resolvePositiveTerminalDimensions,
   shouldSkipAltFrameForWidthMismatch
 } from '../terminal-snapshot-replay-paint'
+import {
+  lastAlternateScreenTransition,
+  sshReconnectPaintsFromModel
+} from '../ssh-reattach-model-restore'
 
 import { isRemoteRuntimePtyId } from './paired-parked-terminal-restore'
 
@@ -109,10 +113,25 @@ export function createReattachPayloadHandlers(
       // model still holds, but an in-place reattach (network reconnect, wake,
       // reload) already has that replay in hand, so probing would only delay its
       // paint by the timeout. Memoized, so this is never a second probe.
-      const modelSnapshot = ctx.revealFollowsTerminalPark
+      const revealSnapshot = ctx.revealFollowsTerminalPark
         ? (ctx.prefetchedParkModelSnapshot ??
           (isRemoteRuntimePtyId(ctx.ptyId) ? null : await ctx.fetchSshMainModelReattachSnapshot()))
         : null
+      const replayTransition = lastAlternateScreenTransition(ctx.connectResult?.replay)
+      const reconnectSnapshot =
+        !revealSnapshot && ctx.reconnectMayUseModel && replayTransition !== 'exited'
+          ? await ctx.fetchSshMainModelReattachSnapshot()
+          : null
+      const paintsReconnectFromModel = sshReconnectPaintsFromModel({
+        snapshot: reconnectSnapshot,
+        hasReplay: Boolean(ctx.connectResult?.replay),
+        replayTransition,
+        altFrameWouldBeSkipped: shouldSkipAltFrameForWidthMismatch(
+          reconnectSnapshot?.cols,
+          readProposedTerminalCols(session.pane)
+        )
+      })
+      const modelSnapshot = revealSnapshot ?? (paintsReconnectFromModel ? reconnectSnapshot : null)
       if (!ctx.isCurrentReattachPayload()) {
         return
       }
@@ -141,6 +160,9 @@ export function createReattachPayloadHandlers(
           kittyKeyboardFlags: modelSnapshot.kittyKeyboardFlags,
           snapshotSeq: modelSnapshot.seq
         })
+        if (paintsReconnectFromModel && ctx.connectResult?.replay) {
+          session.kittyKeyboardModes.scanReplay(ctx.connectResult.replay)
+        }
         // Why shared: park+reveal of an alt-screen TUI needs the same
         // ?1049l/?1049h rebuild as applyMainBufferSnapshot (main strips
         // the ?1049h marker when splitting scrollbackAnsi) — inlined here

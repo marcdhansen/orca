@@ -1,4 +1,5 @@
 import { useAppStore } from '@/store'
+import { getDeleteStateForWorktreeHost } from '../../sidebar/worktree-delete-state-host-match'
 import { hasPtySerializer } from '../pty-buffer-serializer'
 import { writeTerminalOutput } from '@/lib/pane-manager/pane-terminal-output-scheduler'
 
@@ -22,7 +23,13 @@ export function bindStartFreshSpawn(session: ConnectPanePtySession): void {
     if (session.isLegacyWorkerAutomaticResumeBlocked()) {
       return Promise.resolve(null)
     }
-    if (useAppStore.getState().deleteStateByWorktreeId?.[session.deps.worktreeId]?.isDeleting) {
+    const currentState = useAppStore.getState()
+    if (
+      getDeleteStateForWorktreeHost(
+        { id: session.deps.worktreeId, hostId: session.executionHostId },
+        currentState.deleteStateByWorktreeId
+      )?.isDeleting
+    ) {
       // Why: the worktree is being deleted; its PTYs were just killed for the
       // filesystem teardown. A fresh shell must not spawn into a directory the
       // removal is about to delete (main fences it anyway), and the pane is

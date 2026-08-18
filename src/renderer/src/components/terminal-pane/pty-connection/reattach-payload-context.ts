@@ -9,6 +9,7 @@ export type ReattachPayloadContext = {
   attemptGeneration: number
   prefetchedParkModelSnapshot: PtyBufferSnapshot | null
   revealFollowsTerminalPark: boolean
+  reconnectMayUseModel: boolean
   fetchSshMainModelReattachSnapshot: () => Promise<PtyBufferSnapshot | null>
   hasStructuralReplay: boolean
   coldRestoreStartup: ColdRestoreAgentResumeStartup | null | undefined

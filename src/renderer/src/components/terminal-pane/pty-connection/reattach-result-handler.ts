@@ -28,6 +28,7 @@ type ReattachResultSession = ReattachPayloadSession &
     | 'deps'
     | 'directSshRetryAttempt'
     | 'disposed'
+    | 'followsDirectSshReconnect'
     | 'getSshMainModelSnapshotProbe'
     | 'handleReattachResult'
     | 'mountFollowsTerminalPark'
@@ -200,6 +201,7 @@ export function bindHandleReattachResult(sessionBag: ConnectPanePtySession): voi
     const revealFollowsTerminalPark =
       session.mountFollowsTerminalPark &&
       (connectResult?.isReattach === true || isRemoteRuntimePtyId(ptyId))
+    const reconnectMayUseModel = session.followsDirectSshReconnect && !revealFollowsTerminalPark
     session.mountFollowsTerminalPark = false
     // Why: ordinary parking destroys xterm. Rebuild from the authoritative
     // host snapshot before releasing queued live bytes; null falls back to
@@ -231,6 +233,7 @@ export function bindHandleReattachResult(sessionBag: ConnectPanePtySession): voi
       attemptGeneration,
       prefetchedParkModelSnapshot,
       revealFollowsTerminalPark,
+      reconnectMayUseModel,
       fetchSshMainModelReattachSnapshot,
       hasStructuralReplay,
       coldRestoreStartup,

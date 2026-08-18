@@ -151,6 +151,14 @@ export function installAgentIdleWorkingHandlers(session: ConnectPanePtySession):
           : undefined
     return attempt
   })()
+  // Only a pending retry marks the mount created by a reconnect; live bindings outlast it.
+  session.followsDirectSshReconnect = (() => {
+    const pending = session.state.directSshPaneRetryByTabId?.[session.deps.tabId]
+    return (
+      pending?.authority.targetId === session.connectionId &&
+      pending.tabGeneration === (session.tab?.generation ?? 0)
+    )
+  })()
   session.pendingSpawnKey = session.directSshRetryAttempt
     ? JSON.stringify([session.cacheKey, session.directSshRetryAttempt.attemptId])
     : session.cacheKey
