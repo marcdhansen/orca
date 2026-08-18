@@ -182,6 +182,94 @@ describe('resolveAgentLaunchSpawn', () => {
     })
   })
 
+  // P1-24: a "Don't save" launch sends the edited args with the locator; the
+  // stored recipe snapshot is stale and must not win.
+  it('prefers client unsaved args over the recipe stored agentArgs (P1-24)', async () => {
+    const resolve = vi.fn((_request: ResolveAgentLaunchRequest) => ({
+      ok: true as const,
+      launch: makeLaunch()
+    }))
+    const deps = makeDeps(resolve)
+    await resolveAgentLaunchSpawn(
+      deps,
+      baseInput({
+        request: {
+          selection: { kind: 'agent', agent: 'claude' },
+          prompt: 'x',
+          sourceRecord: { owner: 'source-control-recipe', id: 'fixChecks' },
+          unsavedAgentArgs: '--edited two'
+        },
+        recipeRepo: {
+          sourceControlAi: { actionOverrides: { fixChecks: { agentArgs: '--recipe one' } } }
+        }
+      })
+    )
+    expect(resolve.mock.calls[0]![0].perLaunchArgs).toBe('--edited two')
+  })
+
+  it('treats empty unsaved args as a real "no args" edit (P1-24)', async () => {
+    const resolve = vi.fn((_request: ResolveAgentLaunchRequest) => ({
+      ok: true as const,
+      launch: makeLaunch()
+    }))
+    const deps = makeDeps(resolve)
+    await resolveAgentLaunchSpawn(
+      deps,
+      baseInput({
+        request: {
+          selection: { kind: 'agent', agent: 'claude' },
+          prompt: 'x',
+          sourceRecord: { owner: 'source-control-recipe', id: 'fixChecks' },
+          unsavedAgentArgs: ''
+        },
+        recipeRepo: {
+          sourceControlAi: { actionOverrides: { fixChecks: { agentArgs: '--recipe one' } } }
+        }
+      })
+    )
+    expect(resolve.mock.calls[0]![0].perLaunchArgs).toBe('')
+  })
+
+  it('ignores unsaved args without a source-control-recipe owner (P1-24)', async () => {
+    const resolve = vi.fn((_request: ResolveAgentLaunchRequest) => ({
+      ok: true as const,
+      launch: makeLaunch()
+    }))
+    const deps = makeDeps(resolve)
+    await resolveAgentLaunchSpawn(
+      deps,
+      baseInput({
+        request: {
+          selection: { kind: 'agent', agent: 'claude' },
+          prompt: 'x',
+          unsavedAgentArgs: '--sneaky'
+        }
+      })
+    )
+    expect('perLaunchArgs' in resolve.mock.calls[0]![0]).toBe(false)
+  })
+
+  it('still rejects an unknown recipe id even with unsaved args (P1-24)', async () => {
+    const resolve = vi.fn((_request: ResolveAgentLaunchRequest) => ({
+      ok: true as const,
+      launch: makeLaunch()
+    }))
+    const deps = makeDeps(resolve)
+    const result = await resolveAgentLaunchSpawn(
+      deps,
+      baseInput({
+        request: {
+          selection: { kind: 'agent', agent: 'claude' },
+          prompt: 'x',
+          sourceRecord: { owner: 'source-control-recipe', id: 'not-a-real-action' },
+          unsavedAgentArgs: '--edited'
+        }
+      })
+    )
+    expect(result).toEqual({ ok: false, requestError: { code: 'untrusted_reference' } })
+    expect(resolve).not.toHaveBeenCalled()
+  })
+
   it('rejects an unknown recipe action id with untrusted_reference and never resolves (U7)', async () => {
     const resolve = vi.fn((_request: ResolveAgentLaunchRequest) => ({
       ok: true as const,

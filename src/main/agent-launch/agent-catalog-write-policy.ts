@@ -3,6 +3,7 @@
 // that blocks every v1 write while the pinned pre-v1 backup is failing.
 
 import type { AgentCatalogMutationRequest } from '../../shared/agent-catalog-snapshot'
+import type { AgentCatalogSchemaTooNew } from '../../shared/data-recovery'
 
 /** Mutations that reduce risk/size and stay allowed while a payload budget is
  *  already exceeded; they must never add arbitrary user text or a reference. */
@@ -43,4 +44,29 @@ export function agentCatalogMigrationBlockedError(store: {
     return null
   }
   return { ok: false, code: 'agent_catalog_migration_blocked', migrationError }
+}
+
+/** Returned while the persisted catalog schema is newer than this build: authoring
+ *  would clobber fields this build cannot represent, and nothing here is retryable
+ *  — only a newer Orca clears it. */
+export type AgentCatalogSchemaTooNewError = {
+  ok: false
+  code: 'agent_catalog_schema_too_new'
+  persistedVersion: number
+  supportedVersion: number
+}
+
+export function agentCatalogSchemaTooNewError(store: {
+  getAgentCatalogSchemaTooNew(): AgentCatalogSchemaTooNew | null
+}): AgentCatalogSchemaTooNewError | null {
+  const schemaTooNew = store.getAgentCatalogSchemaTooNew()
+  if (schemaTooNew === null) {
+    return null
+  }
+  return {
+    ok: false,
+    code: 'agent_catalog_schema_too_new',
+    persistedVersion: schemaTooNew.persistedVersion,
+    supportedVersion: schemaTooNew.supportedVersion
+  }
 }

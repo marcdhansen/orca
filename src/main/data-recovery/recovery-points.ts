@@ -3,7 +3,10 @@
 // filesystem path or raw backup contents; restore/retry are main-owned.
 
 import { existsSync, readFileSync, renameSync, statSync } from 'node:fs'
-import { pinnedPreV1BackupPath } from '../agent-launch/agent-catalog-pre-v1-backup'
+import {
+  classifyPinnedPreV1Backup,
+  pinnedPreV1BackupPath
+} from '../agent-launch/agent-catalog-pre-v1-backup'
 import { durableWriteTempPath, writeFileDurableSync } from '../durable-file-write'
 import type { RecoveryPointDto, RecoveryPointId } from '../../shared/data-recovery'
 
@@ -38,13 +41,15 @@ export function listRecoveryPoints(dataFile: string): RecoveryPointDto[] {
       createdAtMs = stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.mtimeMs
       sizeBytes = stat.size
     } catch {
-      // Metadata is best-effort; the point is still restorable.
+      // Metadata is best-effort; readability is decided below, not here.
     }
     points.push({
       id: 'agent-catalog-pre-v1',
       compatibility: 'previous-binary',
       createdAtMs,
-      sizeBytes
+      sizeBytes,
+      // Existence alone would advertise a rollback nobody can actually read.
+      restorable: classifyPinnedPreV1Backup(pinned).state === 'usable'
     })
   }
   return points

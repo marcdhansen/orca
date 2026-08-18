@@ -4,17 +4,21 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TerminalQuickCommand } from '../../../../shared/terminal-quick-command-types'
+import { beforeEach } from 'vitest'
 import { TerminalQuickCommandDialog } from './TerminalQuickCommandDialog'
+
+const useLocalAgentCatalogMock = vi.fn((_options?: { enabled?: boolean }) => ({
+  snapshot: null,
+  loading: false,
+  unavailable: false,
+  refetch: vi.fn(),
+  applySnapshot: vi.fn()
+}))
 
 // The dialog reads the local agent-catalog snapshot (custom agents) and disabled
 // agents; a null snapshot keeps these tests on the built-in picker behavior.
 vi.mock('@/hooks/useLocalAgentCatalog', () => ({
-  useLocalAgentCatalog: () => ({
-    snapshot: null,
-    loading: false,
-    refetch: vi.fn(),
-    applySnapshot: vi.fn()
-  })
+  useLocalAgentCatalog: (options?: { enabled?: boolean }) => useLocalAgentCatalogMock(options)
 }))
 
 vi.mock('@/store', () => ({
@@ -26,7 +30,7 @@ const mountedRoots: Root[] = []
 
 async function renderDialog(
   command: TerminalQuickCommand,
-  props: { defaultAdvancedOpen?: boolean } = {}
+  props: { defaultAdvancedOpen?: boolean; open?: boolean } = {}
 ): Promise<void> {
   const container = document.createElement('div')
   document.body.appendChild(container)
@@ -36,7 +40,7 @@ async function renderDialog(
   await act(async () => {
     root.render(
       <TerminalQuickCommandDialog
-        open={true}
+        open={props.open ?? true}
         mode="add"
         command={command}
         repos={[]}
@@ -142,5 +146,45 @@ describe('TerminalQuickCommandDialog animation structure', () => {
     const advancedToggle = document.body.querySelector('[aria-expanded="true"]')
     expect(advancedToggle?.textContent).toContain('Advanced')
     expect(document.body.textContent).not.toMatch(/Advanced\s*·\s*Global/)
+  })
+})
+
+describe('TerminalQuickCommandDialog local catalog subscription', () => {
+  beforeEach(() => {
+    useLocalAgentCatalogMock.mockClear()
+  })
+
+  afterEach(async () => {
+    await act(async () => {
+      for (const root of mountedRoots.splice(0)) {
+        root.unmount()
+      }
+    })
+    document.body.innerHTML = ''
+  })
+
+  const agentCommand: TerminalQuickCommand = {
+    id: 'qc-agent',
+    label: 'Ask Claude',
+    action: 'agent-prompt',
+    agent: 'claude',
+    prompt: 'hello',
+    scope: { type: 'global' }
+  }
+
+  // This dialog is mounted once per tab bar and stays mounted while closed.
+  it('opts out of the catalog while closed', async () => {
+    await renderDialog(agentCommand, false)
+
+    expect(useLocalAgentCatalogMock).toHaveBeenCalled()
+    for (const call of useLocalAgentCatalogMock.mock.calls) {
+      expect(call[0]).toEqual({ enabled: false })
+    }
+  })
+
+  it('opts in once open', async () => {
+    await renderDialog(agentCommand, true)
+
+    expect(useLocalAgentCatalogMock).toHaveBeenCalledWith({ enabled: true })
   })
 })

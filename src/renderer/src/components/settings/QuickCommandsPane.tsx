@@ -11,6 +11,10 @@ import { useAppStore } from '../../store'
 import { Button } from '../ui/button'
 import { useConfirmationDialog } from '@/components/confirmation-dialog-context'
 import { deleteTerminalQuickCommand, saveTerminalQuickCommand } from '@/lib/agent-catalog-authoring'
+import {
+  AgentAuthoringWriteFailureNotice,
+  asAgentAuthoringWriteFailure
+} from './agent-authoring-write-failure'
 import { getSettingOwnershipSummary } from './setting-ownership'
 import { translate } from '@/i18n/i18n'
 import { QuickCommandsList } from './QuickCommandsList'
@@ -101,6 +105,12 @@ export function QuickCommandsPane({
   const [scopeSelection, setScopeSelection] = useState<ReadonlySet<string> | null>(null)
   const [scopePopoverOpen, setScopePopoverOpen] = useState(false)
   const [query, setQuery] = useState('')
+  // Why: the dialog closes on save, so a durable-write rejection would otherwise
+  // read as saved until the edit vanishes on the next launch.
+  const [writeFailed, setWriteFailed] = useState(false)
+  const surfaceMutationOutcome = (result: { ok: boolean }): void => {
+    setWriteFailed(asAgentAuthoringWriteFailure(result) !== null)
+  }
 
   const availableHostId = getAvailableQuickCommandHostId(selectedHostId, hostOptions)
   const editorHostIsCurrent =
@@ -226,7 +236,7 @@ export function QuickCommandsPane({
       void useAppStore.getState().upsertTerminalQuickCommand(editor.hostId, next)
       return
     }
-    void saveTerminalQuickCommand(next)
+    void saveTerminalQuickCommand(next).then(surfaceMutationOutcome)
   }
 
   const removeCommand = async (command: TerminalQuickCommand): Promise<void> => {
@@ -250,7 +260,7 @@ export function QuickCommandsPane({
       void useAppStore.getState().deleteTerminalQuickCommand(selectedHostId, command.id)
       return
     }
-    void deleteTerminalQuickCommand(command.id)
+    void deleteTerminalQuickCommand(command.id).then(surfaceMutationOutcome)
   }
 
   const openAddDialog = (): void =>
@@ -263,6 +273,7 @@ export function QuickCommandsPane({
 
   return (
     <div className="space-y-4">
+      {writeFailed ? <AgentAuthoringWriteFailureNotice /> : null}
       {shouldShowTerminalQuickCommandHostOwnership(hostOptions) ? (
         <p className="text-xs text-muted-foreground">{ownership.description}</p>
       ) : null}

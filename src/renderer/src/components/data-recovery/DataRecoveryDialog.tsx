@@ -18,9 +18,7 @@ export type DataRecoveryDialogProps = {
 
 /** `restorable` is optional so a host that predates the readability probe still
  *  lists its points; only an explicit `false` withdraws the restore affordance. */
-type ListedRecoveryPoint = RecoveryPointDto & { restorable?: boolean }
-
-function isRestorable(point: ListedRecoveryPoint): boolean {
+function isRestorable(point: RecoveryPointDto): boolean {
   return point.restorable !== false
 }
 
@@ -29,7 +27,7 @@ function pointTitle(point: RecoveryPointDto): string {
     case 'agent-catalog-pre-v1':
       return translate(
         'auto.components.dataRecovery.pointAgentCatalogPreV1Title',
-        'Before the custom-agents update (agent catalog v1)'
+        'Before custom agents'
       )
   }
 }
@@ -39,7 +37,7 @@ function pointLossSummary(point: RecoveryPointDto): string {
     case 'agent-catalog-pre-v1':
       return translate(
         'auto.components.dataRecovery.pointAgentCatalogPreV1Loss',
-        'Restoring discards all settings and workspace metadata saved after this point, including any custom agents.'
+        'This discards settings and custom agents saved after this update.'
       )
   }
 }
@@ -48,8 +46,8 @@ function pointLossSummary(point: RecoveryPointDto): string {
  *  points by metadata only; the pinned pre-v1 point restores via Prepare
  *  downgrade — Orca restores atomically and quits without relaunching. */
 export function DataRecoveryDialog({ open, onOpenChange }: DataRecoveryDialogProps) {
-  const [points, setPoints] = useState<ListedRecoveryPoint[] | null>(null)
-  const [confirming, setConfirming] = useState<ListedRecoveryPoint | null>(null)
+  const [points, setPoints] = useState<RecoveryPointDto[] | null>(null)
+  const [confirming, setConfirming] = useState<RecoveryPointDto | null>(null)
   const [restoring, setRestoring] = useState(false)
   const [restored, setRestored] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -133,7 +131,7 @@ export function DataRecoveryDialog({ open, onOpenChange }: DataRecoveryDialogPro
           <DialogDescription>
             {translate(
               'auto.components.dataRecovery.description',
-              'Restore this profile from a recovery point created before a data migration. Restoring never deletes the recovery point.'
+              'Restore the settings Orca saved before this update. The saved copy is kept.'
             )}
           </DialogDescription>
         </DialogHeader>
@@ -218,7 +216,7 @@ export function DataRecoveryDialog({ open, onOpenChange }: DataRecoveryDialogPro
                   >
                     {translate(
                       'auto.components.dataRecovery.prepareDowngrade',
-                      'Prepare downgrade…'
+                      'Restore these settings…'
                     )}
                   </Button>
                 )}

@@ -22,6 +22,14 @@ import {
   AgentCatalogMigrationBlockedNotice,
   asAgentCatalogMigrationBlocked
 } from './agent-catalog-migration-blocked'
+import {
+  AgentAuthoringWriteFailureNotice,
+  asAgentAuthoringWriteFailure
+} from './agent-authoring-write-failure'
+import {
+  AgentCatalogSchemaTooNewNotice,
+  asAgentCatalogSchemaTooNew
+} from './agent-catalog-schema-too-new'
 import { DataRecoverySettingsRow } from '../data-recovery/DataRecoverySettingsRow'
 import { CustomAgentEditorDialog } from './CustomAgentEditorDialog'
 import { BuiltInLaunchSettingsDialog } from './BuiltInLaunchSettingsDialog'
@@ -43,6 +51,7 @@ import type {
   AgentReferenceSummary,
   BaseDisableImpact
 } from '../../../../shared/agent-reference-snapshot'
+import type { AgentCatalogSchemaTooNew } from '../../../../shared/data-recovery'
 import type { CustomAgentEditorMode } from './custom-agent-editor-state'
 import type { DefaultAgentSelection } from './AgentDefaultCombobox'
 
@@ -93,13 +102,34 @@ export function AgentCatalogSection({
       typeof snapshot.migrationBlockedError === 'string' ? snapshot.migrationBlockedError : null
     )
   }, [snapshot])
-  const surfaceMigrationBlock = (result: { ok: boolean }): void => {
+  // Why: toggles and the default picker have no dialog to report into, so a
+  // durable-write rejection would otherwise look like a silent no-op that saved.
+  const [writeFailed, setWriteFailed] = useState(false)
+  // Why: a newer build's schema stamp makes authoring read-only with nothing to
+  // retry; the snapshot arms it at load, and a rejected mutation arms it too when
+  // the profile went read-only after this snapshot was taken.
+  const [schemaTooNew, setSchemaTooNew] = useState<AgentCatalogSchemaTooNew | null>(null)
+  useEffect(() => {
+    if (!snapshot) {
+      return
+    }
+    setSchemaTooNew(snapshot.schemaTooNew ?? null)
+  }, [snapshot])
+  const surfaceMutationOutcome = (result: { ok: boolean }): void => {
     const blocked = asAgentCatalogMigrationBlocked(result)
     if (blocked) {
       setMigrationBlockedError(blocked.migrationError)
     } else if (result.ok) {
       setMigrationBlockedError(null)
     }
+    const tooNew = asAgentCatalogSchemaTooNew(result)
+    if (tooNew) {
+      setSchemaTooNew({
+        persistedVersion: tooNew.persistedVersion,
+        supportedVersion: tooNew.supportedVersion
+      })
+    }
+    setWriteFailed(asAgentAuthoringWriteFailure(result) !== null)
   }
 
   const [editorOpen, setEditorOpen] = useState(false)
@@ -181,7 +211,7 @@ export function AgentCatalogSection({
     if (readOnly) {
       return
     }
-    void setDefaultTuiAgent(selection).then(surfaceMigrationBlock)
+    void setDefaultTuiAgent(selection).then(surfaceMutationOutcome)
   }
   const [disableOpen, setDisableOpen] = useState(false)
   const [disableTarget, setDisableTarget] = useState<{
@@ -201,7 +231,7 @@ export function AgentCatalogSection({
       .referenceSummary({ id })
       .catch((): AgentReferenceSummary[] => [{ owner: 'default', count: -1 }])
     if (!disableNeedsConfirmation(summary)) {
-      void setTuiAgentEnabled(id, false).then(surfaceMigrationBlock)
+      void setTuiAgentEnabled(id, false).then(surfaceMutationOutcome)
       return
     }
     const ready = snapshot?.customAgents.find(
@@ -235,7 +265,7 @@ export function AgentCatalogSection({
       }))
     const enabledDerivatives = snapshot ? countEnabledDerivatives(snapshot, base) : 0
     if (!baseDisableNeedsConfirmation({ enabledDerivatives, impact })) {
-      void setTuiAgentEnabled(base, false).then(surfaceMigrationBlock)
+      void setTuiAgentEnabled(base, false).then(surfaceMutationOutcome)
       return
     }
     setBaseDisableTarget({
@@ -260,7 +290,7 @@ export function AgentCatalogSection({
       }
       return
     }
-    void setTuiAgentEnabled(agent, enabled).then(surfaceMigrationBlock)
+    void setTuiAgentEnabled(agent, enabled).then(surfaceMutationOutcome)
   }
   const handleRefresh = (): void => {
     if (readOnly) {
@@ -295,6 +325,8 @@ export function AgentCatalogSection({
       {migrationBlockedError !== null ? (
         <AgentCatalogMigrationBlockedNotice migrationError={migrationBlockedError} />
       ) : null}
+      {schemaTooNew ? <AgentCatalogSchemaTooNewNotice state={schemaTooNew} /> : null}
+      {writeFailed ? <AgentAuthoringWriteFailureNotice /> : null}
       <AgentCatalogSectionView
         snapshot={snapshot}
         detectedIds={detectedSet}

@@ -7,6 +7,7 @@ import type { AgentLaunchSnapshot } from '../../shared/agent-launch-host-contrac
 import {
   AgentLaunchOperationStore,
   MAX_SETTLED_OPERATIONS_PER_SCOPE,
+  MAX_SETTLED_OPERATION_SCOPES,
   agentLaunchIdempotencyKey,
   canonicalPayloadDigest,
   mintAgentLaunchOperationId,
@@ -223,5 +224,59 @@ describe('settled ledger', () => {
     expect(bucket).toHaveLength(MAX_SETTLED_OPERATIONS_PER_SCOPE)
     expect(bucket.at(0)?.operationId).toBe('op-3')
     expect(bucket.at(-1)?.operationId).toBe(`op-${MAX_SETTLED_OPERATIONS_PER_SCOPE + 2}`)
+  })
+})
+
+describe('settled scope bound', () => {
+  it('evicts the least-recently-settled scopes past the global bound', () => {
+    const store = new AgentLaunchOperationStore()
+    const overflow = 5
+    for (let index = 0; index < MAX_SETTLED_OPERATION_SCOPES + overflow; index += 1) {
+      store.recordSettled(
+        settled({ scope: `wt-${index}`, operationId: `op-${index}`, idempotencyKey: `k-${index}` })
+      )
+    }
+    for (let index = 0; index < overflow; index += 1) {
+      expect(store.settledForScope(`wt-${index}`)).toHaveLength(0)
+    }
+    expect(store.settledForScope(`wt-${overflow}`)).toHaveLength(1)
+    expect(store.settledForScope(`wt-${MAX_SETTLED_OPERATION_SCOPES + overflow - 1}`)).toHaveLength(
+      1
+    )
+    expect(store.durableState().settled).toHaveLength(MAX_SETTLED_OPERATION_SCOPES)
+  })
+
+  it('re-settling an old scope keeps it alive as newest', () => {
+    const store = new AgentLaunchOperationStore()
+    store.recordSettled(
+      settled({ scope: 'wt-old', operationId: 'op-old', idempotencyKey: 'k-old' })
+    )
+    for (let index = 0; index < MAX_SETTLED_OPERATION_SCOPES; index += 1) {
+      store.recordSettled(
+        settled({ scope: `wt-${index}`, operationId: `op-${index}`, idempotencyKey: `k-${index}` })
+      )
+      // Touching wt-old on every append keeps it out of the eviction window.
+      store.recordSettled(
+        settled({ scope: 'wt-old', operationId: `op-old-${index}`, idempotencyKey: `k-o-${index}` })
+      )
+    }
+    expect(store.settledForScope('wt-old').length).toBeGreaterThan(0)
+  })
+
+  it('never evicts a scope an in-flight launch still needs', () => {
+    const store = new AgentLaunchOperationStore()
+    // The pending launch lands FIRST, so its scope is the oldest by insertion —
+    // exactly the entry a naive oldest-first eviction would drop.
+    store.recordSettled(
+      settled({ scope: 'wt-live', operationId: 'op-live', idempotencyKey: 'k-live' })
+    )
+    store.beginPending(pending({ scope: 'wt-live', launchToken: 'token-live' }))
+    for (let index = 0; index < MAX_SETTLED_OPERATION_SCOPES + 10; index += 1) {
+      store.recordSettled(
+        settled({ scope: `wt-${index}`, operationId: `op-${index}`, idempotencyKey: `k-${index}` })
+      )
+    }
+    expect(store.settledForScope('wt-live')).toHaveLength(1)
+    expect(store.findSettledByIdempotencyKey('wt-live', 'k-live')?.operationId).toBe('op-live')
   })
 })

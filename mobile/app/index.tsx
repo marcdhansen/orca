@@ -176,7 +176,8 @@ function fetchTaskProviders(
   disposed: () => boolean
 ) {
   Promise.all([
-    sendSingleFlightRequest(client, hostId, 'settings.get'),
+    // Task providers read settings only; agentCatalogSync owns the 512 KiB catalog.
+    sendSingleFlightRequest(client, hostId, 'settings.get', { includeAgentCatalog: false }),
     sendSingleFlightRequest(client, hostId, 'preflight.check'),
     sendSingleFlightRequest(client, hostId, 'linear.status')
   ])

@@ -386,4 +386,8 @@ describe('resolveMutationErrorFocus', () => {
   it('does not blame a field on a revision conflict (the dialog reloads and keeps the draft)', () => {
     expect(resolveMutationErrorFocus(failure({ code: 'catalog_revision_conflict' }))).toBeNull()
   })
+
+  it('does not blame a field when the profile is read-only for a newer schema', () => {
+    expect(resolveMutationErrorFocus(failure({ code: 'agent_catalog_schema_too_new' }))).toBeNull()
+  })
 })

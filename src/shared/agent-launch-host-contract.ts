@@ -155,7 +155,8 @@ export type ResolveAgentLaunchRequest = {
   /** Host-produced per-launch args (U7): a source-control recipe's stored
    *  `agentArgs`, resolved from settings by the host before resolution. Validated
    *  through the SAME v1 grammar/caps/secrets path as definition args and appended
-   *  as a distinct band AFTER the definition argv and BEFORE the prompt argv. The
-   *  client never sends this — it only threads the recipe id via `sourceRecord`. */
+   *  as a distinct band AFTER the definition argv and BEFORE the prompt argv. Still
+   *  host-produced: the client only threads the recipe id via `sourceRecord`, plus the
+   *  optional `unsavedAgentArgs` the host substitutes for the stored recipe args. */
   perLaunchArgs?: string
 }

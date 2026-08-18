@@ -113,7 +113,8 @@ export function TerminalQuickCommandDialog({
   // picker needs its own read to offer them alongside built-ins.
   // Selected raw (no `?? []`): a fresh fallback array would re-render on every store write.
   const disabledTuiAgents = useAppStore((s) => s.settings?.disabledTuiAgents)
-  const { snapshot: localAgentCatalog } = useLocalAgentCatalog()
+  // Why: this dialog stays mounted per tab bar while closed; gate the catalog read on `open`.
+  const { snapshot: localAgentCatalog } = useLocalAgentCatalog({ enabled: open })
   const agentOptions = useMemo(
     () =>
       buildTerminalQuickCommandAgentOptions(selectedAgent, disabledTuiAgents, localAgentCatalog),

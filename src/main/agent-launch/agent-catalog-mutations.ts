@@ -13,10 +13,8 @@ import type {
 } from '../../shared/types'
 import type { AgentCatalogMutationRequest } from '../../shared/agent-catalog-snapshot'
 import { normalizeAgentCatalog, type AgentCatalog } from '../../shared/custom-tui-agents'
-import type {
-  AgentCatalogMutationApplication,
-  TombstoneReferenceCount
-} from './agent-catalog-draft-validation'
+import type { AgentCatalogMutationApplication } from './agent-catalog-draft-validation'
+import type { TombstoneReferenceCounter } from './agent-catalog-tombstone-gc'
 import {
   applyCreate,
   applyDelete,
@@ -41,8 +39,9 @@ export type ApplyAgentCatalogMutationArgs = {
   currentRevision: number
   repairTokens: AgentCatalogRepairTokenRegistry
   /** Authoritative reference count per tombstone id; 'unknown' means an owner
-   *  store could not be checked and the tombstone must be retained. */
-  countTombstoneReferences: (id: CustomTuiAgentId) => TombstoneReferenceCount
+   *  store could not be checked and the tombstone must be retained. Accepts a
+   *  batch counter so a prune indexes the owners once instead of per tombstone. */
+  countTombstoneReferences: TombstoneReferenceCounter
 }
 
 export type MutationContext = {

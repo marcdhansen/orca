@@ -17,7 +17,6 @@ import {
   AgentCatalogRepairTokenRegistry,
   applyAgentCatalogMutation
 } from './agent-catalog-mutations'
-import { buildUnreferencedTombstonePrunePatch } from './agent-catalog-tombstone-gc'
 import {
   buildAgentCatalogSnapshot,
   buildLocalAgentCatalogSnapshot,
@@ -29,15 +28,16 @@ import {
   AgentTombstoneReferenceIndex,
   type AgentReferenceSummary
 } from './agent-tombstone-reference-index'
-import { registerBuiltInOwnerScanners } from './agent-catalog-owner-scanners'
 import {
-  buildAgentReferenceSnapshot,
-  measureAgentReferenceProjection
-} from './agent-reference-snapshot-projection'
+  createBatchTombstoneReferenceCounter,
+  registerBuiltInOwnerScanners
+} from './agent-catalog-owner-scanners'
 import {
   agentCatalogMigrationBlockedError,
+  agentCatalogSchemaTooNewError,
   isSecurityReducingMutation,
-  type AgentCatalogMigrationBlockedError
+  type AgentCatalogMigrationBlockedError,
+  type AgentCatalogSchemaTooNewError
 } from './agent-catalog-write-policy'
 import { computeBaseDisableImpact } from './agent-catalog-base-disable-impact'
 import {
@@ -45,7 +45,7 @@ import {
   type AgentCatalogWriteFailedError,
   type AgentReferenceWriteFailedError
 } from './agent-catalog-durable-write'
-import { applyAgentReferenceMutation } from './agent-reference-mutations'
+import { AgentReferenceAuthoringService } from './agent-reference-authoring-service'
 import type {
   AgentReferenceMutationRequest,
   AgentReferenceMutationResult,
@@ -72,10 +72,25 @@ export function getOrCreateAgentCatalogService(store: Store): AgentCatalogServic
 export class AgentCatalogService {
   private readonly repairTokens = new AgentCatalogRepairTokenRegistry()
   private readonly referenceIndex = new AgentTombstoneReferenceIndex()
+  // Reads the index live, so scanners registered after construction still count.
+  private readonly tombstoneReferenceCounter = createBatchTombstoneReferenceCounter(
+    this.referenceIndex
+  )
   private readonly changeListeners = new Set<(revision: number) => void>()
+  private readonly references: AgentReferenceAuthoringService
 
   constructor(private readonly store: Store) {
     registerBuiltInOwnerScanners(this.referenceIndex, this.store)
+    this.references = new AgentReferenceAuthoringService({
+      store,
+      countTombstoneReferences: this.tombstoneReferenceCounter,
+      catalogRevision: () => this.getRevision(),
+      publishCatalogRevision: (revision) => {
+        for (const listener of this.changeListeners) {
+          listener(revision)
+        }
+      }
+    })
   }
 
   /** Later units (worktree pending launches, background attempts, orchestration,
@@ -96,9 +111,20 @@ export class AgentCatalogService {
   }
 
   getLocalSnapshot(): LocalAgentCatalogSnapshot {
-    const snapshot = buildLocalAgentCatalogSnapshot(this.store.getSettings(), this.repairTokens)
+    const base = buildLocalAgentCatalogSnapshot(this.store.getSettings(), this.repairTokens)
     const blocked = agentCatalogMigrationBlockedError(this.store)
-    return blocked ? { ...snapshot, migrationBlockedError: blocked.migrationError } : snapshot
+    const snapshot = blocked ? { ...base, migrationBlockedError: blocked.migrationError } : base
+    const tooNew = agentCatalogSchemaTooNewError(this.store)
+    if (!tooNew) {
+      return snapshot
+    }
+    return {
+      ...snapshot,
+      schemaTooNew: {
+        persistedVersion: tooNew.persistedVersion,
+        supportedVersion: tooNew.supportedVersion
+      }
+    }
   }
 
   getRemoteSnapshot(): ReturnType<typeof buildAgentCatalogSnapshot> {
@@ -167,37 +193,15 @@ export class AgentCatalogService {
   }
 
   getReferenceRevision(): number {
-    return this.store.getSettings().agentReferenceRevision ?? 1
+    return this.references.getRevision()
   }
 
-  /** Remote (runtime RPC) reference snapshot; typed projection error when over
-   *  the 512 KiB frame budget. */
   getRemoteReferenceSnapshot(): AgentReferenceSnapshot | AgentReferenceProjectionError {
-    const settings = this.store.getSettings()
-    const snapshot = buildAgentReferenceSnapshot(settings)
-    const { tooLarge } = measureAgentReferenceProjection(settings)
-    if (tooLarge) {
-      return {
-        version: 1,
-        revision: snapshot.revision,
-        code: 'agent_reference_payload_too_large',
-        maxBytes: 524_288
-      }
-    }
-    return snapshot
+    return this.references.getRemoteSnapshot()
   }
 
-  /** Uncapped authoring/repair view over local preload IPC only. */
   getLocalReferenceSnapshot(): LocalAgentReferenceSnapshot {
-    const settings = this.store.getSettings()
-    const snapshot = buildAgentReferenceSnapshot(settings)
-    const { bytes, tooLarge } = measureAgentReferenceProjection(settings)
-    return {
-      ...snapshot,
-      projection: tooLarge
-        ? { status: 'too-large', bytes, maxBytes: 524_288 }
-        : { status: 'ready', bytes, maxBytes: 524_288 }
-    }
+    return this.references.getLocalSnapshot()
   }
 
   mutateReferences(
@@ -205,106 +209,29 @@ export class AgentCatalogService {
   ):
     | AgentReferenceMutationResult<LocalAgentReferenceSnapshot>
     | AgentCatalogMigrationBlockedError
+    | AgentCatalogSchemaTooNewError
     | AgentReferenceWriteFailedError {
-    // The failed-backup invariant is "no v1 write": reference mutations stamp
-    // agentReferenceRevision, so they are blocked alongside catalog mutations.
-    const blocked = agentCatalogMigrationBlockedError(this.store)
-    if (blocked) {
-      return blocked
-    }
-    const settings = this.store.getSettings()
-    const currentReferenceRevision = settings.agentReferenceRevision ?? 1
-    const application = applyAgentReferenceMutation({
-      settings,
-      request,
-      currentReferenceRevision,
-      catalog: normalizeCatalogFromSettings(settings)
-    })
-    if (!application.ok) {
-      return {
-        ok: false,
-        code: application.code,
-        referenceRevision: currentReferenceRevision,
-        catalogRevision: this.getRevision(),
-        ...(application.code === 'reference_revision_conflict'
-          ? { snapshot: this.getLocalReferenceSnapshot() }
-          : {}),
-        ...(application.owner ? { owner: application.owner } : {}),
-        ...(application.field ? { field: application.field } : {}),
-        ...(application.reason ? { reason: application.reason } : {})
-      }
-    }
-    // The 512 KiB remote-projection budget is checked on the post-mutation
-    // snapshot; a non-growing write still commits so an over-budget profile can
-    // always be edited back under budget (mirrors mutate()'s security-reducing
-    // allowlist). Why preview: persistence normalizes the patch and derives
-    // legacy commitMessageAi from sourceControlAi, so the patch as written is
-    // smaller than the projection that actually ships.
-    const projected = measureAgentReferenceProjection(
-      this.store.previewSettingsUpdate(application.patch)
-    )
-    if (projected.tooLarge && projected.bytes > measureAgentReferenceProjection(settings).bytes) {
-      return {
-        ok: false,
-        code: 'agent_reference_payload_too_large',
-        referenceRevision: currentReferenceRevision,
-        catalogRevision: this.getRevision()
-      }
-    }
-    // Owner change commits before any prune; a failure between the two leaves
-    // the tombstone conservatively retained for the next indexed recheck.
-    if (!commitAuthoringPatchDurable(this.store, application.patch)) {
-      return {
-        ok: false,
-        code: 'agent_reference_write_failed',
-        referenceRevision: currentReferenceRevision,
-        catalogRevision: this.getRevision()
-      }
-    }
-    this.pruneUnreferencedTombstonesAfterReferenceRemoval()
-    return {
-      ok: true,
-      referenceRevision: application.newReferenceRevision,
-      catalogRevision: this.getRevision(),
-      snapshot: this.getLocalReferenceSnapshot()
-    }
-  }
-
-  /** Reference-aware prune run after a reference removal; a prune advances and
-   *  publishes the catalog revision so receivers replace their snapshot. */
-  private pruneUnreferencedTombstonesAfterReferenceRemoval(): void {
-    const settings = this.store.getSettings()
-    // The patch also strips any persisted row the pruned tombstone suppressed,
-    // so the prune can never resurrect it.
-    const prunePatch = buildUnreferencedTombstonePrunePatch(
-      settings,
-      normalizeCatalogFromSettings(settings),
-      (id) => this.referenceIndex.countReferences(id)
-    )
-    if (!prunePatch) {
-      return
-    }
-    const newRevision = (settings.agentCatalogRevision ?? 1) + 1
-    // GC only: a rolled-back prune keeps the tombstone retained, and the next
-    // indexed recheck retries it — the reference mutation is already durable.
-    if (
-      !commitAuthoringPatchDurable(this.store, { ...prunePatch, agentCatalogRevision: newRevision })
-    ) {
-      return
-    }
-    for (const listener of this.changeListeners) {
-      listener(newRevision)
-    }
+    return this.references.mutate(request)
   }
 
   mutate(
     request: AgentCatalogMutationRequest
-  ): AgentCatalogMutationResult | AgentCatalogMigrationBlockedError | AgentCatalogWriteFailedError {
+  ):
+    | AgentCatalogMutationResult
+    | AgentCatalogMigrationBlockedError
+    | AgentCatalogSchemaTooNewError
+    | AgentCatalogWriteFailedError {
     // A failed pinned pre-v1 backup means no v1 write may land on the profile;
     // fail closed here so authoring cannot bypass the migration invariant.
     const blocked = agentCatalogMigrationBlockedError(this.store)
     if (blocked) {
       return blocked
+    }
+    // Persistence refuses the write anyway; reporting it up front keeps a
+    // non-retryable read-only profile from looking like a disk failure.
+    const tooNew = agentCatalogSchemaTooNewError(this.store)
+    if (tooNew) {
+      return tooNew
     }
     const settings = this.store.getSettings()
     const currentRevision = settings.agentCatalogRevision ?? 1
@@ -313,7 +240,7 @@ export class AgentCatalogService {
       request,
       currentRevision,
       repairTokens: this.repairTokens,
-      countTombstoneReferences: (id) => this.referenceIndex.countReferences(id)
+      countTombstoneReferences: this.tombstoneReferenceCounter
     })
     if (!application.ok) {
       return {

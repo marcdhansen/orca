@@ -154,7 +154,10 @@ function QuickTabBody({
     enableIssueAutomation: modalData.enableIssueAutomation === true,
     createGateMode: 'quick'
   })
-  const { snapshot: localAgentCatalog } = useLocalAgentCatalog()
+  // Why: quick-create resolves the agent from this catalog, so submitting before
+  // it lands would silently swap a custom default for a built-in. `unavailable`
+  // (paired web) never resolves a snapshot, so it must not block creation.
+  const { snapshot: localAgentCatalog, loading: localAgentCatalogLoading } = useLocalAgentCatalog()
   const quickAgentOptions = useMemo(
     () =>
       buildWorkspaceAgentOptions({
@@ -205,9 +208,14 @@ function QuickTabBody({
     setQuickAgentOverride(agent)
   }, [])
 
+  const createDisabledForQuickAgent = createDisabled || localAgentCatalogLoading
+
   const handleCreate = useCallback(async (): Promise<void> => {
+    if (localAgentCatalogLoading) {
+      return
+    }
     await submitQuick(quickAgent)
-  }, [quickAgent, submitQuick])
+  }, [localAgentCatalogLoading, quickAgent, submitQuick])
   // Why: Add Project layers over the composer as a nested dialog instead of
   // replacing it in the activeModal slot — closing the composer mid-flow (and
   // losing the typed name/prompt) was the old, abrupt behavior. Once opened it
@@ -299,7 +307,7 @@ function QuickTabBody({
       if (!shouldAllowComposerEnterSubmitTarget(target, composerRef.current)) {
         return
       }
-      if (createDisabled) {
+      if (createDisabledForQuickAgent) {
         return
       }
       event.preventDefault()
@@ -307,7 +315,7 @@ function QuickTabBody({
     }
     window.addEventListener('keydown', onKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', onKeyDown, { capture: true })
-  }, [active, composerRef, createDisabled, handleCreate, nestedDialogOpen, onDismiss])
+  }, [active, composerRef, createDisabledForQuickAgent, handleCreate, nestedDialogOpen, onDismiss])
 
   return (
     <>
@@ -341,6 +349,7 @@ function QuickTabBody({
         onQuickAgentChange={handleQuickAgentChange}
         quickAgentOptions={quickAgentOptions}
         {...cardProps}
+        createDisabled={createDisabledForQuickAgent}
         primaryActionLabel={primaryActionLabel}
         onOpenAgentSettings={() => setAgentSettingsOpen(true)}
         onCreate={() => void handleCreate()}

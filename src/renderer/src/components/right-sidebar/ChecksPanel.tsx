@@ -184,6 +184,7 @@ import {
   type SourceControlAiWriteTarget
 } from '../../../../shared/source-control-ai-recipe-save'
 import { saveSourceControlAiSettings } from '@/lib/agent-catalog-authoring'
+import { notifyAgentAuthoringWriteFailure } from '@/lib/agent-authoring-write-failure-toast'
 import { resolveSourceControlLaunchPlatform } from '@/lib/source-control-launch-platform'
 import { getLocalProjectExecutionRuntimeContext } from '@/lib/local-preflight-context'
 import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
@@ -614,7 +615,7 @@ export default function ChecksPanel(): React.JSX.Element {
         recipe
       })
       if ('sourceControlAi' in result) {
-        await saveSourceControlAiSettings(result.sourceControlAi)
+        notifyAgentAuthoringWriteFailure(await saveSourceControlAiSettings(result.sourceControlAi))
         return
       }
       await updateRepo(result.target.repoId, result.update)

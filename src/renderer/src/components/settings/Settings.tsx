@@ -68,6 +68,7 @@ import { IntegrationsPane } from './IntegrationsPane'
 import { TasksPane } from './TasksPane'
 import { QuickCommandsPane } from './QuickCommandsPane'
 import { saveSourceControlAiSettings } from '@/lib/agent-catalog-authoring'
+import { notifyAgentAuthoringWriteFailure } from '@/lib/agent-authoring-write-failure-toast'
 import { DeveloperPermissionsPane } from './DeveloperPermissionsPane'
 import { ComputerUsePane } from './ComputerUsePane'
 import { MobileSettingsPane } from './MobileSettingsPane'
@@ -422,7 +423,12 @@ function Settings(): React.JSX.Element {
           }
           const latestConfig = readSourceControlAiSettings(latestSettings)
           const resolvedPatch = typeof patch === 'function' ? patch(latestConfig) : patch
-          await saveSourceControlAiSettings({ ...latestConfig, ...resolvedPatch })
+          // Why: every Source Control AI pane writes through this queue and then
+          // reports success, so a durable-write rejection has to be surfaced here
+          // or the edit is silently lost on the next launch.
+          notifyAgentAuthoringWriteFailure(
+            await saveSourceControlAiSettings({ ...latestConfig, ...resolvedPatch })
+          )
         })
       sourceControlAiWriteQueueRef.current = next
       return next

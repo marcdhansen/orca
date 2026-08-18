@@ -7,6 +7,11 @@ import { OrcaRuntimeService } from './orca-runtime'
 import { resolveTerminalAgentLaunch } from './terminal-agent-launch-resolution'
 import { buildClaudeAgentTeamsLaunchPlan } from './claude-agent-teams-shim-env'
 import { getHostAgentLaunchBoundary } from '../agent-launch/agent-launch-boundary-host'
+import {
+  executionHostIdForDescriptor,
+  platformForDescriptor,
+  type AgentLaunchHostDescriptor
+} from '../agent-launch/agent-launch-host-state'
 
 vi.mock('electron', () => ({
   BrowserWindow: { fromId: vi.fn(() => null) },
@@ -156,5 +161,55 @@ describe('createTerminal host-resolved agentLaunch', () => {
         failure: { code: 'base_agent_disabled', baseAgent: 'claude' }
       }
     })
+  })
+})
+
+// A WSL surface classified native/local host-ids as `local`, which resolves
+// execution 'native' and leaves Windows/UNC {repoPath} values in the Linux argv.
+describe('WSL execution-host classification', () => {
+  type DescriptorInternals = {
+    buildTerminalAgentLaunchDescriptor: (
+      workspace: Record<string, unknown>
+    ) => AgentLaunchHostDescriptor
+    buildRepoAgentLaunchDescriptor: (repo: Record<string, unknown>) => AgentLaunchHostDescriptor
+  }
+
+  function makeDescriptorRuntime(): DescriptorInternals {
+    const runtime = new OrcaRuntimeService({
+      getSettings: () => ({}),
+      getProjects: () => []
+    } as never)
+    return runtime as unknown as DescriptorInternals
+  }
+
+  function workspace(path: string): Record<string, unknown> {
+    return { id: 'wt-1', path, connectionId: null, repo: null, folderWorkspace: null }
+  }
+
+  it('describes a WSL UNC workspace as its own wsl host, never local', () => {
+    const descriptor = makeDescriptorRuntime().buildTerminalAgentLaunchDescriptor(
+      workspace('\\\\wsl.localhost\\Ubuntu\\home\\me\\app')
+    )
+
+    expect(descriptor).toEqual({ kind: 'wsl', distro: 'Ubuntu' })
+    expect(executionHostIdForDescriptor(descriptor)).toBe('wsl:Ubuntu')
+    expect(platformForDescriptor(descriptor)).toBe('linux')
+  })
+
+  it('describes a WSL UNC repo as a wsl host at worktree-create time', () => {
+    const descriptor = makeDescriptorRuntime().buildRepoAgentLaunchDescriptor({
+      id: 'r1',
+      path: '\\\\wsl$\\Debian\\srv\\app',
+      connectionId: null
+    })
+
+    expect(descriptor).toEqual({ kind: 'wsl', distro: 'Debian' })
+    expect(executionHostIdForDescriptor(descriptor)).toBe('wsl:Debian')
+  })
+
+  it('keeps an ordinary local workspace on the local host', () => {
+    expect(
+      makeDescriptorRuntime().buildTerminalAgentLaunchDescriptor(workspace('/repo/app'))
+    ).toMatchObject({ kind: 'local' })
   })
 })

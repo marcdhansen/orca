@@ -151,6 +151,39 @@ describe('createRevisionedSnapshotSync', () => {
     expect(sync.getSnapshot('b')?.revision).toBe(20)
   })
 
+  // Every host disconnect clears its cache, so retaining the key would grow this
+  // map by one entry per host ever connected to, for the process lifetime.
+  it('drops the host key on clear, not just its cached value', async () => {
+    const sync = createRevisionedSnapshotSync<Snap>()
+    const { fetch, resolvers } = deferredFetch()
+
+    for (let host = 0; host < 5; host++) {
+      const conn = sync.openConnection(`host-${host}`, fetch)
+      conn.hydrate()
+      resolvers[host]!({ kind: 'value', runtimeId: 'r', value: { revision: 1 } })
+      await tick()
+      conn.dispose()
+      sync.clear(`host-${host}`)
+    }
+
+    expect(sync.trackedHostCountForTests()).toBe(0)
+  })
+
+  it('still fences an in-flight fetch whose host was cleared', async () => {
+    const sync = createRevisionedSnapshotSync<Snap>()
+    const { fetch, resolvers } = deferredFetch()
+    const conn = sync.openConnection('host', fetch)
+
+    conn.hydrate()
+    sync.clear('host')
+    // Resolves against the dropped state; must not resurrect the host entry.
+    resolvers[0]!({ kind: 'value', runtimeId: 'r', value: { revision: 7 } })
+    await tick()
+
+    expect(sync.getSnapshot('host')).toBeNull()
+    expect(sync.trackedHostCountForTests()).toBe(0)
+  })
+
   it('stores a projection error as the cached value so the UI can render repair copy', async () => {
     const sync = createRevisionedSnapshotSync<Snap>()
     const { fetch, resolvers } = deferredFetch()

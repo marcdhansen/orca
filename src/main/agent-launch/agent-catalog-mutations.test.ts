@@ -6,6 +6,7 @@ import type {
   GlobalSettings
 } from '../../shared/types'
 import type { CustomAgentDraft } from '../../shared/agent-catalog-snapshot'
+import { tokenizeStartupCommand } from '../../shared/tui-agent-startup-shell'
 import {
   AgentCatalogRepairTokenRegistry,
   applyAgentCatalogMutation,
@@ -321,6 +322,28 @@ describe('duplicate', () => {
     const copy = result.patch.customTuiAgents?.[0]
     expect(copy?.commandOverride).toBe('/opt/wrap')
     expect(copy?.args).toBe('codex-real --fast --user-arg')
+  })
+
+  it('keeps a grouped prefix argument grouped instead of flattening it into two args', () => {
+    const result = apply({
+      settings: settingsWith({
+        agentCmdOverrides: { codex: '/opt/wrap --prompt "hello world"' },
+        agentDefaultArgs: { codex: '--user-arg' }
+      }),
+      mutation: { kind: 'duplicate', sourceAgent: 'codex', label: 'Wrapped' }
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    const copy = result.patch.customTuiAgents?.[0]
+    expect(copy?.commandOverride).toBe('/opt/wrap')
+    // A bare join would store `--prompt hello world`, which re-splits into three.
+    expect(copy?.args).toBe('--prompt "hello world" --user-arg')
+    for (const shell of ['posix', 'powershell', 'cmd'] as const) {
+      const tokenized = tokenizeStartupCommand(copy?.args ?? '', shell)
+      expect(tokenized.ok && tokenized.tokens).toEqual(['--prompt', 'hello world', '--user-arg'])
+    }
   })
 
   it('rejects a platform-ambiguous built-in prefix instead of guessing a grammar', () => {

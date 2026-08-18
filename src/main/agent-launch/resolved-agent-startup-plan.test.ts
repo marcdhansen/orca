@@ -332,4 +332,85 @@ describe('buildAgentStartupPlanFromResolvedLaunch', () => {
       expect(submitted?.draftPrompt).toBeUndefined()
     })
   })
+
+  describe('final assembled command ceiling', () => {
+    // The resolver caps only the RESOLVED argv; the RPC admits a 100k-char prompt
+    // that is appended here, so the ceiling has to hold for the final command.
+    it('moves an argv prompt off a cmd command line over the 8191-char ceiling', () => {
+      const launch = resolvedLaunch({
+        request: { platform: 'win32', shell: 'cmd', targetHomePath: 'C:\\Users\\me' }
+      })
+      const bigPrompt = 'x'.repeat(20_000)
+      const plan = buildAgentStartupPlanFromResolvedLaunch({ launch, prompt: bigPrompt })
+      expect(plan?.launchCommand).toBe(`"codex"`)
+      expect(plan?.launchCommand.length).toBeLessThanOrEqual(8191)
+      // The FULL prompt is retained — never truncated or dropped.
+      expect(plan?.followupPrompt).toBe(bigPrompt)
+    })
+
+    it('moves an oversized draft flag prompt to the paste path with no inline ceiling given', () => {
+      const launch = resolvedLaunch({
+        agent: 'claude',
+        request: { platform: 'win32', shell: 'cmd', targetHomePath: 'C:\\Users\\me' }
+      })
+      const bigDraft = 'x'.repeat(20_000)
+      const plan = buildAgentStartupPlanFromResolvedLaunch({
+        launch,
+        prompt: bigDraft,
+        promptDelivery: 'draft'
+      })
+      expect(plan?.launchCommand).toBe(`"claude"`)
+      expect(plan?.draftPrompt).toBe(bigDraft)
+    })
+
+    it('moves an env-var draft off argv when its cleanup clause crosses the cmd ceiling', () => {
+      const agent = customId('pi', '00000000-0000-4000-8000-0000000f0002')
+      // Base command sits just under 8191; the ` & set "ORCA_PI_PREFILL="` clause
+      // the draft path appends is what pushes the final command over.
+      const launch = resolvedLaunch({
+        agent,
+        catalog: catalogOf({
+          customTuiAgents: [customAgent({ id: agent, baseAgent: 'pi', args: 'y'.repeat(8_173) })]
+        }),
+        request: { platform: 'win32', shell: 'cmd', targetHomePath: 'C:\\Users\\me' }
+      })
+      const plan = buildAgentStartupPlanFromResolvedLaunch({
+        launch,
+        prompt: 'do it',
+        promptDelivery: 'draft'
+      })
+      expect(plan?.launchCommand.length).toBeLessThanOrEqual(8191)
+      expect(plan?.launchCommand).not.toContain('ORCA_PI_PREFILL')
+      expect(plan?.env).toBeUndefined()
+      expect(plan?.draftPrompt).toBe('do it')
+    })
+
+    it('applies the encoded-length ceiling on a powershell target', () => {
+      const launch = resolvedLaunch({
+        request: { platform: 'win32', shell: 'powershell', targetHomePath: 'C:\\Users\\me' }
+      })
+      const bigPrompt = 'x'.repeat(30_000)
+      const plan = buildAgentStartupPlanFromResolvedLaunch({ launch, prompt: bigPrompt })
+      expect(plan?.launchCommand).toBe(`& 'codex'`)
+      expect(plan?.followupPrompt).toBe(bigPrompt)
+    })
+
+    it('applies the byte ceiling on a posix target', () => {
+      const launch = resolvedLaunch()
+      const bigPrompt = 'x'.repeat(200_000)
+      const plan = buildAgentStartupPlanFromResolvedLaunch({ launch, prompt: bigPrompt })
+      expect(plan?.launchCommand).toBe(`'codex'`)
+      expect(plan?.followupPrompt).toBe(bigPrompt)
+    })
+
+    it('still inlines a prompt that fits the target ceiling', () => {
+      const launch = resolvedLaunch({
+        request: { platform: 'win32', shell: 'cmd', targetHomePath: 'C:\\Users\\me' }
+      })
+      const prompt = 'x'.repeat(4_000)
+      const plan = buildAgentStartupPlanFromResolvedLaunch({ launch, prompt })
+      expect(plan?.launchCommand).toBe(`"codex" "${prompt}"`)
+      expect(plan?.followupPrompt).toBeNull()
+    })
+  })
 })

@@ -19,6 +19,7 @@ import {
   type ResumableTuiAgent
 } from '../../../../shared/agent-session-resume'
 import { AI_VAULT_AGENTS, type AiVaultAgent } from '../../../../shared/ai-vault-types'
+import { MAX_AGENT_ARGS_CODE_UNITS } from '../../../../shared/custom-tui-agent-fields'
 import { parseExecutionHostId } from '../../../../shared/execution-host'
 
 const AgentLaunchSelection = z.union([
@@ -47,6 +48,9 @@ export const AgentLaunchSpawnRequestSchema: z.ZodType<AgentLaunchSpawnRequest> =
   allowEmptyPromptLaunch: z.boolean().optional(),
   promptDelivery: z.enum(['submit', 'draft']).optional(),
   sourceRecord: AgentLaunchSourceRecord.optional(),
+  // Untrusted client text that substitutes for the stored recipe args, so it gets
+  // the same length ceiling those args are save-validated against.
+  unsavedAgentArgs: z.string().max(MAX_AGENT_ARGS_CODE_UNITS).optional(),
   // Why: without this, an unrecognized key would be silently stripped by Zod's
   // default object parsing, downgrading a caller's declared unattended/
   // background launch to interactive instead of failing closed.

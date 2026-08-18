@@ -1466,7 +1466,9 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           ? { terminalColorQueryReplies: params.terminalColorQueryReplies }
           : {}),
         // Authenticated RPC scope for host-resolved launches; never client JSON.
+        // The paired device narrows the admission principal to this device.
         clientKind,
+        ...(pairedDeviceId ? { deviceId: pairedDeviceId } : {}),
         title: params.title,
         focus: params.focus === true,
         rendererBacked: params.rendererBacked === true,

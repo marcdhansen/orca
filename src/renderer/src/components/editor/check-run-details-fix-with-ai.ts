@@ -21,6 +21,7 @@ import {
   type SourceControlAiWriteTarget
 } from '../../../../shared/source-control-ai-recipe-save'
 import { saveSourceControlAiSettings } from '@/lib/agent-catalog-authoring'
+import { notifyAgentAuthoringWriteFailure } from '@/lib/agent-authoring-write-failure-toast'
 import type {
   SourceControlActionRecipe,
   SourceControlLaunchActionId
@@ -183,7 +184,7 @@ export function useCheckRunDetailsFixWithAI(args: {
         recipe
       })
       if ('sourceControlAi' in result) {
-        await saveSourceControlAiSettings(result.sourceControlAi)
+        notifyAgentAuthoringWriteFailure(await saveSourceControlAiSettings(result.sourceControlAi))
         return
       }
       await updateRepo(result.target.repoId, result.update)

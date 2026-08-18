@@ -11,7 +11,10 @@ import type {
 import type { SourceControlAiWriteTarget } from '../../../../shared/source-control-ai-recipe-save'
 import { toast } from 'sonner'
 import { translate } from '@/i18n/i18n'
-import { resolveSourceControlActionRecipe } from '../../../../shared/source-control-ai'
+import {
+  normalizeRepoSourceControlAiOverrides,
+  resolveSourceControlActionRecipe
+} from '../../../../shared/source-control-ai'
 import { sourceControlActionRecipeMatchesTarget } from './source-control-action-recipe-match'
 import { resolveSourceControlAgentSaveTarget } from './source-control-agent-action-dialog-support'
 
@@ -94,17 +97,22 @@ export async function runSourceControlAgentActionStart({
       repo
     })
   )
-  // Why: the host resolves agentArgs from the owner locator, so claiming it is
-  // only correct while the persisted recipe still carries the edited args — a
-  // "Don't save" launch of edited args would otherwise run the stale snapshot.
+  // Why: the host resolves agentArgs from the owner locator, so the launch needs
+  // the edited args sent alongside it unless the EFFECTIVE recipe (repo override
+  // shadowing global) already carries them.
   let launchArgsPersisted =
-    launchRecipeAlreadySaved ||
     (resolveSourceControlActionRecipe({ settings, repo, actionId }).agentArgs?.trim() ?? '') ===
-      agentArgs.trim()
+    agentArgs.trim()
+  // Why: a repo-level agentArgs override shadows the global recipe per field, so
+  // a global save never becomes what the host resolves for this repo.
+  const repoOverridesActionArgs =
+    normalizeRepoSourceControlAiOverrides(repo?.sourceControlAi)?.actionOverrides?.[actionId]
+      ?.agentArgs !== undefined
   if (saveTarget && onSaveAgentDefault && !launchRecipeAlreadySaved) {
     try {
       await onSaveAgentDefault(saveTarget, actionId, launchRecipe)
-      launchArgsPersisted = true
+      launchArgsPersisted =
+        launchArgsPersisted || saveTarget.type === 'repo' || !repoOverridesActionArgs
     } catch (error) {
       console.error('saving the agent recipe before launch failed', error)
       toast.error(
@@ -142,13 +150,12 @@ export async function runSourceControlAgentActionStart({
       worktreeId,
       groupId: groupId ?? worktreeId,
       prompt: trimmedCommandInput,
-      // Why: the host resolves this recipe's stored agentArgs from the owner
-      // locator; the client no longer sends assembled args on the launch path.
-      // Unsaved edits are not in that stored recipe, so the locator is omitted
-      // rather than launching the stale persisted args.
-      ...(launchArgsPersisted
-        ? { sourceRecord: { owner: 'source-control-recipe' as const, id: actionId } }
-        : {}),
+      sourceRecord: { owner: 'source-control-recipe' as const, id: actionId },
+      // Why: the host resolves the recipe's stored agentArgs from the locator, so
+      // a "Don't save" launch must send the edited args for the host to use in
+      // their place — otherwise it runs the stale persisted snapshot. Best-effort:
+      // a host predating the field still launches the stored args.
+      ...(launchArgsPersisted ? {} : { unsavedAgentArgs: agentArgs.trim() }),
       promptDelivery,
       launchPlatform,
       launchSource

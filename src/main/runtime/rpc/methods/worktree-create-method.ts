@@ -15,7 +15,7 @@ export const WORKTREE_CREATE_METHOD: RpcMethod = defineMethod({
   name: 'worktree.create',
   params: WorktreeCreate,
   handler: async (params, context) => {
-    const { runtime, clientKind } = context
+    const { runtime, clientKind, pairedDeviceId } = context
     // U7: a remote client (authenticated clientKind) may not name a custom id on
     // the legacy built-in create path — it cannot be host-resolved without the
     // host-atomic agentLaunch request. Reject at the boundary (no worktree),
@@ -97,9 +97,15 @@ export const WORKTREE_CREATE_METHOD: RpcMethod = defineMethod({
           startupDraft: params.startupDraft,
           // The host-atomic launch request; when present the host ignores the
           // client startup/createdWithAgent for the agent terminal. clientKind
-          // scopes admission/intent and is never derived from client JSON.
+          // scopes admission/intent and is never derived from client JSON; the
+          // paired device narrows that principal so one phone's capacity and
+          // recovery rows are its own.
           ...(params.agentLaunch
-            ? { agentLaunch: params.agentLaunch, agentLaunchClientKind: clientKind }
+            ? {
+                agentLaunch: params.agentLaunch,
+                agentLaunchClientKind: clientKind,
+                ...(pairedDeviceId ? { agentLaunchDeviceId: pairedDeviceId } : {})
+              }
             : {}),
           ...(params.agentLaunchTelemetry
             ? { agentLaunchTelemetry: params.agentLaunchTelemetry }

@@ -80,6 +80,10 @@ function buildDeps(
     operationStore: store,
     liveTerminalByToken: overrides.liveTerminalByToken ?? (() => null),
     isHostAuthoritative: overrides.isHostAuthoritative ?? ((id) => id === 'local'),
+    isHostTokenAuthoritative: overrides.isHostTokenAuthoritative ?? (() => true),
+    ...(overrides.identifyLaunchWithoutTokenEcho
+      ? { identifyLaunchWithoutTokenEcho: overrides.identifyLaunchWithoutTokenEcho }
+      : {}),
     expectedWorktreeId: overrides.expectedWorktreeId ?? ((p) => p.scope),
     arms: overrides.arms ?? {
       worktree: noopArm,
@@ -242,6 +246,114 @@ describe('buildReconcileAgentLaunchDeps liveness', () => {
 
     expect(outcome).toEqual({ kind: 'spawn_failed' })
     expect(arm.calls).toEqual(['failed'])
+  })
+
+  it('settles absent on a missing token echo when the host echoes launch tokens', () => {
+    const arm = spyArm()
+    const { store, deps } = buildDeps({
+      isHostAuthoritative: () => true,
+      isHostTokenAuthoritative: () => true,
+      identifyLaunchWithoutTokenEcho: () => 'inconclusive',
+      arms: {
+        worktree: () => arm,
+        automation: () => arm,
+        orchestration: () => arm,
+        background: () => arm
+      }
+    })
+    const entry = pending({ launchToken: 'token-v34' }, 'ssh:host-a')
+    store.beginPending(entry)
+
+    const outcome = reconcileOnePendingAgentLaunch(deps, entry)
+
+    expect(outcome).toEqual({ kind: 'spawn_failed' })
+    expect(arm.calls).toEqual(['failed'])
+  })
+
+  it('never settles absent on a missing echo from a host that cannot echo tokens', () => {
+    // Regression (P1-4): a pre-v34 daemon / old relay accepts launchToken and
+    // drops it, so its listing can never echo one. Settling spawn_failed here
+    // would let Retry spawn a DUPLICATE beside the agent it is still running.
+    const arm = spyArm()
+    const { store, deps } = buildDeps({
+      isHostAuthoritative: () => true,
+      isHostTokenAuthoritative: () => false,
+      identifyLaunchWithoutTokenEcho: () => 'inconclusive',
+      arms: {
+        worktree: () => arm,
+        automation: () => arm,
+        orchestration: () => arm,
+        background: () => arm
+      }
+    })
+    const entry = pending({ launchToken: 'token-legacy' }, 'ssh:host-a')
+    store.beginPending(entry)
+
+    const outcome = reconcileOnePendingAgentLaunch(deps, entry)
+
+    expect(outcome).toEqual({ kind: 'launch_state_unknown' })
+    expect(arm.calls).toEqual(['unknown'])
+    // Held, not settled: the reservation survives and Retry stays gated.
+    expect(store.getPending('token-legacy')).not.toBeNull()
+  })
+
+  it('holds a non-token-authoritative launch pending when no fallback is wired', () => {
+    const arm = spyArm()
+    const { store, deps } = buildDeps({
+      isHostAuthoritative: () => true,
+      isHostTokenAuthoritative: () => false,
+      arms: {
+        worktree: () => arm,
+        automation: () => arm,
+        orchestration: () => arm,
+        background: () => arm
+      }
+    })
+    const entry = pending({ launchToken: 'token-nofallback' }, 'ssh:host-a')
+    store.beginPending(entry)
+
+    expect(reconcileOnePendingAgentLaunch(deps, entry)).toEqual({ kind: 'launch_state_unknown' })
+    expect(store.getPending('token-nofallback')).not.toBeNull()
+  })
+
+  it('settles absent on a non-echoing host once the fallback proves the terminal gone', () => {
+    const arm = spyArm()
+    const { store, deps } = buildDeps({
+      isHostAuthoritative: () => true,
+      isHostTokenAuthoritative: () => false,
+      identifyLaunchWithoutTokenEcho: () => 'absent',
+      arms: {
+        worktree: () => arm,
+        automation: () => arm,
+        orchestration: () => arm,
+        background: () => arm
+      }
+    })
+    const entry = pending({ launchToken: 'token-proven' }, 'ssh:host-a')
+    store.beginPending(entry)
+
+    expect(reconcileOnePendingAgentLaunch(deps, entry)).toEqual({ kind: 'spawn_failed' })
+    expect(arm.calls).toEqual(['failed'])
+  })
+
+  it('keeps a live token match launched even on a non-token-authoritative host', () => {
+    const arm = spyArm()
+    const { store, deps } = buildDeps({
+      liveTerminalByToken: () => ({ ptyId: 'term-live', worktreeId: 'wt-1' }),
+      isHostAuthoritative: () => true,
+      isHostTokenAuthoritative: () => false,
+      identifyLaunchWithoutTokenEcho: () => 'absent',
+      arms: {
+        worktree: () => arm,
+        automation: () => arm,
+        orchestration: () => arm,
+        background: () => arm
+      }
+    })
+    const entry = pending({ launchToken: 'token-live' }, 'ssh:host-a')
+    store.beginPending(entry)
+
+    expect(reconcileOnePendingAgentLaunch(deps, entry)).toEqual({ kind: 'launched' })
   })
 
   it('routes a background pending to the background store keyed by attempt id', () => {

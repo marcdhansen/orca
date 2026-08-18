@@ -15,6 +15,7 @@ import type {
   MAX_AGENT_CATALOG_PROJECTION_BYTES,
   MAX_LOCAL_AGENT_CATALOG_BYTES
 } from './custom-tui-agents'
+import type { AgentCatalogSchemaTooNew } from './data-recovery'
 
 /** Local repair metadata only. It never contains raw field text or an env key/value. */
 export type AgentCatalogRepairIssue = {
@@ -104,6 +105,9 @@ export type LocalAgentCatalogSnapshot = Omit<AgentCatalogSnapshot, 'customAgents
   // writes are fail-closed; lets Settings surface the block on load, not only
   // after a rejected mutation.
   migrationBlockedError?: string
+  // Present while a newer build's schema stamp makes authoring read-only. Unlike
+  // migrationBlockedError there is nothing to retry, so Settings must not offer it.
+  schemaTooNew?: AgentCatalogSchemaTooNew
 }
 
 export const MAX_LOCAL_AGENT_DRAFT_BYTES = 1_048_576
@@ -196,6 +200,10 @@ export type AgentCatalogMutationResult =
         | 'stale_agent_repair_token'
         | 'agent_catalog_local_payload_too_large'
         | 'agent_catalog_payload_too_large'
+        // The durable settings write failed and was rolled back: nothing persisted.
+        | 'agent_catalog_write_failed'
+        // A newer build wrote this profile's catalog schema: read-only, no retry.
+        | 'agent_catalog_schema_too_new'
       revision: number
       // Present on conflict so the editor can refresh while preserving the draft.
       snapshot?: LocalAgentCatalogSnapshot

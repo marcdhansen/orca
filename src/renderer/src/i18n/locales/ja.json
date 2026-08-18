@@ -9761,6 +9761,11 @@
           "nullDefaultAttention": "デフォルトの Agent を選択してください。選択するまで、対話的な起動は開始できず、選択を求められます。",
           "migrationBlockedTitle": "Agent 設定は一時的に読み取り専用です",
           "migrationBlockedDescription": "Orca は既存の Agent 設定を更新する前にバックアップを作成できなかったため、データを保護するために変更がブロックされています。以下の問題を解決してから、もう一度お試しください。",
+          "writeFailedTitle": "変更は保存されませんでした",
+          "writeFailedDescription": "Orca はこの変更をディスクに保存できなかったため、何も変更されていません。ディスクの空き容量があり、読み取り専用でないことを確認してから、もう一度お試しください。",
+          "schemaTooNewTitle": "このバージョンの Orca ではカスタム Agent は読み取り専用です",
+          "schemaTooNewDescription": "このプロファイルは新しいバージョンの Orca で保存されました。データは変更されておらず、Agent の起動も引き続き可能ですが、カスタム Agent はここでは変更できません。編集するには Orca を更新してください。再試行しても解決しません。",
+          "schemaTooNewVersions": "プロファイルの Agent カタログは v{{persisted}}、このバージョンの Orca が対応するのは v{{supported}} です。",
           "unavailable": "Custom agents are managed on the desktop host."
         },
         "AgentCatalogStatusBadge": {
@@ -14555,19 +14560,20 @@
         "manageAgents": "Agent を管理"
       },
       "dataRecovery": {
-        "pointAgentCatalogPreV1Title": "Before the custom-agents update (agent catalog v1)",
-        "pointAgentCatalogPreV1Loss": "Restoring discards all settings and workspace metadata saved after this point, including any custom agents.",
+        "pointAgentCatalogPreV1Title": "Before custom agents",
+        "pointAgentCatalogPreV1Loss": "This discards settings and custom agents saved after this update.",
         "title": "Data recovery",
-        "description": "Restore this profile from a recovery point created before a data migration. Restoring never deletes the recovery point.",
+        "description": "Restore the settings Orca saved before this update. The saved copy is kept.",
         "loading": "Looking for recovery points…",
         "empty": "No recovery points exist for this profile.",
         "createdAt": "Created {{date}}",
         "createdUnknown": "Creation time unknown",
         "previousBinary": "After restoring, Orca quits. Install the previous Orca version before opening it again.",
+        "unreadable": "このリカバリポイントは読み取れないため復元できません。ファイルのアクセス権を確認するか、そのパスを現在占有しているものを移動してから、データリカバリを開き直してください。",
         "restoring": "Restoring…",
         "confirmRestore": "Restore and quit",
         "cancel": "Cancel",
-        "prepareDowngrade": "Prepare downgrade…",
+        "prepareDowngrade": "Restore these settings…",
         "restoreFailed": "Restore failed and no changes were made: {{error}}",
         "close": "Close",
         "noticeTitle": "Orca could not back up your data before a required update",
@@ -14576,7 +14582,7 @@
         "retryMigration": "Retry migration",
         "openDataRecovery": "Open Data recovery",
         "copyDetails": "Copy details",
-        "settingsRowHint": "A pre-update recovery point exists for this profile.",
+        "settingsRowHint": "You can restore the settings from before this update, then install the previous Orca.",
         "settingsRowOpen": "Data recovery…"
       }
     },

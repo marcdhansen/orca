@@ -57,8 +57,8 @@ describe('worktree.retryBackgroundAgentLaunch RPC', () => {
     )
 
     expect(response).toMatchObject({ ok: true, result: { status: 'launched' } })
-    // clientKind is undefined for a local dispatch; it scopes the idempotency
-    // principal and is never derived from the client JSON.
+    // clientKind and pairedDeviceId are both undefined for a local dispatch;
+    // together they scope the idempotency principal, never client JSON.
     expect(retryBackgroundAgentLaunch).toHaveBeenCalledWith(
       {
         attemptId: 'attempt-1',
@@ -66,6 +66,7 @@ describe('worktree.retryBackgroundAgentLaunch RPC', () => {
         clientMutationId: CANONICAL_UUID,
         action: { kind: 'change-agent', agent: 'codex' }
       },
+      undefined,
       undefined
     )
   })
@@ -115,6 +116,7 @@ describe('worktree.forgetBackgroundAgentLaunch RPC', () => {
         expectedOperationId: 'op-1',
         clientMutationId: CANONICAL_UUID
       },
+      undefined,
       undefined
     )
   })

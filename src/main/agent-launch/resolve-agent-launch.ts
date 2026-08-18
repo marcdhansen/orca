@@ -21,6 +21,7 @@ import { assembleCommand } from './resolve-agent-command'
 import { interpolateVariables, prepareVariableValues } from './resolve-agent-variables'
 import { clientOfIntent } from './resolve-agent-env-admission'
 import { checkCommandTooLong, checkEnvPayloadTooLarge } from './agent-launch-payload-caps'
+import { composeAgentLaunchEnv, inheritedEnvLayer } from './compose-agent-launch-env'
 import { buildResolvedLaunch, type LaunchTarget } from './resolve-agent-launch-result'
 import {
   resolveMobileRemoveOnlyReplayEnv,
@@ -33,6 +34,31 @@ export type ResolveAgentLaunchOutcome =
 
 function hasUserPathOverride(env: Record<string, string>): boolean {
   return Object.keys(env).some((key) => key.toLowerCase() === 'path')
+}
+
+/** The env a native-Windows spawn actually ships. CreateProcess rejects the whole
+ *  inherited+custom block over its ceiling, so measuring the custom layer alone
+ *  admits a launch that then fails opaquely at spawn. Every other target measures
+ *  argv+env bytes instead and composes nothing here. */
+function spawnEnvForPayloadCap(
+  env: Record<string, string>,
+  target: LaunchTarget,
+  inheritedEnv: NodeJS.ProcessEnv | undefined
+): Record<string, string> {
+  if (target.platform !== 'win32' || target.execution !== 'native' || target.isRemote) {
+    return env
+  }
+  // Only the machine that will spawn owns the inherited layer; a win32 target
+  // resolved from anywhere else has no local block to measure.
+  const source = inheritedEnv ?? (process.platform === 'win32' ? process.env : undefined)
+  if (!source) {
+    return env
+  }
+  return composeAgentLaunchEnv({
+    platform: 'win32',
+    inherited: inheritedEnvLayer(source),
+    agentEnv: env
+  })
 }
 
 function deriveTarget(request: ResolveAgentLaunchRequest): LaunchTarget {
@@ -79,7 +105,8 @@ function replayFromSnapshot(
   request: ResolveAgentLaunchRequest,
   target: LaunchTarget,
   catalog: AgentCatalog,
-  settings: GlobalSettings
+  settings: GlobalSettings,
+  inheritedEnv: NodeJS.ProcessEnv | undefined
 ): ResolveAgentLaunchOutcome {
   const snapshot = request.persistedSnapshot
   if (!snapshot) {
@@ -169,7 +196,11 @@ function replayFromSnapshot(
   if (replayCommandCap) {
     return { ok: false, failure: replayCommandCap }
   }
-  const replayEnvCap = checkEnvPayloadTooLarge(replayArgv, env, target)
+  const replayEnvCap = checkEnvPayloadTooLarge(
+    replayArgv,
+    spawnEnvForPayloadCap(env, target, inheritedEnv),
+    target
+  )
   if (replayEnvCap) {
     return { ok: false, failure: replayEnvCap }
   }
@@ -209,11 +240,15 @@ function replayFromSnapshot(
   }
 }
 
-/** Resolve a launch request against the normalized catalog and current settings. */
+/** Resolve a launch request against the normalized catalog and current settings.
+ *  `inheritedEnv` is the layer the spawn will inherit, needed only to size a
+ *  native-Windows environment block; it defaults to this process' env, which is
+ *  that layer whenever this host is the one spawning. */
 export function resolveAgentLaunch(
   request: ResolveAgentLaunchRequest,
   catalog: AgentCatalog,
-  settings: GlobalSettings
+  settings: GlobalSettings,
+  inheritedEnv?: NodeJS.ProcessEnv
 ): ResolveAgentLaunchOutcome {
   const selection = resolveSelection(request, catalog)
   if (selection.kind === 'failure') {
@@ -226,7 +261,7 @@ export function resolveAgentLaunch(
   const target = deriveTarget(request)
 
   if (selection.decision.launch === 'replay-snapshot') {
-    return replayFromSnapshot(request, target, catalog, settings)
+    return replayFromSnapshot(request, target, catalog, settings, inheritedEnv)
   }
 
   const client = clientOfIntent(request.intent)
@@ -297,7 +332,11 @@ export function resolveAgentLaunch(
   if (commandCap) {
     return { ok: false, failure: commandCap }
   }
-  const envCap = checkEnvPayloadTooLarge(command.argv, resolvedEnv, target)
+  const envCap = checkEnvPayloadTooLarge(
+    command.argv,
+    spawnEnvForPayloadCap(resolvedEnv, target, inheritedEnv),
+    target
+  )
   if (envCap) {
     return { ok: false, failure: envCap }
   }

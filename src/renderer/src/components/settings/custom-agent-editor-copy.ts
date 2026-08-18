@@ -8,10 +8,14 @@ import type { AgentCatalogMutationResult } from '../../../../shared/agent-catalo
 import {
   isBuiltInAgentLabelKey,
   normalizeAgentLabelKey,
-  type AgentFieldIssue,
-  type AgentFieldIssueReason
+  type AgentFieldIssue
 } from '../../../../shared/custom-tui-agent-fields'
 import { TUI_AGENT_DISPLAY_NAMES } from '../../../../shared/tui-agent-display-names'
+import {
+  agentAuthoringWriteFailureMessage,
+  asAgentAuthoringWriteFailure
+} from './agent-authoring-write-failure'
+import { agentCatalogSchemaTooNewMessage } from './agent-catalog-schema-too-new'
 import type { CustomAgentMutationFocus as EditorFocus } from './custom-agent-editor-state'
 
 type EditorField = 'label' | 'commandOverride' | 'args' | 'env'
@@ -71,15 +75,13 @@ export function agentEditorFieldLabel(field: EditorField): string {
 
 // Reason messages are grouped per field so each reads naturally in place; a
 // shared fallback covers host-only reasons the editor cannot itself produce.
-function describeFieldReason(field: EditorField, reason: AgentFieldIssueReason | string): string {
+function describeFieldReason(field: EditorField, reason: string): string {
   const specific = fieldSpecificReason(field, reason)
   return specific ?? invalidValueFallback()
 }
 
-function fieldSpecificReason(
-  field: EditorField,
-  reason: AgentFieldIssueReason | string
-): string | null {
+// `string`, not AgentFieldIssueReason: host-only reasons reach here too.
+function fieldSpecificReason(field: EditorField, reason: string): string | null {
   switch (field) {
     case 'label':
       return labelReason(reason)
@@ -285,6 +287,15 @@ export function describeMutationFailure(
         message: describeFieldReason(focus.field, result.reason ?? 'bounds')
       }
     }
+  }
+  // Distinct from the generic fallback: the draft is intact but unsaved, so the
+  // banner must say retry rather than let the user assume it persisted.
+  if (asAgentAuthoringWriteFailure(result)) {
+    return { scope: 'form', error: { message: agentAuthoringWriteFailureMessage() } }
+  }
+  // No retry affordance: only updating Orca clears a too-new profile schema.
+  if (result.code === 'agent_catalog_schema_too_new') {
+    return { scope: 'form', error: { message: agentCatalogSchemaTooNewMessage() } }
   }
   if (result.code === 'catalog_revision_conflict') {
     return {

@@ -112,7 +112,9 @@ export async function connectDockerRemoteWorktree(
         const { target: createdTarget, repoReadoptions } = await window.api.ssh.addTarget({
           target: {
             label: `Docker SSH Custom Agent ${Date.now()}`,
-            host: '127.0.0.1',
+            // Why target.host, not a literal loopback: ORCA_E2E_SSH_TARGET_HOST
+            // moves the container off 127.0.0.1 for non-local runners.
+            host: target.host,
             port: target.port,
             username: 'root',
             identityFile: target.identityFile,

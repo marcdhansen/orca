@@ -184,6 +184,13 @@ export function SourceControlTextGenerationDialogForm({
           toast.success(saveTarget.successMessage)
         }
         return true
+      } catch (error) {
+        // A durable-write rejection carries user-facing copy; without this it
+        // escapes the `void` call site as an unhandled rejection.
+        if (options.showErrors) {
+          setGenerationError(error instanceof Error ? error.message : String(error))
+        }
+        return false
       } finally {
         setSavingTargetKey(null)
       }

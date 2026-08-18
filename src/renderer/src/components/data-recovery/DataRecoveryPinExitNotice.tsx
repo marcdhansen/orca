@@ -1,25 +1,43 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Info } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@/components/ui/dialog'
+import { Separator } from '@/components/ui/separator'
 import { translate } from '@/i18n/i18n'
 import type { RecoveryPointDto } from '../../../../shared/data-recovery'
 import { DataRecoveryDialog } from './DataRecoveryDialog'
+import { DataRecoveryPinExitCustomAgentExample } from './DataRecoveryPinExitCustomAgentExample'
 import {
   dismissPinExitNotice,
   isPinExitNoticeDismissed
 } from './data-recovery-pin-exit-notice-dismissal'
 
-function preV1Point(points: RecoveryPointDto[]): RecoveryPointDto | null {
-  return points.find((point) => point.id === 'agent-catalog-pre-v1') ?? null
+/** Only a pin that can actually be restored: an unreadable one would send people
+ *  to a downgrade they cannot perform. `restorable` is optional (older hosts omit
+ *  it), so only an explicit false withdraws the dialog. */
+function restorablePreV1Point(points: RecoveryPointDto[]): RecoveryPointDto | null {
+  return (
+    points.find((point) => point.id === 'agent-catalog-pre-v1' && point.restorable !== false) ??
+    null
+  )
 }
 
-/** One-shot info banner after a successful agent-catalog pin: tells people how
- *  to leave for stable. Hidden when migration is blocked (red notice owns that
- *  state), when no pin exists, on paired web, or after dismiss for this pin. */
+/** One-shot dialog after a successful agent-catalog pin. Most people should
+ *  continue; the optional path is how to return to the previous Orca without
+ *  reinstalling over live data. Hidden when migration is blocked (red notice
+ *  owns that state), when no restorable pin exists, on paired web, or after
+ *  dismiss for this pin. */
 export function DataRecoveryPinExitNotice() {
   const [pin, setPin] = useState<RecoveryPointDto | null>(null)
   const [dismissed, setDismissed] = useState(false)
   const [recoveryOpen, setRecoveryOpen] = useState(false)
+  const continueRef = useRef<HTMLButtonElement>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -29,7 +47,7 @@ export function DataRecoveryPinExitNotice() {
         return
       }
       const points = (await window.api.dataRecovery?.listPoints()) ?? []
-      const next = preV1Point(points)
+      const next = restorablePreV1Point(points)
       setPin(next)
       setDismissed(next != null && isPinExitNoticeDismissed(next.createdAtMs))
     } catch {
@@ -41,50 +59,114 @@ export function DataRecoveryPinExitNotice() {
     void refresh()
   }, [refresh])
 
-  if (pin === null || dismissed) {
-    return null
-  }
-
   const handleDismiss = (): void => {
-    dismissPinExitNotice(pin.createdAtMs)
+    if (pin !== null) {
+      dismissPinExitNotice(pin.createdAtMs)
+    }
     setDismissed(true)
   }
 
+  const pinDialogOpen = pin !== null && !dismissed && !recoveryOpen
+  if (!pinDialogOpen && !recoveryOpen) {
+    return null
+  }
+
   return (
-    <div role="status" className="border-b border-border bg-muted/40 py-2 text-sm">
-      {/* Why: this strip sits under native macOS traffic lights; center the
-          content block and reserve the same pad on both sides so the title is
-          not clipped and reads as middle-of-window, not left-edge. */}
-      <div className="flex items-start justify-center gap-3 px-3">
-        <div className="titlebar-traffic-light-pad shrink-0" aria-hidden />
-        <div className="flex min-w-0 max-w-3xl flex-1 flex-wrap items-start justify-center gap-2 sm:flex-nowrap">
-          <Info className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-          <div className="min-w-0 flex-1 text-left">
-            <p className="font-medium">
+    <>
+      <Dialog
+        open={pinDialogOpen}
+        onOpenChange={(open) => {
+          // Closing because the restore dialog is on top is temporary.
+          if (!open && !recoveryOpen) {
+            handleDismiss()
+          }
+        }}
+      >
+        <DialogContent
+          className="max-w-lg gap-5"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault()
+            continueRef.current?.focus()
+          }}
+        >
+          <DialogHeader className="gap-3">
+            <DialogTitle className="leading-snug">
               {translate(
                 'auto.components.dataRecovery.pinExitTitle',
-                'This profile was upgraded for custom agents'
+                'Custom agents are now available'
               )}
-            </p>
-            <p className="text-muted-foreground">
+            </DialogTitle>
+            <DialogDescription className="text-sm leading-relaxed text-foreground">
               {translate(
-                'auto.components.dataRecovery.pinExitBody',
-                'Orca kept a recovery point so you can return to the previous Orca. Use Data recovery → Prepare downgrade, then install that older version. Do not only reinstall the older app over this profile. Going back discards settings and custom agents saved after the recovery point.'
+                'auto.components.dataRecovery.pinExitLead',
+                'A custom agent is saved arguments for a harness like Codex or Claude, picked by name.'
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          <DataRecoveryPinExitCustomAgentExample />
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            {translate(
+              'auto.components.dataRecovery.pinExitExampleHint',
+              'Create them in Settings → Agents. Keep working as usual — nothing else is required.'
+            )}
+          </p>
+
+          <Separator />
+
+          <div className="flex flex-col gap-3">
+            <p className="text-sm font-medium text-foreground">
+              {translate(
+                'auto.components.dataRecovery.pinExitRollbackTitle',
+                'Before you install an older Orca'
               )}
             </p>
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              {translate(
+                'auto.components.dataRecovery.pinExitRollbackReinstall',
+                'This version changed the local data format. Restore the previous backup first, or the older app can break.'
+              )}
+            </p>
+            <ol className="list-decimal space-y-1 pl-4 text-sm leading-relaxed text-muted-foreground">
+              <li>
+                {translate(
+                  'auto.components.dataRecovery.pinExitRollbackStepRestore',
+                  'Restore the data backup. Orca will quit.'
+                )}
+              </li>
+              <li>
+                {translate(
+                  'auto.components.dataRecovery.pinExitRollbackStepInstall',
+                  'Then install the older Orca.'
+                )}
+              </li>
+            </ol>
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              {translate(
+                'auto.components.dataRecovery.pinExitRollbackLoss',
+                'The restore discards changes since this update, including custom agents.'
+              )}
+            </p>
+            <div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setRecoveryOpen(true)}
+              >
+                {translate('auto.components.dataRecovery.pinExitGoBack', 'Restore data backup…')}
+              </Button>
+            </div>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <Button type="button" size="xs" variant="outline" onClick={() => setRecoveryOpen(true)}>
-              {translate('auto.components.dataRecovery.openDataRecovery', 'Open Data recovery')}
+
+          <DialogFooter>
+            <Button ref={continueRef} type="button" onClick={handleDismiss}>
+              {translate('auto.components.dataRecovery.dismissPinExit', 'Continue')}
             </Button>
-            <Button type="button" size="xs" variant="ghost" onClick={handleDismiss}>
-              {translate('auto.components.dataRecovery.dismissPinExit', 'Got it')}
-            </Button>
-          </div>
-        </div>
-        <div className="titlebar-traffic-light-pad shrink-0" aria-hidden />
-      </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <DataRecoveryDialog open={recoveryOpen} onOpenChange={setRecoveryOpen} />
-    </div>
+    </>
   )
 }

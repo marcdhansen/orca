@@ -2951,7 +2951,8 @@ export default function MobileTasksScreen() {
       setError('')
       const [settingsResponse, uiResponse, preflightResponse, linearStatusResponse] =
         await Promise.all([
-          client.sendRequest('settings.get'),
+          // Tasks read settings only; agentCatalogSync owns the 512 KiB catalog.
+          client.sendRequest('settings.get', { includeAgentCatalog: false }),
           client.sendRequest('ui.get'),
           client.sendRequest('preflight.check'),
           client.sendRequest('linear.status')
@@ -5417,7 +5418,9 @@ export default function MobileTasksScreen() {
         await ensureWorkspaceSshReady(targetRepo)
         let latestRuntimeTaskSettings = runtimeTaskSettings
         try {
-          const settingsResponse = await client.sendRequest('settings.get')
+          const settingsResponse = await client.sendRequest('settings.get', {
+            includeAgentCatalog: false
+          })
           if (isSuccess(settingsResponse)) {
             latestRuntimeTaskSettings = ((
               settingsResponse.result as { settings?: RuntimeTaskSettings }

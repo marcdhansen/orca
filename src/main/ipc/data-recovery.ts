@@ -11,7 +11,8 @@ export function registerDataRecoveryHandlers(store: Store): void {
   ipcMain.handle(
     'dataRecovery:migrationStatus',
     (): DataRecoveryMigrationStatus => ({
-      agentCatalogMigrationError: store.getAgentCatalogMigrationError()
+      agentCatalogMigrationError: store.getAgentCatalogMigrationError(),
+      agentCatalogSchemaTooNew: store.getAgentCatalogSchemaTooNew()
     })
   )
 

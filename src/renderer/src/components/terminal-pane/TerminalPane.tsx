@@ -179,6 +179,7 @@ import {
   TerminalQuickCommandDialog
 } from '@/components/terminal-quick-commands/TerminalQuickCommandDialog'
 import { saveTerminalQuickCommand } from '@/lib/agent-catalog-authoring'
+import { notifyAgentAuthoringWriteFailure } from '@/lib/agent-authoring-write-failure-toast'
 import { keybindingMatchesAction } from '../../../../shared/keybindings'
 import { pasteTerminalClipboard } from './terminal-clipboard-paste'
 import {
@@ -827,7 +828,7 @@ function TerminalPane(
         void useAppStore.getState().upsertTerminalQuickCommand(quickCommandEditorHostId, command)
         return
       }
-      void saveTerminalQuickCommand(command)
+      void saveTerminalQuickCommand(command).then(notifyAgentAuthoringWriteFailure)
     },
     [quickCommandEditorHostId]
   )

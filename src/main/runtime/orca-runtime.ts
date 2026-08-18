@@ -369,6 +369,7 @@ import type { CreatedWorktreeResult } from '../../shared/types'
 import { assertWorktreeUnlockedForRemoval } from '../../shared/worktree/removal'
 import {
   LOCAL_EXECUTION_HOST_ID,
+  RUNTIME_OWNED_SSH_TARGET_ID_PREFIX,
   getRepoExecutionHostId,
   getWorktreeExecutionHostId,
   parseExecutionHostId,
@@ -1166,7 +1167,8 @@ import { reconcileAllPendingAgentLaunches } from '../agent-launch/agent-launch-w
 import type { ReconcileScopePersistence } from '../agent-launch/agent-launch-worktree-reconcile-writer'
 import {
   buildReconcileAgentLaunchDeps,
-  hostAuthorityFromRelistedConnections
+  hostAuthorityFromRelistedConnections,
+  type TokenlessLaunchLiveness
 } from '../agent-launch/agent-launch-reconcile-runtime-deps'
 import type { ReconcileIntentRouterArms } from '../agent-launch/agent-launch-reconcile-intent-router'
 import { getHostBackgroundAgentLaunchStore } from '../agent-launch/background-agent-launch-store-host'
@@ -1693,6 +1695,8 @@ type TerminalCreateOptions = {
   launchPreferences?: AgentLaunchPreferences
   terminalColorQueryReplies?: TerminalOscColorQueryReplyColors
   viewMode?: 'terminal' | 'chat'
+  // The paired device the remote caller authenticated as; scopes admission per device.
+  deviceId?: string
   startupCommandDelivery?: WorktreeStartupLaunch['startupCommandDelivery']
   telemetry?: WorktreeStartupLaunch['telemetry']
   title?: string
@@ -1761,6 +1765,9 @@ type MobileSessionTerminalCreateOptions = {
   launchAgent?: TuiAgent
   agentLaunch?: AgentLaunchInput
   clientKind?: AuthenticatedClientKind
+  // The paired device the remote caller authenticated as; scopes the launch
+  // admission principal per device instead of per client kind.
+  deviceId?: string
   activate?: boolean
   clientMutationId?: string
   signal?: AbortSignal
@@ -2242,6 +2249,23 @@ export function worktreeCreateRpcLaunchIntent(clientKind: AuthenticatedClientKin
   return clientKind === undefined
     ? { kind: 'cli', command: 'worktree-create' }
     : { kind: 'interactive', client: mapClientKindToLaunchClient(clientKind) }
+}
+
+/** The authenticated caller's admission principal. `deviceId` is the paired device
+ *  the remote caller authenticated as, so caps, recovery rows, and idempotency keys
+ *  are per-device and one phone can neither spend nor forget another's launches.
+ *  It is omitted (never `undefined`-valued) when the transport carries no paired
+ *  device, which keeps the pre-device coarse key that legacy persisted rows use. */
+export function agentLaunchAdmissionPrincipal(
+  clientKind: AuthenticatedClientKind,
+  deviceId?: string
+): AdmissionPrincipal {
+  if (!clientKind) {
+    return { kind: 'local' }
+  }
+  return deviceId
+    ? { kind: 'remote', id: clientKind, deviceId }
+    : { kind: 'remote', id: clientKind }
 }
 
 // Why: long enough for a phone to reconnect and retry a create whose response
@@ -15728,6 +15752,9 @@ export class OrcaRuntimeService {
     const exitedHandle = this.handleByPtyId.get(ptyId)
     if (exitedHandle) {
       getHostAgentLaunchOperationStore().clearRegisteredReceipt(exitedHandle)
+      // Runtime/mobile registrations stage by terminal id, never by pane key, so the
+      // pane-keyed cleanup alone would leak them for the process lifetime.
+      getHostAgentSessionRecordStore().disposeStagingForTerminal(exitedHandle)
     }
 
     const exitedSurfaces: { handle: string; paneKey: string | null }[] = []
@@ -24589,7 +24616,8 @@ export class OrcaRuntimeService {
           repo,
           args.agentLaunch,
           args.agentLaunchClientKind,
-          worktreeCreateRpcLaunchIntent(args.agentLaunchClientKind)
+          worktreeCreateRpcLaunchIntent(args.agentLaunchClientKind),
+          args.agentLaunchDeviceId
         )
       : null
     if (agentLaunchPrepared && !agentLaunchPrepared.ok) {
@@ -28133,6 +28161,36 @@ export class OrcaRuntimeService {
     return { handle, tabId: leaf.tabId, title }
   }
 
+  /** The WSL distro a divergent-platform (→ linux) local surface executes in: a
+   *  WSL UNC path names it directly, otherwise the repo's project runtime does.
+   *  Null when no distro can be named — the surface then stays an honest local
+   *  host rather than claiming a WSL identity it cannot prove. */
+  private resolveWslDistroForLocalSurface(
+    platform: NodeJS.Platform,
+    paths: readonly (string | null | undefined)[],
+    repo: Repo | null
+  ): string | null {
+    if (platform === process.platform) {
+      return null
+    }
+    for (const path of paths) {
+      const distro = path ? parseWslUncPath(path)?.distro : undefined
+      if (distro) {
+        return distro
+      }
+    }
+    if (!repo || repo.connectionId) {
+      return null
+    }
+    const resolution = resolveLocalProjectRuntimeForRepo(this.requireStore(), repo)
+    if (resolution?.status === 'resolved') {
+      return resolution.runtime.kind === 'wsl' ? resolution.runtime.distro : null
+    }
+    return resolution?.status === 'repair-required'
+      ? resolution.repair.preferredRuntime.distro
+      : null
+  }
+
   /** Execution-host descriptor for a terminal workspace: SSH keeps its
    *  connection id; a local workspace whose shell runs a divergent platform
    *  (WSL → linux) is still a local host but its detection/home stay honest
@@ -28154,6 +28212,14 @@ export class OrcaRuntimeService {
         platform,
         ...(shell ? { shell } : {})
       }
+    }
+    const wslDistro = this.resolveWslDistroForLocalSurface(
+      platform,
+      [workspace.path, workspace.repo?.path],
+      workspace.repo
+    )
+    if (wslDistro) {
+      return { kind: 'wsl', distro: wslDistro }
     }
     return { kind: 'local', platform, ...(shell ? { shell } : {}) }
   }
@@ -28207,6 +28273,10 @@ export class OrcaRuntimeService {
     if (repo.connectionId) {
       return { kind: 'ssh', connectionId: repo.connectionId, platform, ...(shell ? { shell } : {}) }
     }
+    const wslDistro = this.resolveWslDistroForLocalSurface(platform, [repo.path], repo)
+    if (wslDistro) {
+      return { kind: 'wsl', distro: wslDistro }
+    }
     return { kind: 'local', platform, ...(shell ? { shell } : {}) }
   }
 
@@ -28247,14 +28317,13 @@ export class OrcaRuntimeService {
     repo: Repo,
     request: AgentLaunchSpawnRequest,
     clientKind: AuthenticatedClientKind,
-    intent: LaunchIntent
+    intent: LaunchIntent,
+    deviceId?: string
   ): Promise<WorktreeCreateAgentLaunchPrepared> {
     request = sanitizeClientAgentLaunchSourceRecord(request)
     const boundary = getHostAgentLaunchBoundary()
     const deps = this.buildWorktreeAgentLaunchDeps(repo)
-    const principal: AdmissionPrincipal = clientKind
-      ? { kind: 'remote', id: clientKind }
-      : { kind: 'local' }
+    const principal = agentLaunchAdmissionPrincipal(clientKind, deviceId)
     const context: WorktreeAgentLaunchContext = {
       request,
       // The caller supplies the intent (never the client): the CLI resolves in
@@ -28342,7 +28411,8 @@ export class OrcaRuntimeService {
       clientMutationId: string
       action: RetryAgentLaunchAction
     },
-    clientKind: AuthenticatedClientKind
+    clientKind: AuthenticatedClientKind,
+    deviceId?: string
   ): Promise<WorktreeRetryAgentLaunchResult> {
     const worktree = await this.resolveWorktreeSelector(worktreeSelector)
     const store = this.requireStore()
@@ -28350,9 +28420,7 @@ export class OrcaRuntimeService {
     if (!repo) {
       throw new Error('repo_not_found')
     }
-    const principal: AdmissionPrincipal = clientKind
-      ? { kind: 'remote', id: clientKind }
-      : { kind: 'local' }
+    const principal = agentLaunchAdmissionPrincipal(clientKind, deviceId)
     return runWorktreeRetryAgentLaunch(
       {
         operationStore: getHostAgentLaunchOperationStore(),
@@ -28394,7 +28462,8 @@ export class OrcaRuntimeService {
   async forgetUnknownWorktreeAgentLaunch(
     worktreeSelector: string,
     args: { expectedOperationId: string; clientMutationId: string },
-    clientKind: AuthenticatedClientKind
+    clientKind: AuthenticatedClientKind,
+    deviceId?: string
   ): Promise<ForgetUnknownAgentLaunchResult> {
     const worktree = await this.resolveWorktreeSelector(worktreeSelector)
     const store = this.requireStore()
@@ -28402,9 +28471,7 @@ export class OrcaRuntimeService {
     if (!repo) {
       throw new Error('repo_not_found')
     }
-    const principal: AdmissionPrincipal = clientKind
-      ? { kind: 'remote', id: clientKind }
-      : { kind: 'local' }
+    const principal = agentLaunchAdmissionPrincipal(clientKind, deviceId)
     return runForgetUnknownAgentLaunch(
       {
         operationStore: getHostAgentLaunchOperationStore(),
@@ -28428,7 +28495,8 @@ export class OrcaRuntimeService {
       {
         scope: worktree.id,
         expectedOperationId: args.expectedOperationId,
-        clientMutationId: args.clientMutationId
+        clientMutationId: args.clientMutationId,
+        callerPrincipal: principal
       }
     )
   }
@@ -28441,7 +28509,8 @@ export class OrcaRuntimeService {
    *  attempt's worktree; expectedOperationId is an anti-race guard, not a secret. */
   async forgetBackgroundAgentLaunch(
     args: { attemptId: string; expectedOperationId: string; clientMutationId: string },
-    clientKind: AuthenticatedClientKind
+    clientKind: AuthenticatedClientKind,
+    deviceId?: string
   ): Promise<ForgetUnknownAgentLaunchResult> {
     const bgStore = getHostBackgroundAgentLaunchStore()
     const attempt = bgStore.get(args.attemptId)
@@ -28450,9 +28519,7 @@ export class OrcaRuntimeService {
       // rejection the operation-id guard would return for a missing pending.
       return { status: 'rejected', requestError: { code: 'stale_agent_launch_failure' } }
     }
-    const principal: AdmissionPrincipal = clientKind
-      ? { kind: 'remote', id: clientKind }
-      : { kind: 'local' }
+    const principal = agentLaunchAdmissionPrincipal(clientKind, deviceId)
     return runForgetUnknownAgentLaunch(
       {
         operationStore: getHostAgentLaunchOperationStore(),
@@ -28476,7 +28543,8 @@ export class OrcaRuntimeService {
       {
         scope: args.attemptId,
         expectedOperationId: args.expectedOperationId,
-        clientMutationId: args.clientMutationId
+        clientMutationId: args.clientMutationId,
+        callerPrincipal: principal
       }
     )
   }
@@ -28494,12 +28562,11 @@ export class OrcaRuntimeService {
       clientMutationId: string
       action: RetryAgentLaunchAction
     },
-    clientKind: AuthenticatedClientKind
+    clientKind: AuthenticatedClientKind,
+    deviceId?: string
   ): Promise<WorktreeRetryAgentLaunchResult> {
     const bgStore = getHostBackgroundAgentLaunchStore()
-    const principal: AdmissionPrincipal = clientKind
-      ? { kind: 'remote', id: clientKind }
-      : { kind: 'local' }
+    const principal = agentLaunchAdmissionPrincipal(clientKind, deviceId)
     return runWorktreeRetryAgentLaunch(
       {
         operationStore: getHostAgentLaunchOperationStore(),
@@ -28643,10 +28710,11 @@ export class OrcaRuntimeService {
    *  never derived from client JSON). Secret-free: the boundary hands back only
    *  non-secret snapshot fields, and the launch token stays host-side — used here
    *  solely for the liveness scan and never projected into the client DTO. */
-  pendingAgentLaunchSummary(clientKind: AuthenticatedClientKind): PendingAgentLaunchSummary {
-    const principal: AdmissionPrincipal = clientKind
-      ? { kind: 'remote', id: clientKind }
-      : { kind: 'local' }
+  pendingAgentLaunchSummary(
+    clientKind: AuthenticatedClientKind,
+    deviceId?: string
+  ): PendingAgentLaunchSummary {
+    const principal = agentLaunchAdmissionPrincipal(clientKind, deviceId)
     const rows = getHostAgentLaunchBoundary().capacitySummaryFor(principal)
     const store = this.requireStore()
     const liveTokens = this.collectLiveLaunchTokens()
@@ -28686,11 +28754,10 @@ export class OrcaRuntimeService {
    *  clears a local-host reservation), so a local or unknown anchor has no siblings. */
   private resolveBulkForgetAnchorHost(
     clientKind: AuthenticatedClientKind,
-    anchorScope: string
+    anchorScope: string,
+    deviceId?: string
   ): AgentLaunchExecutionHostId | null {
-    const principal: AdmissionPrincipal = clientKind
-      ? { kind: 'remote', id: clientKind }
-      : { kind: 'local' }
+    const principal = agentLaunchAdmissionPrincipal(clientKind, deviceId)
     const anchorRow = getHostAgentLaunchBoundary()
       .capacitySummaryFor(principal)
       .find((row) => row.scope === anchorScope)
@@ -28709,11 +28776,9 @@ export class OrcaRuntimeService {
    *  worktree scopes, excluding the anchor. */
   private enumerateBulkForgetWorktreeSiblings(
     clientKind: AuthenticatedClientKind,
-    opts: { executionHostId: AgentLaunchExecutionHostId; excludeScope: string }
+    opts: { executionHostId: AgentLaunchExecutionHostId; excludeScope: string; deviceId?: string }
   ): string[] {
-    const principal: AdmissionPrincipal = clientKind
-      ? { kind: 'remote', id: clientKind }
-      : { kind: 'local' }
+    const principal = agentLaunchAdmissionPrincipal(clientKind, opts.deviceId)
     const store = this.requireStore()
     const liveTokens = this.collectLiveLaunchTokens()
     return getHostAgentLaunchBoundary()
@@ -28735,16 +28800,18 @@ export class OrcaRuntimeService {
    *  off the hot pending-summary path. */
   async unknownWorktreeAgentLaunchSiblingCount(
     anchorSelector: string,
-    clientKind: AuthenticatedClientKind
+    clientKind: AuthenticatedClientKind,
+    deviceId?: string
   ): Promise<number> {
     const anchor = await this.resolveWorktreeSelector(anchorSelector)
-    const executionHostId = this.resolveBulkForgetAnchorHost(clientKind, anchor.id)
+    const executionHostId = this.resolveBulkForgetAnchorHost(clientKind, anchor.id, deviceId)
     if (!executionHostId) {
       return 0
     }
     return this.enumerateBulkForgetWorktreeSiblings(clientKind, {
       executionHostId,
-      excludeScope: anchor.id
+      excludeScope: anchor.id,
+      ...(deviceId ? { deviceId } : {})
     }).length
   }
 
@@ -28755,16 +28822,18 @@ export class OrcaRuntimeService {
    *  reservation; never kills or spawns (the remote processes may still run). */
   async forgetUnknownWorktreeAgentLaunchSiblings(
     anchorSelector: string,
-    clientKind: AuthenticatedClientKind
+    clientKind: AuthenticatedClientKind,
+    deviceId?: string
   ): Promise<{ forgottenCount: number }> {
     const anchor = await this.resolveWorktreeSelector(anchorSelector)
-    const executionHostId = this.resolveBulkForgetAnchorHost(clientKind, anchor.id)
+    const executionHostId = this.resolveBulkForgetAnchorHost(clientKind, anchor.id, deviceId)
     if (!executionHostId) {
       return { forgottenCount: 0 }
     }
     const siblingScopes = this.enumerateBulkForgetWorktreeSiblings(clientKind, {
       executionHostId,
-      excludeScope: anchor.id
+      excludeScope: anchor.id,
+      ...(deviceId ? { deviceId } : {})
     })
     let forgottenCount = 0
     for (const scope of siblingScopes) {
@@ -28775,7 +28844,8 @@ export class OrcaRuntimeService {
       const result = await this.forgetUnknownWorktreeAgentLaunch(
         `id:${scope}`,
         { expectedOperationId: pending.operationId, clientMutationId: randomUUID() },
-        clientKind
+        clientKind,
+        deviceId
       )
       if (result.status === 'forgotten') {
         forgottenCount += 1
@@ -29005,16 +29075,113 @@ export class OrcaRuntimeService {
     }
   }
 
+  /** The relay connection that owns an execution host's terminals: null for local
+   *  and WSL (both execute on this machine), the SSH target for ssh/runtime hosts.
+   *  Null return = unparseable host id. */
+  private connectionOwnerForExecutionHost(
+    hostId: AgentLaunchExecutionHostId
+  ): { connectionId: string | null } | null {
+    if (hostId === LOCAL_EXECUTION_HOST_ID || hostId.startsWith('wsl:')) {
+      return { connectionId: null }
+    }
+    const parsed = parseExecutionHostId(hostId)
+    if (parsed?.kind === 'ssh') {
+      return { connectionId: parsed.targetId }
+    }
+    if (parsed?.kind === 'runtime') {
+      // Same prefix rule as getRuntimeOwnedSshTargetId (shared constant).
+      return { connectionId: `${RUNTIME_OWNED_SSH_TARGET_ID_PREFIX}${parsed.environmentId}` }
+    }
+    return null
+  }
+
+  /** Whether a MISSING launchToken in this host's listing is absence proof: the
+   *  provider that would list it must echo the token it was handed. A pre-v34
+   *  daemon or a relay predating the echo answers false, so reconciliation falls
+   *  back to non-token identification instead of settling a live launch failed.
+   *  Sync answers only — a re-list cannot await a capability probe — and an
+   *  in-process provider (nothing survived main, so main's own token registry is
+   *  authoritative) never answers at all. */
+  private hostEchoesLaunchTokens(hostId: AgentLaunchExecutionHostId): boolean {
+    const owner = this.connectionOwnerForExecutionHost(hostId)
+    const provider = owner
+      ? owner.connectionId
+        ? this.getSshProviderFn?.(owner.connectionId)
+        : this.getLocalProvider()
+      : null
+    return provider?.providesLaunchTokenListings?.() !== false
+  }
+
+  /** The worktree a launch's terminal must belong to, by intent. */
+  private expectedWorktreeIdForLaunch(pending: PendingAgentLaunchSnapshot): string | null {
+    switch (pending.intent) {
+      case 'interactive':
+      case 'cli':
+      case 'resume':
+        return pending.scope
+      case 'background':
+        return getHostBackgroundAgentLaunchStore().get(pending.scope)?.worktreeId ?? null
+      case 'automation':
+      case 'orchestration':
+        return null
+    }
+  }
+
+  /** Pre-launchToken identification for a host that cannot echo tokens: the
+   *  launch's terminal is proven gone only when the pass re-listed that host and
+   *  found NO live terminal it could still be — no unattributable session on the
+   *  connection, and nothing live left in the launch's own worktree. Anything
+   *  else is inconclusive and holds the launch pending, because settling it
+   *  failed would let Retry spawn a duplicate beside the surviving agent. */
+  private identifyLaunchWithoutTokenEcho(
+    pending: PendingAgentLaunchSnapshot,
+    unattributedRelistConnectionIds?: ReadonlySet<string | null>
+  ): TokenlessLaunchLiveness {
+    const owner = this.connectionOwnerForExecutionHost(pending.snapshot.target.executionHostId)
+    if (!owner || unattributedRelistConnectionIds?.has(owner.connectionId)) {
+      return 'inconclusive'
+    }
+    const expectedWorktreeId = this.expectedWorktreeIdForLaunch(pending)
+    if (!expectedWorktreeId) {
+      return 'inconclusive'
+    }
+    for (const pty of this.ptysById.values()) {
+      if (!pty.connected || (pty.connectionId ?? null) !== owner.connectionId) {
+        continue
+      }
+      if (!pty.worktreeId || !runtimeWorktreeIdsEqual(pty.worktreeId, expectedWorktreeId)) {
+        continue
+      }
+      // A terminal carrying another launch's token is evidence for that launch, not this one.
+      if (pty.launchToken && pty.launchToken !== pending.launchToken) {
+        continue
+      }
+      return 'inconclusive'
+    }
+    return 'absent'
+  }
+
   /** Reconcile every pending agent launch against the current live-terminal view
    *  (U6). Settles-only-on-provider-events: `isHostAuthoritative` names the hosts
    *  this pass can speak for (a non-live pending on such a host is authoritatively
    *  `absent`; every other host stays `unknown`, non-retryable, until its own
-   *  reconnect re-probes). Never polls, never spawns/kills. Routes each settled
-   *  outcome to its owner record by launch intent. */
+   *  reconnect re-probes). Listing authority is ANDed with token-echo authority so
+   *  a survivor that cannot echo launch tokens falls back to non-token
+   *  identification. Never polls, never spawns/kills. Routes each settled outcome
+   *  to its owner record by launch intent. */
   private reconcilePendingAgentLaunches(
     isHostAuthoritative: (hostId: AgentLaunchExecutionHostId) => boolean,
     filter?: (pending: PendingAgentLaunchSnapshot) => boolean,
-    relistedTokenPtyIds?: ReadonlyMap<string, string>
+    // Launch tokens the triggering re-list saw on live sessions whose worktree
+    // could NOT be resolved (so they never entered ptysById). The token match
+    // alone proves the launch's terminal is alive; without this a live SSH
+    // session with failed worktree inference resolves `absent` while its own
+    // connection marks the host authoritative → false spawn_failed + duplicate.
+    relistedTokenPtyIds?: ReadonlyMap<string, string>,
+    // Connections (null = this machine) whose re-list held a live session that
+    // resolved to no worktree. Only the tokenless fallback needs them: a session
+    // it cannot attribute may be the very launch it is judging.
+    unattributedRelistConnectionIds?: ReadonlySet<string | null>
   ): void {
     if (!this.store) {
       return
@@ -29037,19 +29204,10 @@ export class OrcaRuntimeService {
         return relistedPtyId ? { ptyId: relistedPtyId, worktreeId: null } : null
       },
       isHostAuthoritative,
-      expectedWorktreeId: (pending) => {
-        switch (pending.intent) {
-          case 'interactive':
-          case 'cli':
-          case 'resume':
-            return pending.scope
-          case 'background':
-            return getHostBackgroundAgentLaunchStore().get(pending.scope)?.worktreeId ?? null
-          case 'automation':
-          case 'orchestration':
-            return null
-        }
-      },
+      isHostTokenAuthoritative: (hostId) => this.hostEchoesLaunchTokens(hostId),
+      identifyLaunchWithoutTokenEcho: (pending) =>
+        this.identifyLaunchWithoutTokenEcho(pending, unattributedRelistConnectionIds),
+      expectedWorktreeId: (pending) => this.expectedWorktreeIdForLaunch(pending),
       arms,
       settleBoundary: (launchToken, settlement) =>
         getHostAgentLaunchBoundary().settleAgentLaunch(launchToken, settlement),
@@ -29376,7 +29534,8 @@ export class OrcaRuntimeService {
       const resolution = await this.resolveWorkspaceAgentLaunch(
         workspace,
         opts.agentLaunch,
-        opts.clientKind
+        opts.clientKind,
+        opts.deviceId
       )
       if (resolution.kind === 'failed') {
         return { kind: 'failed', outcome: resolution.outcome }
@@ -29888,7 +30047,8 @@ export class OrcaRuntimeService {
   private async resolveWorkspaceAgentLaunch(
     workspace: TerminalWorkspaceLaunchScope,
     request: AgentLaunchInput,
-    clientKind: AuthenticatedClientKind
+    clientKind: AuthenticatedClientKind,
+    deviceId?: string
   ): Promise<WorkspaceAgentLaunchResolution> {
     if (!('resume' in request) && !('vaultResume' in request)) {
       request = sanitizeClientAgentLaunchSourceRecord(request)
@@ -29977,9 +30137,10 @@ export class OrcaRuntimeService {
         // Host-trusted repo overrides for a source-control-recipe sourceRecord
         // (U7): derived from the resolved workspace, never client-supplied.
         recipeRepo: workspace.repo,
-        // Authenticated RPC clients scope admission to their kind; in-process
-        // desktop callers are local. Never derived from client JSON.
-        principal: clientKind ? { kind: 'remote', id: clientKind } : { kind: 'local' }
+        // Authenticated RPC clients scope admission to their kind and paired
+        // device; in-process desktop callers are local. Never derived from
+        // client JSON.
+        principal: agentLaunchAdmissionPrincipal(clientKind, deviceId)
       }
     )
   }
@@ -30055,7 +30216,8 @@ export class OrcaRuntimeService {
       const resolution = await this.resolveWorkspaceAgentLaunch(
         workspace,
         opts.agentLaunch,
-        opts.clientKind
+        opts.clientKind,
+        opts.deviceId
       )
       if (resolution.kind === 'failed') {
         return resolution
@@ -35292,6 +35454,10 @@ export class OrcaRuntimeService {
       typeof connectionId === 'string' ? [connectionId] : []
     )
     const relistedTokenPtyIds = new Map<string, string>()
+    // Connections holding a live session this pass could not attribute to a
+    // worktree. Only the tokenless fallback reads them: on a host that cannot
+    // echo launch tokens, such a session may be the launch being judged.
+    const unattributedRelistConnectionIds = new Set<string | null>()
     for (const session of sessions) {
       // The owning inventory positively observed this PTY again; prior lost-contact doubt is stale.
       this.forgetPtyLivenessVerdict(session.id, livenessObservationAtStart)
@@ -35331,6 +35497,9 @@ export class OrcaRuntimeService {
             persistedWorktree?.id ??
             inferredWorktreeId ??
             findResolvedWorktreeIdForPath(resolvedWorktrees, session.cwd, targetWorktreeId))
+      if (!worktreeId) {
+        unattributedRelistConnectionIds.add(sessionConnectionId)
+      }
       const persistedSurface = persistedIndexes.surfaceByPtyId.get(session.id)
       const restoresExactSurface =
         persistedSurface &&
@@ -35458,7 +35627,8 @@ export class OrcaRuntimeService {
           return hostId !== 'local' && !hostId.startsWith('wsl:') && relistedAuthority(hostId)
         },
         undefined,
-        relistedTokenPtyIds
+        relistedTokenPtyIds,
+        unattributedRelistConnectionIds
       )
     }
     return {

@@ -313,6 +313,100 @@ describe('runSourceControlAgentActionStart', () => {
     expect(mocks.launchAgentInNewTab).toHaveBeenCalledTimes(1)
   })
 
+  // Why: the host reads agentArgs from the stored recipe the locator names, so a
+  // "Don't save" launch must send the edited args in place of that stale snapshot.
+  it('sends the edited args with the locator when they diverge from the stored args', async () => {
+    mocks.launchAgentInNewTab.mockReturnValue({ tabId: 'tab-1', pasteDraftAfterLaunch: true })
+    const settings = {
+      sourceControlAi: {
+        actions: { resolveComments: { agentId: 'codex', agentArgs: '--model gpt-4' } }
+      }
+    } as Parameters<typeof runSourceControlAgentActionStart>[0]['settings']
+
+    await expect(
+      runSourceControlAgentActionStart(buildArgs({ saveTargetValue: 'none', settings }))
+    ).resolves.toBe(true)
+
+    expect(mocks.onSaveAgentDefault).not.toHaveBeenCalled()
+    expect(mocks.launchAgentInNewTab.mock.calls[0]?.[0]).toMatchObject({
+      sourceRecord: { owner: 'source-control-recipe', id: 'resolveComments' },
+      unsavedAgentArgs: '--model gpt-5'
+    })
+  })
+
+  it('keeps the recipe locator when the stored args already match the launch', async () => {
+    mocks.launchAgentInNewTab.mockReturnValue({ tabId: 'tab-1', pasteDraftAfterLaunch: true })
+    const settings = {
+      sourceControlAi: {
+        actions: { resolveComments: { agentId: 'codex', agentArgs: '--model gpt-5' } }
+      }
+    } as Parameters<typeof runSourceControlAgentActionStart>[0]['settings']
+
+    await expect(
+      runSourceControlAgentActionStart(buildArgs({ saveTargetValue: 'none', settings }))
+    ).resolves.toBe(true)
+
+    expect(mocks.launchAgentInNewTab.mock.calls[0]?.[0]).toMatchObject({
+      sourceRecord: { owner: 'source-control-recipe', id: 'resolveComments' }
+    })
+    expect(mocks.launchAgentInNewTab.mock.calls[0]?.[0]).not.toHaveProperty('unsavedAgentArgs')
+  })
+
+  it('keeps the recipe locator once the edited args are persisted', async () => {
+    mocks.launchAgentInNewTab.mockReturnValue({ tabId: 'tab-1', pasteDraftAfterLaunch: true })
+    mocks.onSaveAgentDefault.mockResolvedValue(undefined)
+
+    await expect(
+      runSourceControlAgentActionStart(buildArgs({ saveTargetValue: 'global' }))
+    ).resolves.toBe(true)
+
+    expect(mocks.launchAgentInNewTab.mock.calls[0]?.[0]).toMatchObject({
+      sourceRecord: { owner: 'source-control-recipe', id: 'resolveComments' }
+    })
+  })
+
+  // Why: a repo agentArgs override shadows the global recipe, so saving globally
+  // leaves the host resolving the repo's stale args from the locator.
+  it('sends the edited args when a global save is shadowed by a repo args override', async () => {
+    mocks.launchAgentInNewTab.mockReturnValue({ tabId: 'tab-1', pasteDraftAfterLaunch: true })
+    mocks.onSaveAgentDefault.mockResolvedValue(undefined)
+    const repo = {
+      id: 'repo-1',
+      sourceControlAi: { actionOverrides: { resolveComments: { agentArgs: '--model gpt-4' } } }
+    } as unknown as Parameters<typeof runSourceControlAgentActionStart>[0]['repo']
+
+    await expect(
+      runSourceControlAgentActionStart(
+        buildArgs({ saveTargetValue: 'global', repoId: 'repo-1', repo })
+      )
+    ).resolves.toBe(true)
+
+    expect(mocks.onSaveAgentDefault).toHaveBeenCalledTimes(1)
+    expect(mocks.launchAgentInNewTab.mock.calls[0]?.[0]).toMatchObject({
+      sourceRecord: { owner: 'source-control-recipe', id: 'resolveComments' },
+      unsavedAgentArgs: '--model gpt-5'
+    })
+  })
+
+  it('keeps the recipe locator when the save lands on the shadowing repo override', async () => {
+    mocks.launchAgentInNewTab.mockReturnValue({ tabId: 'tab-1', pasteDraftAfterLaunch: true })
+    mocks.onSaveAgentDefault.mockResolvedValue(undefined)
+    const repo = {
+      id: 'repo-1',
+      sourceControlAi: { actionOverrides: { resolveComments: { agentArgs: '--model gpt-4' } } }
+    } as unknown as Parameters<typeof runSourceControlAgentActionStart>[0]['repo']
+
+    await expect(
+      runSourceControlAgentActionStart(
+        buildArgs({ saveTargetValue: 'repo', repoId: 'repo-1', repo })
+      )
+    ).resolves.toBe(true)
+
+    expect(mocks.launchAgentInNewTab.mock.calls[0]?.[0]).toMatchObject({
+      sourceRecord: { owner: 'source-control-recipe', id: 'resolveComments' }
+    })
+  })
+
   it('keeps injected onStart successes immediate', async () => {
     const onStart = vi.fn().mockResolvedValue(true)
 

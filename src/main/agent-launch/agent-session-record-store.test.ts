@@ -2,7 +2,7 @@
 // staging, provider-session bind (by launch token) → durable resume record,
 // ownership-key resolution, incompatible/non-resumable bind rejection, spawn-
 // failure rollback, dispose-keeps-record, and the one-time legacy handoff.
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { AgentLaunchSnapshot } from '../../shared/agent-launch-host-contract'
 import type { TuiAgent } from '../../shared/types'
 import {
@@ -16,6 +16,7 @@ import {
   type AgentSessionRecordStoreDurableState,
   type StagedLaunchRegistration
 } from './agent-session-record-store'
+import { MAX_SESSION_RECORDS } from './agent-session-record-retention'
 
 function snapshot(overrides: Partial<AgentLaunchSnapshot> = {}): AgentLaunchSnapshot {
   return {
@@ -189,6 +190,51 @@ describe('AgentSessionRecordStore lifecycle', () => {
     store.register(registration())
     store.disposeStagingForPane('pane-a')
     expect(store.bindProviderSessionByToken('token-a', SESSION)).toBeNull()
+  })
+
+  it('dispose by terminal clears staging a pane-less surface registered', () => {
+    const store = new AgentSessionRecordStore()
+    // Runtime/mobile launches carry a terminal id but never a stable pane key,
+    // so the pane teardown can never reach them.
+    store.register(registration({ paneKey: undefined, terminalId: 'term-a' }))
+    store.disposeStagingForPane('pane-a')
+    store.disposeStagingForTerminal('term-a')
+    expect(store.bindProviderSessionByToken('token-a', SESSION)).toBeNull()
+  })
+
+  it('bounds retained durable records, least-recently-updated first', () => {
+    let clock = 0
+    const store = new AgentSessionRecordStore({ now: () => (clock += 1) })
+    const total = MAX_SESSION_RECORDS + 4
+    for (let index = 0; index < total; index += 1) {
+      store.register(registration({ launchToken: `token-${index}`, paneKey: `pane-${index}` }))
+      store.bindProviderSessionByToken(`token-${index}`, { key: 'session_id', id: `sess-${index}` })
+    }
+    expect(store.durableState().records).toHaveLength(MAX_SESSION_RECORDS)
+    for (let index = 0; index < 4; index += 1) {
+      expect(
+        store.resolveByOwnershipKey({ ...OWNERSHIP, providerSessionId: `sess-${index}` })
+      ).toBeNull()
+    }
+    // The record the last bind just created is never the eviction candidate.
+    expect(
+      store.resolveByOwnershipKey({ ...OWNERSHIP, providerSessionId: `sess-${total - 1}` })
+    ).not.toBeNull()
+  })
+
+  it('trims a pre-bound record file at rehydrate without a write', () => {
+    let clock = 0
+    const seed = new AgentSessionRecordStore({ now: () => (clock += 1) })
+    for (let index = 0; index < MAX_SESSION_RECORDS + 3; index += 1) {
+      seed.register(registration({ launchToken: `token-${index}` }))
+      seed.bindProviderSessionByToken(`token-${index}`, { key: 'session_id', id: `sess-${index}` })
+    }
+    const store = new AgentSessionRecordStore()
+    const sink = vi.fn()
+    store.setDurablePersistence(sink)
+    store.rebuildRecordsFrom(seed.durableState().records)
+    expect(store.durableState().records).toHaveLength(MAX_SESSION_RECORDS)
+    expect(sink).not.toHaveBeenCalled()
   })
 
   it('two custom ids on one base/provider session resolve to one owner record', () => {

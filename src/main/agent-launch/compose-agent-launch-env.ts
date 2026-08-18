@@ -130,6 +130,19 @@ export function composeAgentLaunchEnv(input: ComposeAgentLaunchEnvInput): Record
   return env
 }
 
+/** The layer a spawned child actually inherits: `process.env` values are typed
+ *  `string | undefined` and an undefined key is absent from the child's block. */
+export function inheritedEnvLayer(source: NodeJS.ProcessEnv): EnvLayer {
+  const layer = nullProtoEnv()
+  for (const key of Object.keys(source)) {
+    const value = source[key]
+    if (value !== undefined) {
+      layer[key] = value
+    }
+  }
+  return layer
+}
+
 /** Native-Windows environment-block size in UTF-16 code units: each entry is
  *  `key=value\0`, with one extra terminating NUL after the final entry. */
 export function measureWindowsEnvironmentBlockCodeUnits(env: EnvLayer): number {

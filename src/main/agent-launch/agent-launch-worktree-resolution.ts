@@ -136,7 +136,7 @@ export async function prepareWorktreeAgentLaunch(
 
 /** Stage 2: with the authoritative worktree path and the pinned reservation,
  *  re-resolve, recheck the config-only digest, and convert the reservation into
- *  a startup plan + receipt (or release it on any failure). Creates no PTY: the
+ *  a startup plan + receipt (or release it on any rejection). Creates no PTY: the
  *  caller persists the pending record, then spawns and settles. */
 export async function executeWorktreeAgentLaunch(
   deps: WorktreeAgentLaunchDeps,
@@ -144,50 +144,60 @@ export async function executeWorktreeAgentLaunch(
   authoritativePaths: { repoPath: string | null; worktreePath: string | null },
   reservation: { reservationId: string; expectedStableInputDigest: string }
 ): Promise<ExecuteAgentLaunchResult> {
-  const hostState = await deriveAgentLaunchHostState(
-    {
-      getSettings: deps.getSettings,
-      getCatalogRevision: deps.getCatalogRevision,
-      detectStockBaseAgents: deps.detectStockBaseAgents,
-      resolveTargetHomePath: deps.resolveTargetHomePath,
-      ...(deps.resolveTransportConfidentiality
-        ? { resolveTransportConfidentiality: deps.resolveTransportConfidentiality }
-        : {})
-    },
-    context.descriptor,
-    authoritativePaths
-  )
-  const resolve = buildHostStateResolve(toSpawnDeps(deps), {
-    request: context.request,
-    intent: context.intent,
-    target: hostState.target,
-    variables: hostState.variables,
-    scope: context.scope,
-    principal: context.principal
-  })
-  return deps.boundary.executeReservedAgentLaunch({
-    scope: context.scope,
-    // Stage 2 holds the authoritative worktree; a background intent names it
-    // even when the caller did not thread context.worktreeId explicitly.
-    worktreeId:
-      context.worktreeId !== undefined
-        ? context.worktreeId
-        : context.intent.kind === 'background'
-          ? context.intent.worktreeId
-          : null,
-    principal: context.principal,
-    resolve,
-    prompt: context.request.prompt ?? '',
-    ...(context.request.allowEmptyPromptLaunch !== undefined
-      ? { allowEmptyPromptLaunch: context.request.allowEmptyPromptLaunch }
-      : {}),
-    ...(context.request.promptDelivery !== undefined
-      ? { promptDelivery: context.request.promptDelivery }
-      : {}),
-    maxInlineDraftChars: STARTUP_COMMAND_TEXT_MAX_CHARS,
-    ...(deps.markWorkspaceTrusted ? { preflight: deps.markWorkspaceTrusted } : {}),
-    ...(deps.prepareEnv ? { prepareEnv: deps.prepareEnv } : {}),
-    reservationId: reservation.reservationId,
-    expectedStableInputDigest: reservation.expectedStableInputDigest
-  })
+  try {
+    const hostState = await deriveAgentLaunchHostState(
+      {
+        getSettings: deps.getSettings,
+        getCatalogRevision: deps.getCatalogRevision,
+        detectStockBaseAgents: deps.detectStockBaseAgents,
+        resolveTargetHomePath: deps.resolveTargetHomePath,
+        ...(deps.resolveTransportConfidentiality
+          ? { resolveTransportConfidentiality: deps.resolveTransportConfidentiality }
+          : {})
+      },
+      context.descriptor,
+      authoritativePaths
+    )
+    const resolve = buildHostStateResolve(toSpawnDeps(deps), {
+      request: context.request,
+      intent: context.intent,
+      target: hostState.target,
+      variables: hostState.variables,
+      scope: context.scope,
+      principal: context.principal
+    })
+    return await deps.boundary.executeReservedAgentLaunch({
+      scope: context.scope,
+      // Stage 2 holds the authoritative worktree; a background intent names it
+      // even when the caller did not thread context.worktreeId explicitly.
+      worktreeId:
+        context.worktreeId !== undefined
+          ? context.worktreeId
+          : context.intent.kind === 'background'
+            ? context.intent.worktreeId
+            : null,
+      principal: context.principal,
+      resolve,
+      prompt: context.request.prompt ?? '',
+      ...(context.request.allowEmptyPromptLaunch !== undefined
+        ? { allowEmptyPromptLaunch: context.request.allowEmptyPromptLaunch }
+        : {}),
+      ...(context.request.promptDelivery !== undefined
+        ? { promptDelivery: context.request.promptDelivery }
+        : {}),
+      maxInlineDraftChars: STARTUP_COMMAND_TEXT_MAX_CHARS,
+      ...(deps.markWorkspaceTrusted ? { preflight: deps.markWorkspaceTrusted } : {}),
+      ...(deps.prepareEnv ? { prepareEnv: deps.prepareEnv } : {}),
+      reservationId: reservation.reservationId,
+      expectedStableInputDigest: reservation.expectedStableInputDigest
+    })
+  } catch {
+    // The stage-2 host reads (SSH/WSL detection + home probe) happen before the
+    // boundary's guarded release path, so a disconnect rejecting here would
+    // strand the pre-git hold until restart and repeated races would exhaust
+    // capacity. Releasing is idempotent, so a hold the boundary already freed is
+    // unaffected.
+    deps.boundary.releaseReservedAgentLaunch(reservation.reservationId)
+    return { ok: false, failure: { code: 'spawn_failed' } }
+  }
 }

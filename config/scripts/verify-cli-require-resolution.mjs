@@ -12,6 +12,12 @@ import { pathToFileURL } from 'node:url'
 
 const RELATIVE_REQUIRE_PATTERN = /\brequire\(\s*(["'])(\.{1,2}\/[^"']+)\1\s*\)/g
 
+// Why: build:cli emits compiled specs into out/, but the shipped CLI never
+// requires them — they run from src under vitest. Seeding the walk with them
+// would fail the build on imports (e.g. main-side parity checks) that no user
+// command can reach. They are still walked if a real entry pulls one in.
+const COMPILED_SPEC_PATTERN = /\.(test|spec)\.js$/
+
 function listJsFilesRecursively(dir) {
   const files = []
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -51,7 +57,7 @@ export function verifyCliRequireResolution({
     return { checkedFiles: 0, missing: [], skipped: true }
   }
 
-  const queue = listJsFilesRecursively(cliDir)
+  const queue = listJsFilesRecursively(cliDir).filter((file) => !COMPILED_SPEC_PATTERN.test(file))
   const visited = new Set(queue)
   const missing = []
   while (queue.length > 0) {

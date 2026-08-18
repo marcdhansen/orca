@@ -389,6 +389,9 @@ const MOBILE_RPC_METHOD_ALLOWLIST = new Set([
   // Why: env-free reference snapshot fetch for the mobile agent-reference
   // cache; authoring mutations stay desktop-only and are NOT allowlisted.
   'settings.agentReferences.get',
+  // Why: dedicated env-free catalog read so unrelated mobile settings.get calls
+  // stop carrying the 512 KiB projection; read-only, authoring stays desktop.
+  'settings.agentCatalog.get',
   'settings.update',
   'settings.updateTerminalQuickCommands',
   'ssh.connect',

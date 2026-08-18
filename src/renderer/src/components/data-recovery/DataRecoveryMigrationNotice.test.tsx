@@ -81,14 +81,54 @@ describe('DataRecoveryMigrationNotice', () => {
     await vi.waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
   })
 
-  it('opens Data recovery listing the pinned point with Prepare downgrade', async () => {
+  it('shows a non-retryable read-only notice when the profile schema is too new', async () => {
+    installApi({
+      migrationStatus: vi.fn().mockResolvedValue({
+        agentCatalogMigrationError: null,
+        agentCatalogSchemaTooNew: { persistedVersion: 2, supportedVersion: 1 }
+      })
+    })
+    render(<DataRecoveryMigrationNotice />)
+    expect(
+      await screen.findByText('Custom agents are read-only in this version of Orca')
+    ).toBeTruthy()
+    expect(screen.getByRole('alert').textContent).toContain('saved by a newer version of Orca')
+    expect(
+      screen.getByText('Profile agent catalog v2; this version of Orca supports v1.')
+    ).toBeTruthy()
+    // Retry re-runs the pinned backup, which cannot clear a newer schema.
+    expect(screen.queryByText('Retry migration')).toBeNull()
+  })
+
+  it('prefers the read-only notice over a retry offer when both states are reported', async () => {
+    installApi({
+      migrationStatus: vi.fn().mockResolvedValue({
+        agentCatalogMigrationError: 'disk full',
+        agentCatalogSchemaTooNew: { persistedVersion: 3, supportedVersion: 1 }
+      })
+    })
+    render(<DataRecoveryMigrationNotice />)
+    expect(
+      await screen.findByText('Custom agents are read-only in this version of Orca')
+    ).toBeTruthy()
+    expect(screen.queryByText('Retry migration')).toBeNull()
+  })
+
+  it('ignores an older host that never sends the schema field', async () => {
+    installApi({
+      migrationStatus: vi.fn().mockResolvedValue({ agentCatalogMigrationError: 'disk full' })
+    })
+    render(<DataRecoveryMigrationNotice />)
+    expect(await screen.findByText('Retry migration')).toBeTruthy()
+    expect(screen.queryByText('Custom agents are read-only in this version of Orca')).toBeNull()
+  })
+
+  it('opens Data recovery listing the pinned point with restore', async () => {
     const api = installApi()
     render(<DataRecoveryMigrationNotice />)
     fireEvent.click(await screen.findByText('Open Data recovery'))
-    expect(
-      await screen.findByText('Before the custom-agents update (agent catalog v1)')
-    ).toBeTruthy()
-    fireEvent.click(screen.getByText('Prepare downgrade…'))
+    expect(await screen.findByText('Before custom agents')).toBeTruthy()
+    fireEvent.click(screen.getByText('Restore these settings…'))
     fireEvent.click(screen.getByText('Restore and quit'))
     await vi.waitFor(() =>
       expect(api.restore).toHaveBeenCalledWith({

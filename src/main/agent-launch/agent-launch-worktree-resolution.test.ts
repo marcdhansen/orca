@@ -231,6 +231,44 @@ describe('two-stage worktree agent-launch resolution', () => {
     expect(store.pendingForWorktree('attempt-1')).toBe(0)
   })
 
+  it('frees the hold when a stage-2 host read rejects, so repeated races keep capacity', async () => {
+    const resolve = vi
+      .fn<(request: ResolveAgentLaunchRequest) => ResolveAgentLaunchOutcome>()
+      .mockReturnValue({ ok: true, launch: makeLaunch('fp-real', 'sd-1', '/wt-real') })
+    const { deps, store } = makeSetup(resolve)
+
+    // More rounds than MAX_PENDING_LAUNCHES_PER_PRINCIPAL: a leaked hold per round
+    // exhausts the principal's capacity until restart.
+    for (let round = 0; round < 70; round++) {
+      deps.resolveTargetHomePath = async () => '/home/dev'
+      const prepared = await prepareWorktreeAgentLaunch(deps, CONTEXT, {
+        repoPath: '/repo',
+        worktreePath: '/wt-provisional'
+      })
+      expect(prepared.ok).toBe(true)
+      if (!prepared.ok) {
+        return
+      }
+      // The SSH connection drops between git creating the worktree and stage 2.
+      deps.resolveTargetHomePath = async () => {
+        throw new Error('ssh channel closed')
+      }
+      const executed = await executeWorktreeAgentLaunch(
+        deps,
+        CONTEXT,
+        { repoPath: '/repo', worktreePath: '/wt-real' },
+        { reservationId: prepared.reservationId, expectedStableInputDigest: 'sd-1' }
+      )
+      expect(executed.ok).toBe(false)
+      if (executed.ok) {
+        return
+      }
+      expect('failure' in executed && executed.failure.code).toBe('spawn_failed')
+      expect(store.pendingForPrincipal(LOCAL)).toBe(0)
+      expect(store.pendingCount()).toBe(0)
+    }
+  })
+
   it('takes no reservation when pre-git resolution fails', async () => {
     const resolve = vi
       .fn<(request: ResolveAgentLaunchRequest) => ResolveAgentLaunchOutcome>()

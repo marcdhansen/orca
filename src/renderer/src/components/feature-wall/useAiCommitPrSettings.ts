@@ -9,6 +9,7 @@ import {
 } from '../../../../shared/commit-message-agent-spec'
 import { getAgentCatalog } from '@/lib/agent-catalog'
 import { saveCommitMessageAiSettings } from '@/lib/agent-catalog-authoring'
+import { notifyAgentAuthoringWriteFailure } from '@/lib/agent-authoring-write-failure-toast'
 import { useAppStore } from '@/store'
 import {
   EMPTY_COMMIT_MESSAGE_AI_SETTINGS,
@@ -89,7 +90,9 @@ export function useAiCommitPrSettings(): AiCommitPrSettingsViewModel {
     if (!settings) {
       return
     }
-    void saveCommitMessageAiSettings({ ...config, ...patch })
+    // Why: these cards render in the feature wall and onboarding overlay, neither
+    // of which has an error slot — toast so a rejected write is not read as saved.
+    void saveCommitMessageAiSettings({ ...config, ...patch }).then(notifyAgentAuthoringWriteFailure)
   }
 
   const toggleAi = (): void => {

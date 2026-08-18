@@ -220,14 +220,23 @@ describe('describeSpawnExecutionHost', () => {
   })
 
   // A WSL UNC cwd runs a Linux userland; win32 here picks the Windows executable
-  // variant and PowerShell-quotes a bash command line.
-  it('describes a WSL UNC cwd as a linux local target with no Windows shell', () => {
+  // variant and PowerShell-quotes a bash command line. Classifying it 'local'
+  // would also host-id it `local`, leaving UNC/drive paths in the Linux argv.
+  it('describes a WSL UNC cwd as its own wsl host with no Windows shell', () => {
     const descriptor = describeSpawnExecutionHost({
       connectionId: null,
       cwd: '\\\\wsl.localhost\\Ubuntu\\home\\me\\repo',
       terminalWindowsShell: 'powershell'
     })
-    expect(descriptor).toEqual({ kind: 'local', platform: 'linux' })
+    expect(descriptor).toEqual({ kind: 'wsl', distro: 'Ubuntu' })
+    expect(platformForDescriptor(descriptor)).toBe('linux')
+    expect(executionHostIdForDescriptor(descriptor)).toBe('wsl:Ubuntu')
+  })
+
+  it('describes a legacy \\\\wsl$ UNC cwd as the same wsl host', () => {
+    expect(
+      describeSpawnExecutionHost({ connectionId: null, cwd: '\\\\wsl$\\Debian\\srv\\app' })
+    ).toEqual({ kind: 'wsl', distro: 'Debian' })
   })
 })
 

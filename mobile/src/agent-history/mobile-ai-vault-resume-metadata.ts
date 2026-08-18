@@ -41,7 +41,12 @@ export async function loadMobileResumeMetadata(
       .sendRequest('projectGroup.list', undefined, { timeoutMs: RESUME_RPC_TIMEOUT_MS })
       .catch(() => null),
     client
-      .sendRequest('settings.get', undefined, { timeoutMs: RESUME_RPC_TIMEOUT_MS })
+      .sendRequest(
+        'settings.get',
+        // Resume reads only `settings`; the catalog comes from settings.agentCatalog.get.
+        { includeAgentCatalog: false },
+        { timeoutMs: RESUME_RPC_TIMEOUT_MS }
+      )
       .catch(() => null),
     client
       .sendRequest('worktree.ps', { limit: 10000 }, { timeoutMs: RESUME_RPC_TIMEOUT_MS })

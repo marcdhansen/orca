@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AppState } from '@/store'
+import type { CustomTuiAgentId } from '../../../shared/types'
 import type * as TuiAgentSelectionModule from '../../../shared/tui-agent-selection'
 import type * as TuiAgentStartupModule from '@/lib/tui-agent-startup'
 
@@ -665,6 +666,76 @@ describe('launchWorkItemDirect', () => {
       agentLaunch: { selection: { kind: 'agent', agent: 'pi' } }
     })
     expect(mocks.activateAndRevealWorktree.mock.calls.at(-1)?.[1]).not.toHaveProperty('startup')
+  })
+
+  it('launches a custom default and a custom override that base detection never reports', async () => {
+    const customCodex =
+      'custom-agent:codex:11111111-1111-4111-8111-111111111111' as CustomTuiAgentId
+    globalThis.window = {
+      api: {
+        ...mockApi,
+        settings: {
+          agentCatalog: {
+            getLocal: vi.fn().mockResolvedValue({
+              customAgents: [
+                {
+                  status: 'ready',
+                  definition: {
+                    id: customCodex,
+                    baseAgent: 'codex',
+                    label: 'Model-specific Codex',
+                    args: '--model custom-model',
+                    syncEnv: false,
+                    commandOverride: '/opt/bin/codex'
+                  },
+                  envSummary: { entryCount: 0, bytes: 0 },
+                  availabilityReason: 'configured-executable'
+                }
+              ]
+            })
+          }
+        }
+      }
+    } as unknown as Window & typeof globalThis
+    mocks.store.settings = {
+      defaultTuiAgent: customCodex,
+      disabledTuiAgents: [],
+      agentCmdOverrides: {}
+    } as unknown as AppState['settings']
+    const { launchWorkItemDirect } = await import('./launch-work-item-direct')
+    const item = {
+      title: 'Fix failing checks',
+      url: 'https://github.com/acme/repo/pull/1',
+      type: 'issue' as const,
+      number: 1,
+      pasteContent: 'Fix the failing checks.'
+    }
+
+    await expect(
+      launchWorkItemDirect({
+        item,
+        repoId: 'repo-1',
+        openModalFallback: mocks.openModalFallback,
+        launchSource: 'task_page'
+      })
+    ).resolves.toBe(true)
+    expect(mocks.createWorktree.mock.calls[0]?.[25]).toMatchObject({
+      agentLaunch: { selection: { kind: 'agent', agent: customCodex } }
+    })
+
+    await expect(
+      launchWorkItemDirect({
+        item,
+        repoId: 'repo-1',
+        openModalFallback: mocks.openModalFallback,
+        launchSource: 'task_page',
+        agentOverride: customCodex
+      })
+    ).resolves.toBe(true)
+    expect(mocks.createWorktree.mock.calls[1]?.[25]).toMatchObject({
+      agentLaunch: { selection: { kind: 'agent', agent: customCodex } }
+    })
+    expect(mocks.toastError).not.toHaveBeenCalled()
   })
 
   it('plans direct local Windows-path launches with POSIX startup for WSL project runtime', async () => {

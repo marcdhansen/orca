@@ -18,6 +18,7 @@ import {
   resolveStartupShell,
   type AgentStartupShell
 } from './tui-agent-startup-shell'
+import { startupArgvExceedsShellLimit } from './agent-startup-command-limit'
 import { TUI_AGENT_CONFIG } from './tui-agent-config'
 import { planHermesStartupQueryFromArgv } from './hermes-startup-query'
 import { inlineAgentDraftFitsPlatform } from './agent-draft-platform-limit'
@@ -188,17 +189,18 @@ export function buildAgentStartupPlanFromResolvedLaunch(
           args.maxInlineDraftChars ?? Number.POSITIVE_INFINITY
         )
       : submitParts(launch, trimmedPrompt)
+  const offArgvParts: PromptParts = {
+    ...NO_PROMPT,
+    ...((args.promptDelivery ?? 'submit') === 'draft'
+      ? { draftPrompt: trimmedPrompt }
+      : { followupPrompt: trimmedPrompt })
+  }
   // Why: the cmd quoter cannot encode % ! ^ " inside a double-quoted argv
   // element (cmd_metachar) — an embedded quote would re-split the command line.
   // Fail closed off argv and deliver the FULL prompt via the readiness writer.
-  const parts =
+  const encodableParts =
     shell === 'cmd' && plannedParts.argvSuffix.some((el) => CMD_UNENCODABLE_CHAR_RE.test(el))
-      ? {
-          ...NO_PROMPT,
-          ...((args.promptDelivery ?? 'submit') === 'draft'
-            ? { draftPrompt: trimmedPrompt }
-            : { followupPrompt: trimmedPrompt })
-        }
+      ? offArgvParts
       : plannedParts
 
   // The durable launch config records only the base command (no resume flags), so
@@ -206,6 +208,23 @@ export function buildAgentStartupPlanFromResolvedLaunch(
   // in the one-shot launchCommand between the base argv and any prompt suffix.
   const baseCommand = buildShellCommandFromArgv(launch.argv, shell)
   const resumeSuffix = launch.resumeArgvSuffix ?? []
+  // Why: the resolver capped the resolved argv, but the prompt is appended HERE
+  // and the RPC admits up to 100k chars — an argv/flag prompt can push the final
+  // command past the target's hard ceiling (cmd.exe truncates at 8191), which no
+  // delivery path can carry. Move the FULL prompt off argv, as above.
+  // The env-var draft path adds no argv element but still appends a cleanup
+  // clause, which alone can cross the ceiling on a near-full base command.
+  const addsCommandText =
+    encodableParts.argvSuffix.length > 0 || encodableParts.commandSuffix.length > 0
+  const parts =
+    addsCommandText &&
+    startupArgvExceedsShellLimit(
+      [...launch.argv, ...resumeSuffix, ...encodableParts.argvSuffix],
+      shell,
+      encodableParts.commandSuffix
+    )
+      ? offArgvParts
+      : encodableParts
   const finalArgv = [...launch.argv, ...resumeSuffix, ...parts.argvSuffix]
   const spawnEnv = { ...launch.agentEnv, ...parts.extraEnv }
   return {

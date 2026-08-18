@@ -41,6 +41,8 @@ export type RevisionedSnapshotSync<V extends RevisionedSnapshot> = {
   clear: (hostId: string) => void
   getSnapshot: (hostId: string) => V | null
   subscribe: (hostId: string, listener: () => void) => () => void
+  // Hosts still holding a state entry; proves clear() drops the key, not just the value.
+  trackedHostCountForTests: () => number
 }
 
 type HostState<V> = {
@@ -207,6 +209,9 @@ export function createRevisionedSnapshotSync<
       if (!state) {
         return
       }
+      // Fence in-flight fetches and stale handles on the object they captured,
+      // THEN drop the key — keeping every host ever connected to would grow this
+      // map for the process lifetime.
       state.epoch += 1
       state.value = null
       state.runtimeId = null
@@ -214,10 +219,14 @@ export function createRevisionedSnapshotSync<
       state.fetching = false
       state.hydratePending = false
       state.highestAnnounced = null
+      states.delete(hostId)
       notify(hostId)
     },
     getSnapshot(hostId) {
       return states.get(hostId)?.value ?? null
+    },
+    trackedHostCountForTests() {
+      return states.size
     },
     subscribe(hostId, listener) {
       let set = listeners.get(hostId)

@@ -71,7 +71,9 @@ export const SESSION_TAB_METHODS: RpcAnyMethod[] = [
         ...(params.launchAgent ? { launchAgent: params.launchAgent } : {}),
         ...(params.viewMode ? { viewMode: params.viewMode } : {}),
         // Authenticated RPC scope for host-resolved launches; never client JSON.
+        // The paired device narrows the admission principal to this device.
         clientKind,
+        ...(pairedDeviceId ? { deviceId: pairedDeviceId } : {}),
         activate: params.activate,
         select: params.select,
         clientNavigationId: pairedDeviceId,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { CreateTerminalTab } from './session-tabs-schemas'
 import { AgentLaunchInputSchema, AgentLaunchSpawnRequestSchema } from './agent-launch-spawn-schema'
+import { MAX_AGENT_ARGS_CODE_UNITS } from '../../../../shared/custom-tui-agent-fields'
 
 const CUSTOM_ID = 'custom-agent:claude:11111111-2222-4333-8444-555555555555'
 
@@ -85,6 +86,50 @@ describe('agentLaunch unattended declaration', () => {
     })
     expect(parsed.success).toBe(true)
     expect(parsed.success && parsed.data.unattended).toBeUndefined()
+  })
+})
+
+// P1-24: unsaved recipe arg edits ride the launch as client text, so they must
+// survive parsing AND be length-bounded like the stored recipe args.
+describe('agentLaunch unsaved recipe args', () => {
+  it('preserves client-supplied unsaved args instead of stripping them', () => {
+    const parsed = AgentLaunchSpawnRequestSchema.safeParse({
+      selection: { kind: 'agent', agent: 'claude' },
+      sourceRecord: { owner: 'source-control-recipe', id: 'fixChecks' },
+      unsavedAgentArgs: '--model sonnet'
+    })
+    expect(parsed.success).toBe(true)
+    expect(parsed.success && parsed.data.unsavedAgentArgs).toBe('--model sonnet')
+  })
+
+  it('accepts an empty string (the user cleared the args)', () => {
+    const parsed = AgentLaunchSpawnRequestSchema.safeParse({
+      selection: { kind: 'agent', agent: 'claude' },
+      sourceRecord: { owner: 'source-control-recipe', id: 'fixChecks' },
+      unsavedAgentArgs: ''
+    })
+    expect(parsed.success).toBe(true)
+    expect(parsed.success && parsed.data.unsavedAgentArgs).toBe('')
+  })
+
+  it('rejects oversized unsaved args', () => {
+    const parsed = AgentLaunchSpawnRequestSchema.safeParse({
+      selection: { kind: 'agent', agent: 'claude' },
+      sourceRecord: { owner: 'source-control-recipe', id: 'fixChecks' },
+      unsavedAgentArgs: 'a'.repeat(MAX_AGENT_ARGS_CODE_UNITS + 1)
+    })
+    expect(parsed.success).toBe(false)
+  })
+
+  it('rejects a non-string on the CreateTerminalTab agentLaunch field', () => {
+    const parsed = CreateTerminalTab.safeParse({
+      worktree: 'w1',
+      agentLaunch: {
+        selection: { kind: 'agent', agent: 'claude' },
+        unsavedAgentArgs: ['--model', 'sonnet']
+      }
+    })
+    expect(parsed.success).toBe(false)
   })
 })
 

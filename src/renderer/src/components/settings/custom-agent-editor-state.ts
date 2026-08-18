@@ -316,10 +316,14 @@ export function resolveMutationErrorFocus(
       return result.envEntryIndex === undefined
         ? { field: result.field }
         : { field: result.field, envEntryIndex: result.envEntryIndex }
+    // None of these blame a field — including a failed durable write and a
+    // read-only profile, where the draft stands and simply isn't saved.
     case 'catalog_revision_conflict':
     case 'agent_catalog_local_payload_too_large':
     case 'agent_catalog_payload_too_large':
     case 'stale_agent_repair_token':
+    case 'agent_catalog_write_failed':
+    case 'agent_catalog_schema_too_new':
       return null
   }
 }

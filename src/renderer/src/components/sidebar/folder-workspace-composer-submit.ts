@@ -6,6 +6,7 @@ import {
   type WorktreeStartupPayload
 } from '@/lib/worktree-activation'
 import { isWorkItemLookupText } from '@/lib/work-item-lookup-text'
+import { assertRuntimeSupportsAgentLaunchIdentity } from '@/runtime/agent-launch-identity-negotiation'
 import { useAppStore } from '@/store'
 import { resolveTuiAgentConfig } from '../../../../shared/custom-tui-agents'
 import type { AgentLaunchSpawnRequest } from '../../../../shared/agent-launch-spawn-request'
@@ -130,6 +131,12 @@ export async function submitFolderWorkspaceCreate({
   createFolderWorkspace,
   onOpenChange
 }: SubmitFolderWorkspaceCreateParams): Promise<boolean> {
+  // Why: this launch carries no client-assembled command, so a pre-identity host
+  // would strip agentLaunch, open a blank shell and drop the note/linked draft.
+  // Refuse before creating anything — the composer stays open with the note.
+  if (quickAgent && runtimeEnvironmentId) {
+    await assertRuntimeSupportsAgentLaunchIdentity(runtimeEnvironmentId)
+  }
   const linkedName = linkedWorkItem ? getLinkedItemDisplayName(linkedWorkItem) : null
   const nameIsAutoManaged = !name.trim() || name === lastAutoName || isWorkItemLookupText(name)
   const workspaceName =

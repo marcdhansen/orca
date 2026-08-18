@@ -47,6 +47,8 @@ export type AgentReferenceMutationResult<
         | 'invalid_agent_reference'
         | 'invalid_reference_field'
         | 'agent_reference_payload_too_large'
+        // The durable settings write failed and was rolled back: nothing persisted.
+        | 'agent_reference_write_failed'
       referenceRevision: number
       catalogRevision: number
       snapshot?: TSnapshot // current snapshot on revision conflict

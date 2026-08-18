@@ -70,6 +70,7 @@ import {
   listRemoteRuntimeSessionTabsDeduped
 } from './remote-runtime-session-tabs-inflight'
 import { runRemoteAgentSessionLaunch } from './remote-agent-session-launch'
+import { negotiateAgentLaunchIdentityArm } from './agent-launch-identity-negotiation'
 import { translate } from '../i18n/i18n'
 import { getRuntimeEnvironmentRevision } from './runtime-environment-revision'
 import { parsePaneKey } from '../../../shared/stable-pane-id'
@@ -286,7 +287,13 @@ async function createWebRuntimeSessionTerminalResult(
   let createdTabId: string | undefined
   let createdLeafId: string | undefined
   try {
-    if (args.agentLaunch) {
+    // Negotiate before sending: a pre-identity host strips agentLaunch and spawns
+    // a bare shell it still answers as a created terminal. Vault resume keeps its
+    // client-assembled command for exactly this case; without one, refuse.
+    const agentLaunchArm = args.agentLaunch
+      ? await negotiateAgentLaunchIdentityArm(environmentId, Boolean(args.command))
+      : 'legacy'
+    if (args.agentLaunch && agentLaunchArm === 'identity') {
       const response = await callEnvironment({
         method: 'session.tabs.createTerminal',
         params: {

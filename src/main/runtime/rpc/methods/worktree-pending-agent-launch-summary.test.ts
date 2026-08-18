@@ -32,8 +32,8 @@ describe('worktree.pendingAgentLaunchSummary RPC', () => {
     )
 
     expect(response).toMatchObject({ ok: true, result: { rows: [{ liveness: 'live' }] } })
-    // clientKind is undefined for an in-process/local dispatch; it scopes the
-    // admission principal and is never derived from the client JSON.
-    expect(pendingAgentLaunchSummary).toHaveBeenCalledWith(undefined)
+    // clientKind and pairedDeviceId are both undefined for an in-process/local
+    // dispatch; together they scope the admission principal, never client JSON.
+    expect(pendingAgentLaunchSummary).toHaveBeenCalledWith(undefined, undefined)
   })
 })

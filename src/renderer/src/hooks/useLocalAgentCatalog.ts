@@ -1,5 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { LocalAgentCatalogSnapshot } from '../../../shared/agent-catalog-snapshot'
+import {
+  applyLocalAgentCatalogSnapshot,
+  getLocalAgentCatalogState,
+  IDLE_LOCAL_AGENT_CATALOG_STATE,
+  loadLocalAgentCatalog,
+  subscribeToLocalAgentCatalog,
+  type LocalAgentCatalogState
+} from './local-agent-catalog-store'
 
 export type UseLocalAgentCatalog = {
   /** Null while the first `getLocal` is in flight. */
@@ -15,6 +23,12 @@ export type UseLocalAgentCatalog = {
   applySnapshot: (snapshot: LocalAgentCatalogSnapshot) => void
 }
 
+export type UseLocalAgentCatalogOptions = {
+  /** False keeps a mounted-but-inert surface (a closed dialog) off the store:
+   *  no fetch, no subscription, no snapshot. Defaults to true. */
+  enabled?: boolean
+}
+
 /**
  * Live local agent-catalog snapshot for the Settings catalog UI (custom agents,
  * repair rows, projection/storage status). The catalog is desktop-local preload
@@ -24,66 +38,33 @@ export type UseLocalAgentCatalog = {
  * pane cannot derive them from the settings store. Default/disabled selection can
  * still change out-of-band (another window, menu), so we refetch on those narrow
  * settings slices to keep rows and the default picker consistent.
+ *
+ * Every consumer reads one shared fetch/cache/subscription (see
+ * `local-agent-catalog-store`): a workspace with many split tab bars pays for a
+ * single `getLocal` round-trip and one snapshot copy, not one per surface.
  */
-export function useLocalAgentCatalog(): UseLocalAgentCatalog {
-  const [snapshot, setSnapshot] = useState<LocalAgentCatalogSnapshot | null>(null)
-  const [unavailable, setUnavailable] = useState(false)
-  const requestTokenRef = useRef(0)
-  const mountedRef = useRef(true)
-
-  const load = useCallback(() => {
-    const token = (requestTokenRef.current += 1)
-    void window.api.settings.agentCatalog
-      .getLocal()
-      .then((next) => {
-        if (mountedRef.current && token === requestTokenRef.current) {
-          setSnapshot(next)
-          setUnavailable(false)
-        }
-      })
-      .catch(() => {
-        // Paired web rejects (not_available_on_paired_web): surface an honest
-        // read-only empty state rather than a perpetual loading spinner.
-        if (mountedRef.current && token === requestTokenRef.current) {
-          setUnavailable(true)
-        }
-      })
-  }, [])
-
-  const applySnapshot = useCallback((next: LocalAgentCatalogSnapshot) => {
-    // Bump the token so an in-flight refetch cannot overwrite this fresher result.
-    requestTokenRef.current += 1
-    setSnapshot(next)
-  }, [])
+export function useLocalAgentCatalog(options?: UseLocalAgentCatalogOptions): UseLocalAgentCatalog {
+  const enabled = options?.enabled ?? true
+  const [state, setState] = useState<LocalAgentCatalogState>(IDLE_LOCAL_AGENT_CATALOG_STATE)
 
   useEffect(() => {
-    mountedRef.current = true
-    load()
-    const unsubscribe = window.api.settings.onChanged((updates) => {
-      // Custom-agent mutations patch customTuiAgents/deletedCustomTuiAgents (and
-      // bump agentCatalogRevision); without these keys, always-mounted launch
-      // surfaces keep a stale snapshot after authoring in another component.
-      if (
-        'defaultTuiAgent' in updates ||
-        'disabledTuiAgents' in updates ||
-        'customTuiAgents' in updates ||
-        'deletedCustomTuiAgents' in updates ||
-        'agentCatalogRevision' in updates
-      ) {
-        load()
-      }
-    })
-    return () => {
-      mountedRef.current = false
-      unsubscribe()
+    if (!enabled) {
+      setState(IDLE_LOCAL_AGENT_CATALOG_STATE)
+      return undefined
     }
-  }, [load])
+    const sync = (): void => setState(getLocalAgentCatalogState())
+    const unsubscribe = subscribeToLocalAgentCatalog(sync)
+    // Adopt whatever the store already holds; a later consumer must not wait for
+    // the next publish to see the snapshot an earlier one already loaded.
+    sync()
+    return unsubscribe
+  }, [enabled])
 
   return {
-    snapshot,
-    loading: snapshot === null && !unavailable,
-    unavailable,
-    refetch: load,
-    applySnapshot
+    snapshot: state.snapshot,
+    loading: enabled && state.snapshot === null && !state.unavailable,
+    unavailable: state.unavailable,
+    refetch: loadLocalAgentCatalog,
+    applySnapshot: applyLocalAgentCatalogSnapshot
   }
 }

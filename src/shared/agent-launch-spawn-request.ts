@@ -55,6 +55,13 @@ export type AgentLaunchSpawnRequest = {
    *  or host-returned draftPrompt for post-ready paste); default 'submit'. */
   promptDelivery?: 'submit' | 'draft'
   sourceRecord?: AgentLaunchSourceRecord
+  /** Args the user edited but chose NOT to save, applied INSTEAD of the stored
+   *  agentArgs of a 'source-control-recipe' sourceRecord. Still not a resolved
+   *  argv: the host tokenizes/validates it exactly like the stored recipe args.
+   *  Degrades per wire rule 1 — a host predating this field ignores it and
+   *  launches the stored recipe args, so the edited args are best-effort and a
+   *  client must never report them as applied, only that the launch happened. */
+  unsavedAgentArgs?: string
   /** Present only for an unattended background launch; the host mints the attempt
    *  identity from its authenticated context. Absent = an interactive launch. */
   unattended?: AgentLaunchUnattendedDeclaration

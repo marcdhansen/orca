@@ -34,7 +34,7 @@ export function DataRecoverySettingsRow() {
       <span>
         {translate(
           'auto.components.dataRecovery.settingsRowHint',
-          'A recovery point can return this profile to the previous Orca (Prepare downgrade, then install that version).'
+          'You can restore the settings from before this update, then install the previous Orca.'
         )}
       </span>
       <Button type="button" variant="outline" size="xs" onClick={() => setOpen(true)}>

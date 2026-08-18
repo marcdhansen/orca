@@ -124,6 +124,19 @@ describe('describeMutationFailure', () => {
     }
   })
 
+  it('tells the user a failed durable write saved nothing, not just to reload', () => {
+    const result = { ok: false, code: 'agent_catalog_write_failed', revision: 7 } as Extract<
+      AgentCatalogMutationResult,
+      { ok: false }
+    >
+    const copy = describeMutationFailure(result, { field: 'label' })
+    expect(copy.scope).toBe('form')
+    if (copy.scope === 'form') {
+      expect(copy.error.message.toLowerCase()).toContain('nothing was changed')
+      expect(copy.error.message.toLowerCase()).not.toContain('reload settings')
+    }
+  })
+
   it('treats an oversize payload as a form-level banner', () => {
     const result = { ok: false, code: 'agent_catalog_payload_too_large', revision: 6 } as Extract<
       AgentCatalogMutationResult,

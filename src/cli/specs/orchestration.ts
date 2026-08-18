@@ -187,8 +187,8 @@ export const ORCHESTRATION_COMMAND_SPECS: CommandSpec[] = [
     path: ['orchestration', 'dispatch-forget'],
     summary: 'Forget a dispatch stranded in an unknown launch state',
     usage:
-      'orca orchestration dispatch-forget --task <task_id> [--expected-failure-id <id>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'task', 'expected-failure-id'],
+      'orca orchestration dispatch-forget --task <task_id> [--expected-failure-id <id>] [--run <run_id>] [--from <handle>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'task', 'expected-failure-id', 'run', 'from'],
     notes: [
       'The task returns to blocked; retry with: orca orchestration task-update --id <task_id> --status ready.'
     ]

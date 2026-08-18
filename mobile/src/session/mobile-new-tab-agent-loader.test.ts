@@ -40,6 +40,10 @@ describe('mobile new-tab agent loading', () => {
       'preflight.detectAgents',
       'settings.get'
     ])
+    // The 512 KiB agent catalog must not ride this hot read.
+    expect(
+      client.sendRequest.mock.calls.find(([method]) => method === 'settings.get')?.[1]
+    ).toEqual({ includeAgentCatalog: false })
   })
 
   it('detects agents through the worktree repo connection for SSH sessions', async () => {

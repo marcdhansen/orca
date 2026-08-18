@@ -95,6 +95,7 @@ import { attachMobileMarkdownBridge } from '@/runtime/mobile-markdown-bridge'
 import { closeMobileSessionTabInStore } from '@/runtime/mobile-session-tab-close'
 import { createWorktreeChangeRefreshQueue } from './worktree-change-refresh-queue'
 import { subscribeRuntimeClientEvents } from '@/runtime/runtime-client-events'
+import { emitAgentCatalogRevision } from '@/runtime/agent-catalog-revision-event'
 import { applyNativeChatLaunchDraftResolved } from '@/runtime/native-chat-launch-draft-runtime-resolution'
 import { toRemoteRuntimePtyId } from '@/runtime/runtime-terminal-stream'
 import { dispatchTerminalSideEffectBatch } from '@/components/terminal-pane/terminal-side-effect-facts-handler'
@@ -613,6 +614,29 @@ export function getRuntimeProjectRefreshEnvironmentIds(args: {
   ]
 }
 
+/**
+ * Handles the host's catalog/reference revision announcements; true means the
+ * event is fully handled and must not fall through to worktree activation.
+ *
+ * Why: paired web mirrors the host catalog through the preload shim, which renderer
+ * code must not import, so the refresh is announced over a window bridge that is
+ * inert on desktop (where the catalog is local and changes arrive via settings IPC).
+ */
+export function announceAgentCatalogRevisionEvent(
+  event: RuntimeClientEvent
+  // Predicate, not bool: the caller's fall-through reads `repoId`, which the
+  // catalog events don't carry.
+): event is Extract<
+  RuntimeClientEvent,
+  { type: 'agentCatalogChanged' | 'agentReferencesChanged' }
+> {
+  if (event.type === 'agentCatalogChanged') {
+    emitAgentCatalogRevision(event.revision)
+    return true
+  }
+  return event.type === 'agentReferencesChanged'
+}
+
 function getWorktreeRuntimeEnvironmentId(worktreeId: string | null | undefined): string | null {
   return getRuntimeEnvironmentIdForWorktree(useAppStore.getState(), worktreeId)
 }
@@ -1019,10 +1043,7 @@ export function useIpcEvents(): void {
           })
         return
       }
-      // Why: no-op for now — later units attach the mobile/paired snapshot refetch
-      // keyed by the announced revision. Handled here so the event is not routed to
-      // the activateWorktree fall-through below.
-      if (event.type === 'agentCatalogChanged' || event.type === 'agentReferencesChanged') {
+      if (announceAgentCatalogRevisionEvent(event)) {
         return
       }
       void ensureRuntimeEventRepoKnown(environmentId, event.repoId)

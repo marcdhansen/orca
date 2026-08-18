@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { BackgroundAgentLaunchStore } from './background-agent-launch-store'
+import {
+  BackgroundAgentLaunchStore,
+  MAX_SETTLED_BACKGROUND_ATTEMPTS
+} from './background-agent-launch-store'
 import type { BackgroundAgentLaunchCreateInput } from './background-agent-launch-store'
 import type { PersistedAgentLaunchFailure } from '../../shared/agent-launch-contract'
 import { parsePersistedAgentLaunchFailure } from '../../shared/agent-launch-failure-schema'
@@ -201,6 +204,54 @@ describe('BackgroundAgentLaunchStore', () => {
     expect(retryRecoveryGateForFailureCode(attempt?.failure?.code).kind).toBe(
       'launch_state_unknown'
     )
+  })
+
+  it('bounds retained settled attempts, oldest-settled first', () => {
+    let clock = 0
+    const store = new BackgroundAgentLaunchStore({ now: () => (clock += 1) })
+    const total = MAX_SETTLED_BACKGROUND_ATTEMPTS + 5
+    for (let index = 0; index < total; index += 1) {
+      store.create(createInput({ attemptId: `attempt-${index}` }))
+      store.settleLaunched(`attempt-${index}`)
+    }
+    expect(store.all()).toHaveLength(MAX_SETTLED_BACKGROUND_ATTEMPTS)
+    for (let index = 0; index < 5; index += 1) {
+      expect(store.get(`attempt-${index}`)).toBeNull()
+    }
+    expect(store.get(`attempt-${total - 1}`)?.state).toBe('launched')
+  })
+
+  it('never evicts a pending attempt, however old', () => {
+    let clock = 0
+    const store = new BackgroundAgentLaunchStore({ now: () => (clock += 1) })
+    // Created first, so it is the oldest record in the ledger and would be the
+    // first casualty of an age-only bound — but its reservation and private
+    // snapshot are still live.
+    store.create(createInput({ attemptId: 'attempt-live' }))
+    for (let index = 0; index < MAX_SETTLED_BACKGROUND_ATTEMPTS + 20; index += 1) {
+      store.create(createInput({ attemptId: `attempt-${index}` }))
+      store.settleFailed(`attempt-${index}`, failure('spawn_failed'))
+    }
+    expect(store.get('attempt-live')?.state).toBe('pending')
+    expect(store.all()).toHaveLength(MAX_SETTLED_BACKGROUND_ATTEMPTS + 1)
+  })
+
+  it('trims a pre-bound ledger at rehydrate without a write', () => {
+    let clock = 0
+    const seed = new BackgroundAgentLaunchStore({ now: () => (clock += 1) })
+    for (let index = 0; index < MAX_SETTLED_BACKGROUND_ATTEMPTS + 7; index += 1) {
+      seed.create(createInput({ attemptId: `attempt-${index}` }))
+      seed.settleLaunched(`attempt-${index}`)
+    }
+    const persisted = seed.durableState().attempts
+    const overSized = [...persisted, { ...persisted[0], attemptId: 'legacy-0', updatedAt: 0 }]
+    const store = new BackgroundAgentLaunchStore()
+    const sink = vi.fn()
+    store.setDurablePersistence(sink)
+    store.rebuildFrom(overSized)
+    expect(store.all()).toHaveLength(MAX_SETTLED_BACKGROUND_ATTEMPTS)
+    expect(store.get('legacy-0')).toBeNull()
+    expect(sink).not.toHaveBeenCalled()
   })
 
   it('persistenceForAttempt binds the reconcile slice to one attempt', () => {

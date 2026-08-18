@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -61,6 +62,21 @@ describe('data recovery points', () => {
     expect(points[0].createdAtMs).toBeGreaterThan(0)
     expect(JSON.stringify(points)).not.toContain(dir)
     expect(JSON.stringify(points)).not.toContain('settings')
+    expect(points[0].restorable).toBe(true)
+  })
+
+  it('lists an unreadable pinned backup as not restorable', () => {
+    // A directory at the backup path reproduces EISDIR everywhere; existence alone
+    // would otherwise advertise a rollback the restore path always rejects.
+    mkdirSync(`${dataFile}${PINNED_SUFFIX}`)
+    const points = listRecoveryPoints(dataFile)
+    expect(points).toHaveLength(1)
+    expect(points[0].restorable).toBe(false)
+  })
+
+  it('lists a torn pinned backup as not restorable', () => {
+    writeFileSync(`${dataFile}${PINNED_SUFFIX}`, '{"settings":')
+    expect(listRecoveryPoints(dataFile)[0].restorable).toBe(false)
   })
 
   it('restores atomically: freeze before replace, safety copy kept, point preserved', async () => {

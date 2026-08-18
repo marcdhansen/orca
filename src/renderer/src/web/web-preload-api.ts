@@ -144,6 +144,8 @@ import { parseWebPairingInput } from './web-pairing'
 import { copyClipboardTextViaExecCommand } from './web-clipboard-copy-fallback'
 import { WebRuntimeClient } from './web-runtime-client'
 import { isWebRuntimeUnauthorizedError } from './web-runtime-client-error'
+import { createWebAgentCatalogSync } from './web-agent-catalog-sync'
+import { subscribeAgentCatalogRevision } from '@/runtime/agent-catalog-revision-event'
 import { RuntimeRpcCallQueuePool } from '../../../shared/runtime-rpc-call-queue'
 import {
   assertClipboardTextWriteWithinLimitWithYield,
@@ -532,11 +534,26 @@ export const GITLAB_WEB_RPC_METHODS = {
 
 const WEB_KEYBINDING_PLATFORMS: readonly KeybindingPlatform[] = ['darwin', 'linux', 'win32']
 const webKeybindingListeners = new Set<(snapshot: KeybindingFileSnapshot) => void>()
+const webSettingsListeners = new Set<(updates: Partial<GlobalSettings>) => void>()
+
+function notifyWebSettingsListeners(updates: Partial<GlobalSettings>): void {
+  for (const listener of Array.from(webSettingsListeners)) {
+    listener(updates)
+  }
+}
+
+const webAgentCatalogSync = createWebAgentCatalogSync({
+  call: (method, params) => callRuntimeEnvelope(method, params, 15_000),
+  isPaired: () => requireActiveEnvironmentOrNull() !== null,
+  // The revision key is what `useLocalAgentCatalog` watches to refetch.
+  onRevisionApplied: (revision) => notifyWebSettingsListeners({ agentCatalogRevision: revision })
+})
 
 export function installWebPreloadApi(): void {
   activeEnvironment = readStoredWebRuntimeEnvironment()
   const webWindow = window as unknown as { __ORCA_WEB_CLIENT__?: boolean }
   webWindow.__ORCA_WEB_CLIENT__ = true
+  subscribeAgentCatalogRevision((revision) => webAgentCatalogSync.announceRevision(revision))
   window.electron = createFallbackProxy(['electron']) as Window['electron']
   window.api = withFallback(createWebPreloadApi(), []) as PreloadApi
 }
@@ -786,13 +803,18 @@ function createWebPreloadApi(): Partial<PreloadApi> {
       },
       updatePRBotAuthorOverride: (args) => updateRuntimePRBotAuthorOverride(args),
       listFonts: () => Promise.resolve([]),
-      onChanged: () => noopUnsubscribe,
-      // Why: agent catalog/reference authoring is desktop-only. Paired web renders
-      // the synced snapshots read-only (from settings.get / the future reference
-      // refetch) and never invokes these local authoring endpoints, so they reject
-      // like the other desktop-only IPC surfaces stubbed in this file.
+      onChanged: (callback) => {
+        webSettingsListeners.add(callback)
+        return () => {
+          webSettingsListeners.delete(callback)
+        }
+      },
+      // Why: agent catalog/reference AUTHORING is desktop-only, but the read is not:
+      // getLocal re-projects the host's synced catalog so custom agents stay
+      // selectable here. The authoring endpoints keep rejecting like the other
+      // desktop-only IPC surfaces stubbed in this file.
       agentCatalog: {
-        getLocal: () => Promise.reject(new Error('not_available_on_paired_web')),
+        getLocal: () => webAgentCatalogSync.getLocal(),
         mutate: () => Promise.reject(new Error('not_available_on_paired_web')),
         getLocalDraft: () => Promise.reject(new Error('not_available_on_paired_web')),
         referenceSummary: () => Promise.reject(new Error('not_available_on_paired_web')),
@@ -4021,7 +4043,9 @@ async function getRuntimeBackedStoredSettings(): Promise<GlobalSettings> {
   try {
     const result = await callRuntimeResult<{ settings: Partial<GlobalSettings> }>(
       'settings.get',
-      undefined,
+      // Why: the catalog is up to 512 KiB and comes from settings.agentCatalog.get;
+      // an old host ignores this param and its piggybacked copy is discarded here.
+      { includeAgentCatalog: false },
       15_000
     )
     const runtimeSettings: Partial<GlobalSettings> = {}

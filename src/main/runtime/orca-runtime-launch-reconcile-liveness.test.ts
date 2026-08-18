@@ -62,9 +62,19 @@ type Internals = {
     filter?: (pending: PendingAgentLaunchSnapshot) => boolean,
     relistedTokenPtyIds?: ReadonlyMap<string, string>
   ) => void
+  refreshPtyWorktreeRecordsWithControllerInventory: (
+    resolvedWorktrees: unknown[],
+    targetWorktreeId: string | null,
+    deadline?: number,
+    connectionId?: string | null
+  ) => Promise<unknown>
 }
 
-function makeRuntime(): { internals: Internals; metaWrites: Record<string, unknown>[] } {
+function makeRuntime(): {
+  runtime: OrcaRuntimeService
+  internals: Internals
+  metaWrites: Record<string, unknown>[]
+} {
   const runtime = new OrcaRuntimeService()
   const internals = runtime as unknown as Internals
   const metaWrites: Record<string, unknown>[] = []
@@ -77,7 +87,7 @@ function makeRuntime(): { internals: Internals; metaWrites: Record<string, unkno
     },
     getSettings: () => ({})
   }
-  return { internals, metaWrites }
+  return { runtime, internals, metaWrites }
 }
 
 afterEach(() => {
@@ -139,5 +149,59 @@ describe('reconcilePendingAgentLaunches liveness composition', () => {
     // Once the spawn settles (clearPending), reconcile may speak again.
     opStore.clearPending('tok-spawning')
     expect(opStore.isSpawnInFlight('tok-spawning')).toBe(false)
+  })
+})
+
+// A scoped SSH re-list that SUCCEEDS speaks for its own connection even when it
+// returns zero sessions. Deriving the authoritative scope from the response rows
+// instead left such a host "unknown" forever: its pending held capacity and could
+// never be retried.
+describe('scoped SSH re-list authority', () => {
+  function makeSshRuntime(listProcesses: () => Promise<unknown[]>) {
+    const made = makeRuntime()
+    made.runtime.setPtyController({
+      listProcesses,
+      hasPty: () => false
+    } as never)
+    return made
+  }
+
+  it('settles a pending on a successful but empty scoped re-list', async () => {
+    const opStore = getHostAgentLaunchOperationStore()
+    opStore.rebuildPendingFrom([pending('tok-ssh-empty')])
+    const { internals } = makeSshRuntime(async () => [])
+
+    await internals.refreshPtyWorktreeRecordsWithControllerInventory([], null, undefined, 'host-a')
+
+    expect(opStore.getPending('tok-ssh-empty')).toBeNull()
+    expect(opStore.findSettledByIdempotencyKey(WORKTREE_ID, 'key-tok-ssh-empty')).toMatchObject({
+      status: 'failed'
+    })
+  })
+
+  it('leaves the pending untouched when the scoped re-list fails', async () => {
+    const opStore = getHostAgentLaunchOperationStore()
+    opStore.rebuildPendingFrom([pending('tok-ssh-failed')])
+    const { internals, metaWrites } = makeSshRuntime(async () => {
+      throw new Error('relay down')
+    })
+
+    await internals.refreshPtyWorktreeRecordsWithControllerInventory([], null, undefined, 'host-a')
+
+    // "Re-list failed" is not evidence of absence: retryable, still holding its slot.
+    expect(opStore.getPending('tok-ssh-failed')).not.toBeNull()
+    expect(opStore.findSettledByIdempotencyKey(WORKTREE_ID, 'key-tok-ssh-failed')).toBeNull()
+    expect(metaWrites).toEqual([])
+  })
+
+  it('does not let one connection speak for another SSH host', async () => {
+    const opStore = getHostAgentLaunchOperationStore()
+    opStore.rebuildPendingFrom([pending('tok-other-host')])
+    const { internals } = makeSshRuntime(async () => [])
+
+    await internals.refreshPtyWorktreeRecordsWithControllerInventory([], null, undefined, 'host-b')
+
+    // The pending targets ssh:host-a; host-b's empty list says nothing about it.
+    expect(opStore.getPending('tok-other-host')).not.toBeNull()
   })
 })

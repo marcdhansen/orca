@@ -14,6 +14,7 @@ import { getRepoIdFromWorktreeId } from '../../../../shared/worktree/id'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
 import { runQuickCommandInNewTab } from '@/lib/run-quick-command-in-new-tab'
 import { deleteTerminalQuickCommand, saveTerminalQuickCommand } from '@/lib/agent-catalog-authoring'
+import { notifyAgentAuthoringWriteFailure } from '@/lib/agent-authoring-write-failure-toast'
 import type { TerminalQuickCommand } from '../../../../shared/types'
 import { useConfirmationDialog } from '@/components/confirmation-dialog-context'
 import { translate } from '@/i18n/i18n'
@@ -127,7 +128,7 @@ export function TabBarQuickCommandsButton({
       void useAppStore.getState().upsertTerminalQuickCommand(editor.hostId, next)
       return
     }
-    void saveTerminalQuickCommand(next)
+    void saveTerminalQuickCommand(next).then(notifyAgentAuthoringWriteFailure)
   }
 
   const handleDeleteCommand = async (entry: HostedTerminalQuickCommand): Promise<void> => {
@@ -155,7 +156,7 @@ export function TabBarQuickCommandsButton({
       void useAppStore.getState().deleteTerminalQuickCommand(entry.hostId, command.id)
       return
     }
-    void deleteTerminalQuickCommand(command.id)
+    void deleteTerminalQuickCommand(command.id).then(notifyAgentAuthoringWriteFailure)
   }
 
   const handleRun = (entry: HostedTerminalQuickCommand): void => {

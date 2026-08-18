@@ -35,6 +35,10 @@ export type LaunchAgentInNewTabArgs = {
    *  agentArgs/env the host resolves and applies to this launch. Clients send
    *  only the locator; the host owns all command/arg assembly. */
   sourceRecord?: AgentLaunchSourceRecord
+  /** Unsaved edits of the sourceRecord recipe's agentArgs, applied to this launch
+   *  instead of the stored ones. Best-effort: a host predating the field launches
+   *  the stored args, so never report these as applied. */
+  unsavedAgentArgs?: string
   /** Optional working directory for the new terminal session. */
   initialCwd?: string | null
   /** Force generated prompt text out of the shell launch command. `draft`
@@ -80,6 +84,7 @@ export function launchAgentInNewTab(args: LaunchAgentInNewTabArgs): LaunchAgentI
     groupId,
     prompt,
     sourceRecord,
+    unsavedAgentArgs,
     initialCwd,
     promptDelivery = 'auto-submit',
     launchSource,
@@ -164,8 +169,15 @@ export function launchAgentInNewTab(args: LaunchAgentInNewTabArgs): LaunchAgentI
         }
       : { allowEmptyPromptLaunch: true }),
     // Why: recipe-driven launches name the saved owner so the host resolves and
-    // applies its stored agentArgs (and env) itself; the client never sends args.
-    ...(sourceRecord ? { sourceRecord } : {})
+    // applies its stored agentArgs (and env) itself. Unsaved arg edits ride along
+    // as text the host substitutes for that stored snapshot — never assembled argv
+    // — and only make sense with the owner locator that scopes them.
+    ...(sourceRecord
+      ? {
+          sourceRecord,
+          ...(unsavedAgentArgs !== undefined ? { unsavedAgentArgs } : {})
+        }
+      : {})
   }
 
   // Why: the remote host can't infer this client's draft/default view choice, so decide it here for paired tabs too.

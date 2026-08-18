@@ -2,8 +2,11 @@
 // worktree launch failure, retry/forget a generic background attempt, and the
 // redacted capacity-recovery summary. Split out of worktree.ts to keep that file
 // under the max-lines limit. Every method scopes admission/idempotency from the
-// authenticated clientKind — never from client JSON — and treats the
-// expectedFailureId/expectedOperationId fields as anti-race guards, not secrets.
+// authenticated clientKind AND the authenticated pairedDeviceId — never from
+// client JSON — so two paired devices get isolated caps/recovery rows and neither
+// can forget the other's launch. A connection with no paired device id (in-process
+// runtime callers) falls back to the pre-device coarse principal. The
+// expectedFailureId/expectedOperationId fields stay anti-race guards, not secrets.
 
 import { defineMethod, type RpcMethod } from '../core'
 import {
@@ -22,7 +25,7 @@ export const WORKTREE_AGENT_LAUNCH_RECOVERY_METHODS: RpcMethod[] = [
     params: WorktreeRetryAgentLaunch,
     // Authorization is authenticated worktree access, the same boundary as every
     // other worktree mutation.
-    handler: async (params, { runtime, clientKind }) =>
+    handler: async (params, { runtime, clientKind, pairedDeviceId }) =>
       runtime.retryWorktreeAgentLaunch(
         params.worktree,
         {
@@ -30,27 +33,29 @@ export const WORKTREE_AGENT_LAUNCH_RECOVERY_METHODS: RpcMethod[] = [
           clientMutationId: params.clientMutationId,
           action: params.action
         },
-        clientKind
+        clientKind,
+        pairedDeviceId
       )
   }),
   defineMethod({
     name: 'worktree.forgetAgentLaunch',
     params: WorktreeForgetAgentLaunch,
-    handler: async (params, { runtime, clientKind }) =>
+    handler: async (params, { runtime, clientKind, pairedDeviceId }) =>
       runtime.forgetUnknownWorktreeAgentLaunch(
         params.worktree,
         {
           expectedOperationId: params.expectedOperationId,
           clientMutationId: params.clientMutationId
         },
-        clientKind
+        clientKind,
+        pairedDeviceId
       )
   }),
   defineMethod({
     name: 'worktree.retryBackgroundAgentLaunch',
     params: WorktreeRetryBackgroundAgentLaunch,
     // Authorization is authenticated access to the attempt's worktree.
-    handler: async (params, { runtime, clientKind }) =>
+    handler: async (params, { runtime, clientKind, pairedDeviceId }) =>
       runtime.retryBackgroundAgentLaunch(
         {
           attemptId: params.attemptId,
@@ -58,37 +63,43 @@ export const WORKTREE_AGENT_LAUNCH_RECOVERY_METHODS: RpcMethod[] = [
           clientMutationId: params.clientMutationId,
           action: params.action
         },
-        clientKind
+        clientKind,
+        pairedDeviceId
       )
   }),
   defineMethod({
     name: 'worktree.forgetBackgroundAgentLaunch',
     params: WorktreeForgetBackgroundAgentLaunch,
-    handler: async (params, { runtime, clientKind }) =>
+    handler: async (params, { runtime, clientKind, pairedDeviceId }) =>
       runtime.forgetBackgroundAgentLaunch(
         {
           attemptId: params.attemptId,
           expectedOperationId: params.expectedOperationId,
           clientMutationId: params.clientMutationId
         },
-        clientKind
+        clientKind,
+        pairedDeviceId
       )
   }),
   defineMethod({
     name: 'worktree.pendingAgentLaunchSummary',
     params: WorktreePendingAgentLaunchSummary,
-    // clientKind scopes the admission principal (own rows only). The redacted rows
-    // are secret-free and carry no token.
-    handler: async (_params, { runtime, clientKind }) =>
-      runtime.pendingAgentLaunchSummary(clientKind)
+    // clientKind + pairedDeviceId scope the admission principal (own rows only).
+    // The redacted rows are secret-free and carry no token.
+    handler: async (_params, { runtime, clientKind, pairedDeviceId }) =>
+      runtime.pendingAgentLaunchSummary(clientKind, pairedDeviceId)
   }),
   defineMethod({
     name: 'worktree.unknownAgentLaunchSiblingCount',
     params: WorktreeUnknownAgentLaunchSiblingCount,
     // Lazy preflight for the ":498 Also forget N other stranded launches" affordance;
-    // clientKind scopes the principal, siblings are host-derived, no secrets cross.
-    handler: async (params, { runtime, clientKind }) => ({
-      count: await runtime.unknownWorktreeAgentLaunchSiblingCount(params.worktree, clientKind)
+    // the principal is device-scoped, siblings are host-derived, no secrets cross.
+    handler: async (params, { runtime, clientKind, pairedDeviceId }) => ({
+      count: await runtime.unknownWorktreeAgentLaunchSiblingCount(
+        params.worktree,
+        clientKind,
+        pairedDeviceId
+      )
     })
   }),
   defineMethod({
@@ -96,7 +107,7 @@ export const WORKTREE_AGENT_LAUNCH_RECOVERY_METHODS: RpcMethod[] = [
     params: WorktreeForgetUnknownAgentLaunchSiblings,
     // Same-principal bulk forget on the anchor's disconnected host. Never kills or
     // spawns; each sibling settles only its own reservation and self-guards.
-    handler: async (params, { runtime, clientKind }) =>
-      runtime.forgetUnknownWorktreeAgentLaunchSiblings(params.worktree, clientKind)
+    handler: async (params, { runtime, clientKind, pairedDeviceId }) =>
+      runtime.forgetUnknownWorktreeAgentLaunchSiblings(params.worktree, clientKind, pairedDeviceId)
   })
 ]

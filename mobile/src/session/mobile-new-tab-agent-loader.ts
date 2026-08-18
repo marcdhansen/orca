@@ -23,7 +23,8 @@ export async function loadMobileNewTabAgentOptions(args: {
     ? client.sendRequest('preflight.detectAgents')
     : loadWorkspaceDetectedAgents(client, worktreeId)
   const [settingsResponse, detectedResponse] = await Promise.all([
-    client.sendRequest('settings.get'),
+    // Only `settings` is read here; opt out of the piggybacked agent catalog (old hosts ignore the param).
+    client.sendRequest('settings.get', { includeAgentCatalog: false }),
     detectedAgentsRequest
   ])
   if (!settingsResponse.ok) {

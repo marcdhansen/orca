@@ -130,7 +130,10 @@ function referenceFor(request: AgentLaunchSpawnRequest): AgentReferenceAuthority
  *  a source-control-recipe owner contributes args today: the host validates the id
  *  is a real action id (unknown/mismatched → untrusted_reference, no PTY), then
  *  reads the recipe's stored agentArgs from repo-scoped settings (global fallback
- *  when the repo id is absent). Clients never send args — only the recipe id. */
+ *  when the repo id is absent). A client may substitute UNSAVED edits of those
+ *  args (`unsavedAgentArgs`) for this one launch — still bounded text the resolver
+ *  tokenizes itself, never a resolved argv — and the stored recipe stays the
+ *  fallback. Clients never send anything else about the launch. */
 function resolvePerLaunchArgs(
   request: AgentLaunchSpawnRequest,
   recipeRepo: Pick<Repo, 'sourceControlAi'> | null | undefined,
@@ -142,6 +145,11 @@ function resolvePerLaunchArgs(
   }
   if (!sourceRecord.id || !isSourceControlActionId(sourceRecord.id)) {
     return { ok: false, requestError: { code: 'untrusted_reference' } }
+  }
+  // Why: the unsaved edit IS the args the user launched with; the stored recipe
+  // is a stale snapshot of them. An empty string is a real "no args" edit.
+  if (request.unsavedAgentArgs !== undefined) {
+    return { ok: true, perLaunchArgs: request.unsavedAgentArgs }
   }
   const recipe = resolveSourceControlActionRecipe({
     settings,

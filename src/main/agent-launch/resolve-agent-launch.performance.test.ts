@@ -5,7 +5,7 @@
 
 import os from 'node:os'
 import { performance } from 'node:perf_hooks'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CustomTuiAgent, CustomTuiAgentId, GlobalSettings } from '../../shared/types'
 import type { AgentCatalog } from '../../shared/agent-catalog-normalization'
 import { resolveAgentLaunch, type ResolveAgentLaunchOutcome } from './resolve-agent-launch'
@@ -16,7 +16,17 @@ import {
   requestOf,
   settingsOf
 } from './agent-launch-test-catalog'
+import {
+  resolveAgentLaunchSpawn,
+  type AgentLaunchSpawnDeps,
+  type AgentLaunchSpawnTarget
+} from './agent-launch-spawn'
+import { AgentLaunchBoundary } from './agent-launch-boundary'
 import type * as AgentCatalogProjectionsModule from './agent-catalog-projections'
+import {
+  AgentLaunchAdmissionStore,
+  LaunchAdmissionCoordinator
+} from './agent-launch-admission-store'
 
 // The pure-resolver gates below inject a PREBUILT catalog, so they never see the
 // normalize pass production pays per launch. This counter lets the production-
@@ -80,6 +90,27 @@ function buildFixture(
 ): { catalog: AgentCatalog; selectedId: CustomTuiAgentId } {
   const { agents, selectedId } = buildAgents(size, envEntries)
   return { catalog: catalogOf({ customTuiAgents: agents }), selectedId }
+}
+
+/** RAW persisted settings — what production actually hands the launch path. The
+ *  host normalizes these per launch, so a prebuilt-catalog fixture measures a
+ *  strictly cheaper pipeline than the one users pay for. */
+function buildSettingsFixture(
+  size: number,
+  envEntries: number
+): { settings: GlobalSettings; selectedId: CustomTuiAgentId } {
+  const { agents, selectedId } = buildAgents(size, envEntries)
+  return {
+    settings: {
+      ...settingsOf(),
+      customTuiAgents: agents,
+      deletedCustomTuiAgents: [],
+      disabledTuiAgents: [],
+      defaultTuiAgent: 'auto',
+      agentCatalogRevision: 1
+    } as unknown as GlobalSettings,
+    selectedId
+  }
 }
 
 const ARRAY_SCAN_PROPS = new Set([
@@ -236,6 +267,126 @@ describe('resolve-agent-launch performance budget', () => {
         `runs=${runs} iterationsPerRun=${iterations} p95PerResolutionMs=${p95.toFixed(5)} budgetMs=2`
     )
     // Correctness gate: every measured resolution produced a launch.
+    expect(okAll).toBe(true)
+  })
+})
+
+// P1-21: the gates above resolve a PREBUILT catalog, so they never exercise the
+// normalize pass the host runs per launch — the production surface (settings →
+// normalized catalog → resolver → boundary) is measured here instead.
+describe('production launch path performance budget (P1-21)', () => {
+  const PRODUCTION_TARGET: AgentLaunchSpawnTarget = {
+    platform: 'linux',
+    shell: 'posix',
+    isRemote: false,
+    executionHostId: 'local',
+    targetHomePath: '/home/dev',
+    // null = detection unavailable, the honest host default; never a fabricated set.
+    detectedStockBaseAgents: null
+  }
+
+  function productionDeps(getSettings: () => GlobalSettings): AgentLaunchSpawnDeps {
+    return {
+      getSettings,
+      getCatalogRevision: () => getSettings().agentCatalogRevision ?? 1,
+      boundary: new AgentLaunchBoundary({
+        admissionStore: new AgentLaunchAdmissionStore(),
+        coordinator: new LaunchAdmissionCoordinator()
+      })
+    }
+  }
+
+  async function launchOnce(
+    deps: AgentLaunchSpawnDeps,
+    selectedId: CustomTuiAgentId
+  ): Promise<boolean> {
+    const result = await resolveAgentLaunchSpawn(deps, {
+      request: { selection: { kind: 'agent', agent: selectedId }, prompt: 'go' },
+      intent: { kind: 'interactive', client: 'desktop' },
+      target: PRODUCTION_TARGET,
+      variables: { repoPath: '/repo', worktreePath: '/repo/wt' },
+      scope: 'perf-launch',
+      principal: { kind: 'local' }
+    })
+    if (result.ok) {
+      // Release the admitted slot so a repeated-launch loop never hits the cap.
+      deps.boundary.settleAgentLaunch(result.receipt.launchToken, 'failed')
+    }
+    return result.ok
+  }
+
+  beforeEach(() => {
+    normalizeCatalogCalls.count = 0
+  })
+
+  it('normalizes a 2,500-agent catalog once per launch, not once per resolve pass', async () => {
+    const { settings, selectedId } = buildSettingsFixture(2500, 8)
+    const deps = productionDeps(() => settings)
+
+    expect(await launchOnce(deps, selectedId)).toBe(true)
+
+    // The boundary resolves twice (initial view + coordinator re-resolve); both
+    // passes must share one normalized catalog.
+    expect(normalizeCatalogCalls.count).toBe(1)
+  })
+
+  it('reuses one normalized catalog across launches on an unchanged settings revision', async () => {
+    const { settings, selectedId } = buildSettingsFixture(2500, 8)
+    const deps = productionDeps(() => settings)
+
+    for (let i = 0; i < 8; i += 1) {
+      expect(await launchOnce(deps, selectedId)).toBe(true)
+    }
+    expect(normalizeCatalogCalls.count).toBe(1)
+  })
+
+  it('re-normalizes after the settings object is replaced (a real catalog edit)', async () => {
+    const { settings, selectedId } = buildSettingsFixture(2500, 8)
+    let current = settings
+    const deps = productionDeps(() => current)
+
+    expect(await launchOnce(deps, selectedId)).toBe(true)
+    current = { ...settings, agentCatalogRevision: 2 } as GlobalSettings
+    expect(await launchOnce(deps, selectedId)).toBe(true)
+
+    expect(normalizeCatalogCalls.count).toBe(2)
+  })
+
+  it('records production launch throughput as PR evidence (never a CI wall-clock assertion)', async () => {
+    const { settings, selectedId } = buildSettingsFixture(2500, 8)
+    let current = settings
+    const deps = productionDeps(() => current)
+    let okAll = true
+
+    for (let i = 0; i < 5; i += 1) {
+      okAll = (await launchOnce(deps, selectedId)) && okAll
+    }
+
+    const runs = process.env.ORCA_PERF_EVIDENCE ? 50 : 5
+    const coldMs: number[] = []
+    const warmMs: number[] = []
+    for (let r = 0; r < runs; r += 1) {
+      // Cold: a fresh settings revision, so this launch pays the normalize.
+      current = { ...settings, agentCatalogRevision: r + 10 } as GlobalSettings
+      let start = performance.now()
+      okAll = (await launchOnce(deps, selectedId)) && okAll
+      coldMs.push(performance.now() - start)
+      // Warm: same revision, so the normalized catalog is reused.
+      start = performance.now()
+      okAll = (await launchOnce(deps, selectedId)) && okAll
+      warmMs.push(performance.now() - start)
+    }
+    const p95 = (samples: number[]): number => {
+      const sorted = [...samples].sort((a, b) => a - b)
+      return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))] ?? 0
+    }
+
+    // Evidence only — asserted nowhere (plan §1371: no wall-clock CI threshold).
+    console.log(
+      `[agent-launch-spawn.perf] node=${process.version} cpu=${os.cpus()[0]?.model ?? 'unknown'} ` +
+        `agents=2500 runs=${runs} p95ColdLaunchMs=${p95(coldMs).toFixed(3)} ` +
+        `p95WarmLaunchMs=${p95(warmMs).toFixed(3)}`
+    )
     expect(okAll).toBe(true)
   })
 })

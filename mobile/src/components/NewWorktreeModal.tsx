@@ -379,7 +379,8 @@ function NewWorktreeModalContent({
       // on the probes (a first-open preflight.check can take seconds) widens the
       // window where an already-trusted setup hook spuriously re-prompts on create.
       const [settingsRes, uiRes] = await Promise.allSettled([
-        client.sendRequest('settings.get'),
+        // The catalog arrives via useAgentCatalogSnapshot, so opt this read out of the piggyback.
+        client.sendRequest('settings.get', { includeAgentCatalog: false }),
         client.sendRequest('ui.get')
       ])
       if (stale) {
@@ -603,7 +604,9 @@ function NewWorktreeModalContent({
       }
       let latestRuntimeSettings = runtimeSettings
       try {
-        const settingsResponse = await client.sendRequest('settings.get')
+        const settingsResponse = await client.sendRequest('settings.get', {
+          includeAgentCatalog: false
+        })
         if (settingsResponse.ok) {
           const result = (settingsResponse as RpcSuccess).result as { settings: RuntimeSettings }
           latestRuntimeSettings = result.settings

@@ -1265,7 +1265,7 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
     })
   },
 
-  'orchestration dispatch-forget': async ({ flags, client, json }) => {
+  'orchestration dispatch-forget': async ({ flags, client, cwd, json }) => {
     // Why (§U9 W-T2, plan :498): owner-authorized Forget of a dispatch stranded in
     // launch_state_unknown. The task returns to 'blocked' and requires an explicit
     // later Retry — the existing `task-update --status ready` action, surfaced in the
@@ -1274,6 +1274,11 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
       dispatch: { id: string; task_id: string; status: string } | null
     }>('orchestration.dispatchForget', {
       task: getRequiredStringFlag(flags, 'task'),
+      run: getOptionalStringFlag(flags, 'run'),
+      // Why: Forget is Run-scoped like dispatch/task-update, so send the coordinator
+      // handle instead of leaning on the attested-envelope fallback (absent from a
+      // non-attested coordinator terminal).
+      from: await resolveCoordinatorTerminalHandle(flags, cwd, client),
       expectedFailureId: getOptionalStringFlag(flags, 'expected-failure-id')
     })
     printResult(result, json, (r) => {

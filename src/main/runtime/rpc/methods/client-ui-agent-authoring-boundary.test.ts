@@ -101,6 +101,8 @@ describe('client UI settings agent-authoring boundary', () => {
     const names = CLIENT_UI_METHODS.map((method) => method.name)
     const settingsMethods = names.filter((name) => name.startsWith('settings.'))
     expect(settingsMethods.sort()).toEqual([
+      // Read-only catalog fetch; authoring stays desktop preload IPC.
+      'settings.agentCatalog.get',
       'settings.agentReferences.get',
       'settings.get',
       // Terminal quick commands are plain settings state, not agent authoring.
@@ -171,6 +173,58 @@ describe('client UI settings agent-authoring boundary', () => {
 
     const strings: string[] = []
     collectStringsAndKeys(result, strings)
+    expect(strings).not.toContain('SECRET_TOKEN')
+    expect(strings).not.toContain('super-secret-value')
+  })
+
+  it('omits the catalog from settings.get when the client opts out, and serves it standalone', async () => {
+    const catalogSettings = {
+      customTuiAgents: [
+        {
+          id: 'custom-agent:codex:01234567-89ab-4cde-8f01-23456789abcd',
+          baseAgent: 'codex',
+          label: 'Secret Codex',
+          args: '',
+          env: { SECRET_TOKEN: 'super-secret-value' },
+          syncEnv: true
+        }
+      ],
+      agentCatalogRevision: 7
+    } as unknown as GlobalSettings
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      getClientSettings: vi.fn(() => ({ defaultTaskSource: 'github' })),
+      getAgentCatalogSnapshot: vi.fn(() => buildAgentCatalogSnapshot(catalogSettings)),
+      getAgentReferenceRevision: vi.fn(() => 4)
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: CLIENT_UI_METHODS })
+
+    const opted = await dispatcher.dispatch(
+      makeRequest('settings.get', { includeAgentCatalog: false })
+    )
+    expect(opted.ok).toBe(true)
+    const optedResult = (opted as { result: Record<string, unknown> }).result
+    expect(optedResult).not.toHaveProperty('agentCatalog')
+    expect(optedResult.agentReferences).toEqual({ version: 1, revision: 4 })
+    expect(runtime.getAgentCatalogSnapshot).not.toHaveBeenCalled()
+
+    // Explicit true and omitted both keep the legacy piggyback for old clients.
+    const included = await dispatcher.dispatch(
+      makeRequest('settings.get', { includeAgentCatalog: true })
+    )
+    expect((included as { result: Record<string, unknown> }).result.agentCatalog).toMatchObject({
+      version: 1,
+      revision: 7
+    })
+
+    const standalone = await dispatcher.dispatch(makeRequest('settings.agentCatalog.get'))
+    expect(standalone.ok).toBe(true)
+    const standaloneResult = (standalone as { result: Record<string, unknown> }).result
+    expect(standaloneResult.agentCatalog).toMatchObject({ version: 1, revision: 7 })
+    expect(standaloneResult).not.toHaveProperty('settings')
+
+    const strings: string[] = []
+    collectStringsAndKeys(standaloneResult, strings)
     expect(strings).not.toContain('SECRET_TOKEN')
     expect(strings).not.toContain('super-secret-value')
   })

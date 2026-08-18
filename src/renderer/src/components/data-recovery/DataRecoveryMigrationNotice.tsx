@@ -2,6 +2,12 @@ import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { translate } from '@/i18n/i18n'
+import {
+  agentCatalogSchemaTooNewMessage,
+  agentCatalogSchemaTooNewTitle,
+  agentCatalogSchemaTooNewVersions
+} from '../settings/agent-catalog-schema-too-new'
+import type { AgentCatalogSchemaTooNew } from '../../../../shared/data-recovery'
 import { DataRecoveryDialog } from './DataRecoveryDialog'
 
 /** App-level persistent notice for a blocked agent-catalog migration (runbook:
@@ -10,6 +16,8 @@ import { DataRecoveryDialog } from './DataRecoveryDialog'
  *  nothing on paired web (no dataRecovery preload surface) or when healthy. */
 export function DataRecoveryMigrationNotice() {
   const [migrationError, setMigrationError] = useState<string | null>(null)
+  // Absent on an older host, so a missing field is simply "not read-only".
+  const [schemaTooNew, setSchemaTooNew] = useState<AgentCatalogSchemaTooNew | null>(null)
   const [retrying, setRetrying] = useState(false)
   const [recoveryOpen, setRecoveryOpen] = useState(false)
 
@@ -17,14 +25,41 @@ export function DataRecoveryMigrationNotice() {
     try {
       const status = await window.api.dataRecovery?.migrationStatus()
       setMigrationError(status?.agentCatalogMigrationError ?? null)
+      setSchemaTooNew(status?.agentCatalogSchemaTooNew ?? null)
     } catch {
       setMigrationError(null)
+      setSchemaTooNew(null)
     }
   }, [])
 
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  // Read-only wins over the retryable block: no retry can clear a newer schema,
+  // so offering one would only fail repeatedly.
+  if (schemaTooNew) {
+    const versions = agentCatalogSchemaTooNewVersions(schemaTooNew)
+    return (
+      <div
+        role="alert"
+        className="flex flex-wrap items-start gap-2 border-b border-destructive/40 bg-destructive/5 px-3 py-2 text-sm"
+      >
+        <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-destructive">{agentCatalogSchemaTooNewTitle()}</p>
+          <p className="text-muted-foreground">{agentCatalogSchemaTooNewMessage()}</p>
+          {versions ? <p className="text-xs text-muted-foreground">{versions}</p> : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button type="button" size="xs" variant="outline" onClick={() => setRecoveryOpen(true)}>
+            {translate('auto.components.dataRecovery.openDataRecovery', 'Open Data recovery')}
+          </Button>
+        </div>
+        <DataRecoveryDialog open={recoveryOpen} onOpenChange={setRecoveryOpen} />
+      </div>
+    )
+  }
 
   if (migrationError === null) {
     return null

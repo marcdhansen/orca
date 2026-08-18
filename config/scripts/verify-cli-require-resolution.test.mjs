@@ -75,6 +75,29 @@ describe('verifyCliRequireResolution', () => {
     expect(result.missing).toEqual([])
   })
 
+  it('ignores compiled specs that import main modules the shipped CLI never loads', () => {
+    // serve-electron-flag-parity.test.ts imports a main module listed only for
+    // typecheck parity; no CLI command can reach it.
+    const projectDir = makeProject({
+      'out/cli/index.js': 'module.exports = {}',
+      'out/cli/serve-electron-flag-parity.test.js': `require("../main/startup/serve-mode-argv");`
+    })
+    const result = verifyCliRequireResolution({ projectDir })
+    expect(result.missing).toEqual([])
+    expect(result.checkedFiles).toBe(1)
+  })
+
+  it('still reports a spec pulled in by a real CLI entry', () => {
+    const projectDir = makeProject({
+      'out/cli/index.js': `require("./fixtures.test");`,
+      'out/cli/fixtures.test.js': `require("../main/deleted-by-clean");`
+    })
+    const result = verifyCliRequireResolution({ projectDir })
+    expect(result.missing).toEqual([
+      { from: path.join('out', 'cli', 'fixtures.test.js'), specifier: '../main/deleted-by-clean' }
+    ])
+  })
+
   it('skips when out/cli has not been built', () => {
     const projectDir = makeProject({ 'out/main/index.js': '' })
     const result = verifyCliRequireResolution({ projectDir })

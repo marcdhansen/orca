@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FolderWorkspace, ProjectGroup } from '../../../../shared/types'
 
 const mocks = vi.hoisted(() => ({
-  activateAndRevealFolderWorkspace: vi.fn()
+  activateAndRevealFolderWorkspace: vi.fn(),
+  assertRuntimeSupportsAgentLaunchIdentity: vi.fn()
 }))
 
 vi.mock('@/lib/worktree-activation', async (importOriginal) => {
@@ -12,9 +13,18 @@ vi.mock('@/lib/worktree-activation', async (importOriginal) => {
   return { ...actual, activateAndRevealFolderWorkspace: mocks.activateAndRevealFolderWorkspace }
 })
 
+vi.mock('@/runtime/agent-launch-identity-negotiation', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    assertRuntimeSupportsAgentLaunchIdentity: mocks.assertRuntimeSupportsAgentLaunchIdentity
+  }
+})
+
 import { decideInitialAgentTabViewMode } from '@/lib/native-chat-initial-view-mode'
 import { resolveStartupLaunchDraftText } from '@/lib/worktree-startup-payload'
 import { useAppStore } from '@/store'
+import { AGENT_LAUNCH_IDENTITY_UNSUPPORTED_MESSAGE } from '@/runtime/agent-launch-identity-negotiation'
 import { submitFolderWorkspaceCreate } from './folder-workspace-composer-submit'
 
 function makeProjectGroup(): ProjectGroup {
@@ -145,6 +155,55 @@ describe('submitFolderWorkspaceCreate', () => {
         }
       }
     })
+  })
+
+  // A pre-identity host strips agentLaunch and opens a blank shell, losing the
+  // note. Nothing may be created, and the composer must stay open to keep it.
+  it('refuses before creating anything when the runtime cannot launch agents', async () => {
+    const createFolderWorkspace = vi.fn(async () => makeFolderWorkspace())
+    const onOpenChange = vi.fn()
+    mocks.assertRuntimeSupportsAgentLaunchIdentity.mockRejectedValueOnce(
+      new Error(AGENT_LAUNCH_IDENTITY_UNSUPPORTED_MESSAGE)
+    )
+
+    await expect(
+      submitFolderWorkspaceCreate({
+        projectGroup: makeProjectGroup(),
+        name: '',
+        lastAutoName: '',
+        linkedWorkItem: null,
+        note: 'Fix the flaky checkout flow',
+        quickAgent: 'codex',
+        autoRenameBranchFromWork: true,
+        runtimeEnvironmentId: 'env-1',
+        createFolderWorkspace,
+        onOpenChange
+      })
+    ).rejects.toThrow(AGENT_LAUNCH_IDENTITY_UNSUPPORTED_MESSAGE)
+
+    expect(createFolderWorkspace).not.toHaveBeenCalled()
+    expect(mocks.activateAndRevealFolderWorkspace).not.toHaveBeenCalled()
+    expect(onOpenChange).not.toHaveBeenCalled()
+  })
+
+  it('does not probe the runtime for an agent-less folder workspace', async () => {
+    const createFolderWorkspace = vi.fn(async () => makeFolderWorkspace())
+
+    await submitFolderWorkspaceCreate({
+      projectGroup: makeProjectGroup(),
+      name: 'Docs',
+      lastAutoName: '',
+      linkedWorkItem: null,
+      note: '',
+      quickAgent: null,
+      autoRenameBranchFromWork: false,
+      runtimeEnvironmentId: 'env-1',
+      createFolderWorkspace,
+      onOpenChange: vi.fn()
+    })
+
+    expect(mocks.assertRuntimeSupportsAgentLaunchIdentity).not.toHaveBeenCalled()
+    expect(createFolderWorkspace).toHaveBeenCalled()
   })
 
   it.each([

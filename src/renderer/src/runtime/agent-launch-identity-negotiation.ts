@@ -6,6 +6,7 @@
 // refuse. Plain English, like the other host-version errors in protocol-compat.
 
 import { AGENT_LAUNCH_IDENTITY_RUNTIME_CAPABILITY } from '../../../shared/protocol-version'
+import { isRuntimeCompatBlockError } from './runtime-protocol-compat'
 import { runtimeEnvironmentSupportsCapability } from './runtime-rpc-client'
 
 export const AGENT_LAUNCH_IDENTITY_UNSUPPORTED_MESSAGE =
@@ -22,4 +23,38 @@ export async function assertRuntimeSupportsAgentLaunchIdentity(
   if (!supported) {
     throw new Error(AGENT_LAUNCH_IDENTITY_UNSUPPORTED_MESSAGE)
   }
+}
+
+export type AgentLaunchIdentityArm = 'identity' | 'legacy'
+
+/**
+ * Negotiates before anything is spawned. Answers 'legacy' only when the caller
+ * kept a client-assembled command to degrade to; otherwise refuses, so an
+ * unsupported host can never answer with a bare shell reported as a launch.
+ */
+export async function negotiateAgentLaunchIdentityArm(
+  environmentId: string,
+  hasLegacyCommand: boolean
+): Promise<AgentLaunchIdentityArm> {
+  let supported: boolean
+  try {
+    supported = await runtimeEnvironmentSupportsCapability(
+      environmentId,
+      AGENT_LAUNCH_IDENTITY_RUNTIME_CAPABILITY
+    )
+  } catch (error) {
+    // A failed read-only probe spawned nothing; only the legacy command is safe
+    // to fall back to, and a version block must stay a version block.
+    if (isRuntimeCompatBlockError(error) || !hasLegacyCommand) {
+      throw error
+    }
+    return 'legacy'
+  }
+  if (supported) {
+    return 'identity'
+  }
+  if (!hasLegacyCommand) {
+    throw new Error(AGENT_LAUNCH_IDENTITY_UNSUPPORTED_MESSAGE)
+  }
+  return 'legacy'
 }

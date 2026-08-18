@@ -15,6 +15,13 @@
 //     until its own terminal-list/reconnect event re-probes. `isHostAuthoritative`
 //     encodes which hosts a given reconcile pass can speak for, so a daemon/SSH
 //     survivor is never falsely settled `absent` before its provider reconnects.
+//   - Listing authority is ANDed with TOKEN authority: a peer that predates the
+//     launch-token echo (pre-v34 daemon, old SSH relay) accepts the token on
+//     create and silently drops it, so its listing can NEVER carry one. Reading
+//     that missing echo as absence settles spawn_failed for a live agent and the
+//     user's Retry then spawns a duplicate beside it. Such hosts fall back to the
+//     pre-launchToken identification, and hold the launch pending when that is
+//     inconclusive.
 
 import type { AgentLaunchExecutionHostId } from '../../shared/agent-launch-host-contract'
 import {
@@ -41,6 +48,11 @@ import type {
  *  the launch's own terminal is alive, so it must never resolve `absent`. */
 export type LiveTerminalForToken = { ptyId: string; worktreeId: string | null }
 
+/** Verdict of the pre-launchToken identification used for hosts that cannot echo
+ *  tokens: `absent` only when the re-listed terminals PROVE the launch's terminal
+ *  is gone. Anything less is `inconclusive` and holds the launch pending. */
+export type TokenlessLaunchLiveness = 'absent' | 'inconclusive'
+
 export type ReconcileRuntimeDeps = {
   operationStore: AgentLaunchOperationStore
   /** The live terminal holding a launch token, or null if none is live. */
@@ -48,6 +60,12 @@ export type ReconcileRuntimeDeps = {
   /** Whether a non-live pending's host can be spoken for authoritatively in this
    *  reconcile pass (→ `absent`); false leaves it `unknown`. */
   isHostAuthoritative: (executionHostId: AgentLaunchExecutionHostId) => boolean
+  /** Whether a MISSING launchToken in this host's listing is absence proof. False
+   *  for peers that predate the echo and drop the token they were handed. */
+  isHostTokenAuthoritative: (executionHostId: AgentLaunchExecutionHostId) => boolean
+  /** Pre-launchToken identification, consulted only for non-token-authoritative
+   *  hosts. Omitted (or `inconclusive`) holds the launch pending. */
+  identifyLaunchWithoutTokenEcho?: (pending: PendingAgentLaunchSnapshot) => TokenlessLaunchLiveness
   /** The worktree a live token must belong to for attribution: the scope for a
    *  worktree launch, the attempt's worktree for a background launch, or null when
    *  the intent has no worktree to compare (attribution then trusts the token). */
@@ -105,7 +123,17 @@ function resolveLiveness(
     }
   }
   const host = pending.snapshot.target.executionHostId
-  return deps.isHostAuthoritative(host) ? { kind: 'absent' } : { kind: 'unknown' }
+  if (!deps.isHostAuthoritative(host)) {
+    return { kind: 'unknown' }
+  }
+  if (!deps.isHostTokenAuthoritative(host)) {
+    // A peer that never echoes tokens can only be identified the pre-token way;
+    // absent needs positive proof there, or Retry duplicates a running agent.
+    return deps.identifyLaunchWithoutTokenEcho?.(pending) === 'absent'
+      ? { kind: 'absent' }
+      : { kind: 'unknown' }
+  }
+  return { kind: 'absent' }
 }
 
 export function buildReconcileAgentLaunchDeps(

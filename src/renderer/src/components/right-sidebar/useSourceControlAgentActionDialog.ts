@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getAgentCatalog } from '@/lib/agent-catalog'
+import { useLocalAgentCatalog } from '@/hooks/useLocalAgentCatalog'
+import { buildSourceControlAgentActionOptions } from './source-control-agent-action-agent-options'
 import {
   pickSourceControlLaunchAgent,
   resolveSourceControlLaunchAgentScope
@@ -53,6 +55,11 @@ export function useSourceControlAgentActionDialog({
   // place instead of writing a global default the override would still shadow.
   const defaultSaveTargetValue =
     launchAgentScope.overridesGlobalAgent && repoId ? 'repo' : DEFAULT_SAVE_TARGET_VALUE
+  // Why: this dialog stays mounted while closed, and the catalog is desktop-local
+  // preload IPC — keep the inert/preload-less cases off the shared catalog store.
+  const { snapshot: localAgentCatalog } = useLocalAgentCatalog({
+    enabled: open && typeof window.api?.settings?.agentCatalog?.getLocal === 'function'
+  })
   const ensureDetectedAgents = useAppStore((state) => state.ensureDetectedAgents)
   const ensureRemoteDetectedAgents = useAppStore((state) => state.ensureRemoteDetectedAgents)
   const [commandTemplate, setCommandTemplate] = useState(
@@ -149,10 +156,13 @@ export function useSourceControlAgentActionDialog({
   )
   const agentOptions = useMemo(
     () =>
-      getAgentCatalog().filter(
-        (entry) => enabledDetectedAgents.includes(entry.id) || entry.id === selectedAgent
-      ),
-    [enabledDetectedAgents, selectedAgent]
+      buildSourceControlAgentActionOptions({
+        enabledDetectedAgents,
+        disabledAgents,
+        localAgentCatalog,
+        selectedAgent
+      }),
+    [disabledAgents, enabledDetectedAgents, localAgentCatalog, selectedAgent]
   )
   const selectedAgentUnavailable = isSourceControlAgentUnavailable(
     selectedAgent,

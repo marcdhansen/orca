@@ -105,6 +105,25 @@ describe('AgentCatalogSection (connected)', () => {
     expect(mutate).toHaveBeenCalledTimes(1)
   })
 
+  it('tells the user a toggle whose durable write failed was not saved', async () => {
+    const getLocal = vi
+      .fn()
+      .mockResolvedValue(buildLocalCatalogSnapshot({ disabledAgents: ['claude'] }))
+    const mutate = vi
+      .fn()
+      .mockResolvedValue({ ok: false, code: 'agent_catalog_write_failed', revision: 2 })
+    ;(window as unknown as { api: unknown }).api = {
+      settings: {
+        agentCatalog: { getLocal, mutate },
+        onChanged: () => () => {}
+      }
+    }
+    render(<AgentCatalogSection agentCmdOverrides={{}} />)
+    fireEvent.click(await screen.findByLabelText('Enable Claude'))
+    expect(await screen.findByText("Your change wasn't saved")).toBeTruthy()
+    expect(screen.getByRole('alert').textContent).toContain('nothing was changed')
+  })
+
   it('surfaces the migration block from the load-time snapshot before any mutation', async () => {
     const getLocal = vi
       .fn()
@@ -119,6 +138,52 @@ describe('AgentCatalogSection (connected)', () => {
     expect(await screen.findByRole('alert')).toBeTruthy()
     expect(screen.getByText('Agent settings are temporarily read-only')).toBeTruthy()
     expect(screen.getByText('disk full')).toBeTruthy()
+  })
+
+  it('surfaces a schema-too-new rejection as a non-retryable read-only alert', async () => {
+    const getLocal = vi
+      .fn()
+      .mockResolvedValue(buildLocalCatalogSnapshot({ disabledAgents: ['claude'] }))
+    const mutate = vi.fn().mockResolvedValue({
+      ok: false,
+      code: 'agent_catalog_schema_too_new',
+      persistedVersion: 2,
+      supportedVersion: 1
+    })
+    ;(window as unknown as { api: unknown }).api = {
+      settings: {
+        agentCatalog: { getLocal, mutate },
+        onChanged: () => () => {}
+      }
+    }
+    render(<AgentCatalogSection agentCmdOverrides={{}} />)
+    fireEvent.click(await screen.findByLabelText('Enable Claude'))
+    expect(
+      await screen.findByText('Custom agents are read-only in this version of Orca')
+    ).toBeTruthy()
+    expect(
+      screen.getByText('Profile agent catalog v2; this version of Orca supports v1.')
+    ).toBeTruthy()
+    // Not a disk failure: the "wasn't saved, try again" copy must stay away.
+    expect(screen.queryByText("Your change wasn't saved")).toBeNull()
+  })
+
+  it('surfaces the read-only state from the load-time snapshot before any mutation', async () => {
+    const getLocal = vi.fn().mockResolvedValue(
+      buildLocalCatalogSnapshot({
+        schemaTooNew: { persistedVersion: 4, supportedVersion: 1 }
+      })
+    )
+    ;(window as unknown as { api: unknown }).api = {
+      settings: {
+        agentCatalog: { getLocal },
+        onChanged: () => () => {}
+      }
+    }
+    render(<AgentCatalogSection agentCmdOverrides={{}} />)
+    expect(
+      await screen.findByText('Custom agents are read-only in this version of Orca')
+    ).toBeTruthy()
   })
 
   it('keeps catalog search usable in read-only mode while controls stay disabled', async () => {
