@@ -11,7 +11,6 @@ import type { AgentLaunchSpawnRequest } from '../../../shared/agent-launch-spawn
 import type { AgentStartupPlan } from '@/lib/tui-agent-startup'
 import type { AgentStartedTelemetry } from '@/lib/worktree-activation'
 import type { TaskSourceContext, WorkspaceRunContext } from '../../../shared/task-source-context'
-import type { AgentStartupPlan } from '../../../shared/tui-agent-startup'
 import type { EphemeralVmCheckoutMode } from '../../../shared/orca-yaml-hook-types'
 
 /** Two-phase status reported by the main process while a worktree is created.
@@ -95,10 +94,6 @@ export type WorktreeCreationRequest = {
   pendingFirstAgentMessageRename: boolean
   /** Post-create note persisted as the worktree comment. */
   note: string
-  /** Legacy renderer-owned startup retained for queued pre-host-launch requests. */
-  startupPlan?: AgentStartupPlan | null
-  quickPrompt?: string
-  launchDraftPrompt?: string
   /** Telemetry emitted renderer-side off the host's `launched` receipt (the host
    *  create-spawn threads no telemetry). Null for blank-shell creates. */
   quickTelemetry: AgentStartedTelemetry | null

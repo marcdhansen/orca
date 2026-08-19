@@ -124,7 +124,6 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   // Daemon adapters only — the in-process fallback has main's own token registry.
   providesLaunchTokenListings = (): boolean =>
     this.allDaemonAdapters().every((adapter) => adapter.providesLaunchTokenListings?.() === true)
-  }
 
   resize(id: string, cols: number, rows: number): void {
     this.providerFor(id).resize(id, cols, rows)

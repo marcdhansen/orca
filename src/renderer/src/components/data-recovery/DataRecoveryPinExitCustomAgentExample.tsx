@@ -7,8 +7,11 @@ import type { BuiltInTuiAgent } from '../../../../shared/types'
 export const PIN_EXIT_CUSTOM_AGENT_EXAMPLE_NAME = 'gpt-5.6-luna-low'
 export const PIN_EXIT_CUSTOM_AGENT_EXAMPLE_COMMAND =
   'codex --model gpt-5.6-luna -c model_reasoning_effort="low"'
+export const PIN_EXIT_CUSTOM_AGENT_EXAMPLE_2_NAME = 'gpt-5.6-luna-high'
+export const PIN_EXIT_CUSTOM_AGENT_EXAMPLE_2_COMMAND =
+  'codex --model gpt-5.6-luna -c model_reasoning_effort="high"'
 
-/** Static picker mock: shows a custom agent as a named row among built-ins. */
+/** Static picker mock: shows custom agents as named rows among built-ins. */
 export function DataRecoveryPinExitCustomAgentExample() {
   return (
     <div aria-hidden className="overflow-hidden rounded-md border border-border bg-card text-left">
@@ -17,9 +20,15 @@ export function DataRecoveryPinExitCustomAgentExample() {
         agent="codex"
         label={PIN_EXIT_CUSTOM_AGENT_EXAMPLE_NAME}
         command={PIN_EXIT_CUSTOM_AGENT_EXAMPLE_COMMAND}
+        isCustom
         selected
       />
-      <ExamplePickerRow agent="grok" label="Grok" />
+      <ExamplePickerRow
+        agent="codex"
+        label={PIN_EXIT_CUSTOM_AGENT_EXAMPLE_2_NAME}
+        command={PIN_EXIT_CUSTOM_AGENT_EXAMPLE_2_COMMAND}
+        isCustom
+      />
     </div>
   )
 }
@@ -28,11 +37,13 @@ function ExamplePickerRow({
   agent,
   label,
   command,
+  isCustom = false,
   selected = false
 }: {
   agent: BuiltInTuiAgent
   label: string
   command?: string
+  isCustom?: boolean
   selected?: boolean
 }) {
   return (
@@ -51,7 +62,7 @@ function ExamplePickerRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-sm font-medium text-foreground">{label}</span>
-          {selected ? (
+          {isCustom ? (
             <Badge variant="outline" className="font-normal">
               {translate('auto.components.dataRecovery.pinExitExampleBadge', 'Custom')}
             </Badge>

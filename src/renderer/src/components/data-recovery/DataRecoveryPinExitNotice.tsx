@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { ChevronDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
   Dialog,
   DialogContent,
@@ -10,8 +12,8 @@ import {
 } from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
 import { translate } from '@/i18n/i18n'
+import { cn } from '@/lib/utils'
 import type { RecoveryPointDto } from '../../../../shared/data-recovery'
-import { DataRecoveryDialog } from './DataRecoveryDialog'
 import { DataRecoveryPinExitCustomAgentExample } from './DataRecoveryPinExitCustomAgentExample'
 import {
   dismissPinExitNotice,
@@ -36,7 +38,7 @@ function restorablePreV1Point(points: RecoveryPointDto[]): RecoveryPointDto | nu
 export function DataRecoveryPinExitNotice() {
   const [pin, setPin] = useState<RecoveryPointDto | null>(null)
   const [dismissed, setDismissed] = useState(false)
-  const [recoveryOpen, setRecoveryOpen] = useState(false)
+  const [rollbackOpen, setRollbackOpen] = useState(false)
   const continueRef = useRef<HTMLButtonElement>(null)
 
   const refresh = useCallback(async () => {
@@ -66,107 +68,110 @@ export function DataRecoveryPinExitNotice() {
     setDismissed(true)
   }
 
-  const pinDialogOpen = pin !== null && !dismissed && !recoveryOpen
-  if (!pinDialogOpen && !recoveryOpen) {
+  const pinDialogOpen = pin !== null && !dismissed
+  if (!pinDialogOpen) {
     return null
   }
 
   return (
-    <>
-      <Dialog
-        open={pinDialogOpen}
-        onOpenChange={(open) => {
-          // Closing because the restore dialog is on top is temporary.
-          if (!open && !recoveryOpen) {
-            handleDismiss()
-          }
+    <Dialog
+      open={pinDialogOpen}
+      onOpenChange={(open) => {
+        if (!open) {
+          handleDismiss()
+        }
+      }}
+    >
+      <DialogContent
+        className="max-w-lg gap-5"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault()
+          continueRef.current?.focus()
         }}
       >
-        <DialogContent
-          className="max-w-lg gap-5"
-          onOpenAutoFocus={(event) => {
-            event.preventDefault()
-            continueRef.current?.focus()
-          }}
-        >
-          <DialogHeader className="gap-3">
-            <DialogTitle className="leading-snug">
-              {translate(
-                'auto.components.dataRecovery.pinExitTitle',
-                'Custom agents are now available'
-              )}
-            </DialogTitle>
-            <DialogDescription className="text-sm leading-relaxed text-foreground">
-              {translate(
-                'auto.components.dataRecovery.pinExitLead',
-                'A custom agent is saved arguments for a harness like Codex or Claude, picked by name.'
-              )}
-            </DialogDescription>
-          </DialogHeader>
-
-          <DataRecoveryPinExitCustomAgentExample />
-          <p className="text-sm leading-relaxed text-muted-foreground">
+        <DialogHeader className="gap-3">
+          <DialogTitle className="leading-snug">
             {translate(
-              'auto.components.dataRecovery.pinExitExampleHint',
-              'Create them in Settings → Agents. Keep working as usual — nothing else is required.'
+              'auto.components.dataRecovery.pinExitTitle',
+              'Custom agents are now available'
             )}
-          </p>
+          </DialogTitle>
+          <DialogDescription className="text-sm leading-relaxed text-foreground">
+            {translate(
+              'auto.components.dataRecovery.pinExitLead',
+              'A custom agent is saved arguments for a harness like Codex or Claude, picked by name.'
+            )}
+          </DialogDescription>
+        </DialogHeader>
 
-          <Separator />
+        <DataRecoveryPinExitCustomAgentExample />
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          {translate('auto.components.dataRecovery.pinExitExampleHintPrefix', 'Create them in')}{' '}
+          <strong className="font-semibold text-foreground">
+            {translate('auto.components.dataRecovery.settingsAgents', 'Settings → Agents')}
+          </strong>
+          .{' '}
+          {translate(
+            'auto.components.dataRecovery.pinExitExampleHintSuffix',
+            'Keep working as usual — nothing else is required.'
+          )}
+        </p>
 
-          <div className="flex flex-col gap-3">
-            <p className="text-sm font-medium text-foreground">
+        <Separator />
+
+        <Collapsible
+          open={rollbackOpen}
+          onOpenChange={setRollbackOpen}
+          className="rounded-lg border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground"
+        >
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="flex w-full cursor-pointer items-center justify-between text-left font-medium text-foreground outline-none hover:text-foreground/80 focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <span>
+                {translate(
+                  'auto.components.dataRecovery.pinExitRollbackTitle',
+                  'If you need to downgrade to a previous Orca version later'
+                )}
+              </span>
+              <ChevronDown
+                className={cn(
+                  'size-3.5 shrink-0 text-muted-foreground transition-transform',
+                  rollbackOpen && 'rotate-180'
+                )}
+              />
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="collapsible-height-content space-y-1.5 pt-2">
+            <p className="leading-relaxed">
               {translate(
-                'auto.components.dataRecovery.pinExitRollbackTitle',
-                'Before you install an older Orca'
+                'auto.components.dataRecovery.pinExitRollbackReinstallPrefix',
+                'This version updated some Orca entity schema. If you ever need to install an older Orca release, restore the backup from'
+              )}{' '}
+              <strong className="font-semibold text-foreground">
+                {translate('auto.components.dataRecovery.settingsAgents', 'Settings → Agents')}
+              </strong>{' '}
+              {translate(
+                'auto.components.dataRecovery.pinExitRollbackReinstallSuffix',
+                'first so older versions can read your Orca config.'
               )}
             </p>
-            <p className="text-sm leading-relaxed text-muted-foreground">
-              {translate(
-                'auto.components.dataRecovery.pinExitRollbackReinstall',
-                'This version changed the local data format. Restore the previous backup first, or the older app can break.'
-              )}
-            </p>
-            <ol className="list-decimal space-y-1 pl-4 text-sm leading-relaxed text-muted-foreground">
-              <li>
-                {translate(
-                  'auto.components.dataRecovery.pinExitRollbackStepRestore',
-                  'Restore the data backup. Orca will quit.'
-                )}
-              </li>
-              <li>
-                {translate(
-                  'auto.components.dataRecovery.pinExitRollbackStepInstall',
-                  'Then install the older Orca.'
-                )}
-              </li>
-            </ol>
-            <p className="text-sm leading-relaxed text-muted-foreground">
+            <p className="text-[11px] leading-relaxed text-muted-foreground/80">
               {translate(
                 'auto.components.dataRecovery.pinExitRollbackLoss',
-                'The restore discards changes since this update, including custom agents.'
+                'Restoring discards changes saved since this update, including custom agents.'
               )}
             </p>
-            <div>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => setRecoveryOpen(true)}
-              >
-                {translate('auto.components.dataRecovery.pinExitGoBack', 'Restore data backup…')}
-              </Button>
-            </div>
-          </div>
+          </CollapsibleContent>
+        </Collapsible>
 
-          <DialogFooter>
-            <Button ref={continueRef} type="button" onClick={handleDismiss}>
-              {translate('auto.components.dataRecovery.dismissPinExit', 'Continue')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <DataRecoveryDialog open={recoveryOpen} onOpenChange={setRecoveryOpen} />
-    </>
+        <DialogFooter>
+          <Button ref={continueRef} type="button" onClick={handleDismiss}>
+            {translate('auto.components.dataRecovery.dismissPinExit', 'Continue')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { DataRecoveryPinExitNotice } from './DataRecoveryPinExitNotice'
 import {
+  PIN_EXIT_CUSTOM_AGENT_EXAMPLE_2_COMMAND,
+  PIN_EXIT_CUSTOM_AGENT_EXAMPLE_2_NAME,
   PIN_EXIT_CUSTOM_AGENT_EXAMPLE_COMMAND,
   PIN_EXIT_CUSTOM_AGENT_EXAMPLE_NAME
 } from './DataRecoveryPinExitCustomAgentExample'
@@ -88,11 +90,19 @@ describe('DataRecoveryPinExitNotice', () => {
     expect(screen.getByText('Custom agents are now available')).toBeTruthy()
     expect(screen.getByText(PIN_EXIT_CUSTOM_AGENT_EXAMPLE_NAME)).toBeTruthy()
     expect(screen.getByText(PIN_EXIT_CUSTOM_AGENT_EXAMPLE_COMMAND)).toBeTruthy()
-    expect(screen.getByText('Before you install an older Orca')).toBeTruthy()
-    expect(screen.getByText('Restore the data backup. Orca will quit.')).toBeTruthy()
-    expect(screen.getByText('Then install the older Orca.')).toBeTruthy()
-    expect(screen.getByText('Restore data backup…')).toBeTruthy()
+    expect(screen.getByText(PIN_EXIT_CUSTOM_AGENT_EXAMPLE_2_NAME)).toBeTruthy()
+    expect(screen.getByText(PIN_EXIT_CUSTOM_AGENT_EXAMPLE_2_COMMAND)).toBeTruthy()
+    expect(screen.getAllByText('Settings → Agents').length).toBeGreaterThanOrEqual(1)
+    expect(
+      screen.getByText('If you need to downgrade to a previous Orca version later')
+    ).toBeTruthy()
+
+    // Progressively disclosed when trigger is clicked
+    fireEvent.click(screen.getByText('If you need to downgrade to a previous Orca version later'))
+    expect(screen.getAllByText('Settings → Agents').length).toBe(2)
+    expect(screen.getByText(/This version updated some Orca entity schema/)).toBeTruthy()
     expect(screen.getByText('Continue')).toBeTruthy()
+    expect(screen.queryByText('Restore data backup…')).toBeNull()
     expect(screen.queryByText('Open Data recovery')).toBeNull()
     expect(screen.queryByText(/profile/i)).toBeNull()
   })
@@ -114,12 +124,5 @@ describe('DataRecoveryPinExitNotice', () => {
     })
     render(<DataRecoveryPinExitNotice />)
     expect(await screen.findByRole('dialog')).toBeTruthy()
-  })
-
-  it('opens the restore dialog from the data-backup action', async () => {
-    installApi()
-    render(<DataRecoveryPinExitNotice />)
-    fireEvent.click(await screen.findByText('Restore data backup…'))
-    expect(await screen.findByText('Before custom agents')).toBeTruthy()
   })
 })
