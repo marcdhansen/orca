@@ -41,6 +41,10 @@ import { normalizeTerminalLayoutPtyOwnership } from '@/components/terminal-pane/
 import { isClientAuthoritativeAgentStatusPane } from '@/components/terminal-pane/renderer-owned-agent-status-registry'
 import { getExplicitRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
 import {
+  clearHostSessionMirrorHydration,
+  markHostSessionMirrorHydrated
+} from './host-session-mirror-hydration'
+import {
   createWebRuntimeSessionTerminal,
   HOST_TERMINAL_SURFACE_SEPARATOR,
   isWebTerminalSurfaceTabId,
@@ -786,6 +790,7 @@ export function clearWebSessionTabsTrackingForEnvironment(environmentId: string)
   }
   clearWebAgentSessionHandoffsForEnvironment(trimmedEnvironmentId)
   clearWebSessionBrowserPlacementsForEnvironment(trimmedEnvironmentId)
+  clearHostSessionMirrorHydration(trimmedEnvironmentId)
   clearAllWebRuntimeWakeTerminalRespawn()
 }
 
@@ -3791,6 +3796,17 @@ function loadInitialWebSessionTabs(
         )
       }
     })
+    .finally(() => {
+      // Why: every outcome — snapshots, an empty inventory, a host error, a
+      // timeout — settles the mirror. Work parked on "liveness still unknown"
+      // would otherwise wait forever on the failure paths.
+      if (
+        isCurrent() &&
+        getRuntimeEnvironmentRevision(environmentId) === expectedEnvironmentPairingRevision
+      ) {
+        markHostSessionMirrorHydrated(environmentId)
+      }
+    })
 }
 
 export function useWebSessionTabsSync(): void {
@@ -4307,10 +4323,14 @@ export function useWebSessionTabsSync(): void {
                     '[web-session-tabs-sync] global subscription failed:',
                     response.error.message
                   )
+                  markHostSessionMirrorHydrated(environmentId)
                   return
                 }
                 const event = response.result as SessionTabsStreamEvent
                 const replayed = isRuntimeSubscriptionReplayResponse(response)
+                // Why: the stream is the other half of hydration — whichever of
+                // it and the one-shot listAll lands first settles the mirror.
+                markHostSessionMirrorHydrated(environmentId)
                 if (event.type === 'snapshots') {
                   const skipUnchangedResumeWork = awaitingVisibilityResumeInventory && !replayed
                   awaitingVisibilityResumeInventory = false
@@ -4484,6 +4504,7 @@ export function useWebSessionTabsSync(): void {
               onError: (error) => {
                 if (isCurrent()) {
                   console.warn('[web-session-tabs-sync] global subscription error:', error.message)
+                  markHostSessionMirrorHydrated(environmentId)
                 }
               }
             }
@@ -4494,6 +4515,7 @@ export function useWebSessionTabsSync(): void {
             '[web-session-tabs-sync] failed to subscribe globally:',
             error instanceof Error ? error.message : String(error)
           )
+          markHostSessionMirrorHydrated(environmentId)
         },
         onUnsubscribeError: (error) => {
           console.warn('[web-session-tabs-sync] failed to unsubscribe globally:', error)
@@ -4644,9 +4666,13 @@ export function useWebSessionTabsSync(): void {
                     '[web-session-tabs-sync] subscription failed:',
                     response.error.message
                   )
+                  markHostSessionMirrorHydrated(environmentId)
                   return
                 }
                 const event = response.result as SessionTabsStreamEvent
+                // Why: the active-worktree mirror is a hydration conclusion too;
+                // deferred recovery must never wait on the global stream alone.
+                markHostSessionMirrorHydrated(environmentId)
                 if (event.type !== 'snapshot' && event.type !== 'updated') {
                   return
                 }
@@ -4675,6 +4701,7 @@ export function useWebSessionTabsSync(): void {
               onError: (error) => {
                 if (isCurrent()) {
                   console.warn('[web-session-tabs-sync] subscription error:', error.message)
+                  markHostSessionMirrorHydrated(environmentId)
                 }
               }
             }

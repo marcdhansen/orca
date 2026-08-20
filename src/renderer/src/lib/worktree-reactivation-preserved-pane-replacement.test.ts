@@ -243,9 +243,13 @@ describe('preserved-pane replacement contract on workspace activation', () => {
     expect(after.sleepingAgentSessionsByPaneKey[makePaneKey(HUSK_TAB_ID, LEAF_ID)]).toBeDefined()
   })
 
-  // Why: web-mirror tabs never mount a local pane, so they cannot own recovery
-  // — the appended replacement stays the correct resume path for them.
-  it('still appends a replacement for a web-mirror tab that cannot mount a local pane', () => {
+  // Why (flipped by the aug20 "windows 2" incident): a still-published
+  // web-mirror tab is a host tab, so the host owns its PTY. The client cannot
+  // mount that pane and cannot see its liveness until the mirror hydrates, and
+  // the replacement it used to append relaunched `codex resume` against a
+  // session the host still held (-32600 "already has an active writer"),
+  // stranding a bare shell while the live agent lost its tab.
+  it('defers recovery for a still-published web-mirror tab instead of appending a replacement', () => {
     const webTabId = 'web-terminal-host-tab'
     const worktree = { ...makeWorktree(), createdWithAgent: undefined }
     const state = baseState(worktree)
@@ -304,18 +308,61 @@ describe('preserved-pane replacement contract on workspace activation', () => {
     activateAndRevealWorktree(worktree.id)
 
     const after = useAppStore.getState()
+    expect(after.tabsByWorktree[worktree.id]?.map((tab) => tab.id)).toEqual([webTabId])
+    // The record is the only recovery evidence, so deferral must retain it.
+    expect(after.sleepingAgentSessionsByPaneKey[paneKey]).toBeDefined()
+    expect(Object.keys(after.automaticAgentResumeClaimsByTabId)).toHaveLength(0)
+  })
+
+  // Why: retraction is the mirror's verdict that the host pane is gone, which
+  // is what re-arms the one-replacement-per-session contract above.
+  it('appends the replacement once the mirror has retracted the web-mirror tab', () => {
+    const webTabId = 'web-terminal-host-tab'
+    const worktree = { ...makeWorktree(), createdWithAgent: undefined }
+    const state = baseState(worktree)
+    // Retracted: the layout husk survives for scrollback, the tab row does not.
+    state.terminalLayoutsByTabId = {
+      [webTabId]: {
+        root: { type: 'leaf', leafId: LEAF_ID },
+        activeLeafId: LEAF_ID,
+        ptyIdsByLeafId: { [LEAF_ID]: 'pty-old-1' }
+      } as never
+    }
+    useAppStore.setState(state)
+    const paneKey = makePaneKey(webTabId, LEAF_ID)
+    useAppStore.setState((s) => ({
+      sleepingAgentSessionsByPaneKey: {
+        ...s.sleepingAgentSessionsByPaneKey,
+        [paneKey]: {
+          paneKey,
+          tabId: webTabId,
+          worktreeId: worktree.id,
+          agent: 'codex' as const,
+          providerSession: { key: 'session_id' as const, id: 'codex-session-F' },
+          prompt: 'resume prior task',
+          state: 'working' as const,
+          origin: 'quit' as const,
+          capturedAt: 1000,
+          updatedAt: 1000,
+          terminalTitle: 'Codex'
+        }
+      }
+    }))
+
+    activateAndRevealWorktree(worktree.id)
+
+    const after = useAppStore.getState()
     const tabs = after.tabsByWorktree[worktree.id] ?? []
-    expect(tabs.map((tab) => tab.id)).toContain(webTabId)
-    expect(tabs).toHaveLength(2)
+    expect(tabs).toHaveLength(1)
     expect(after.sleepingAgentSessionsByPaneKey[paneKey]).toBeUndefined()
-    const replacement = tabs.find((tab) => tab.id !== webTabId)!
+    const replacement = tabs[0]!
     expect(after.automaticAgentResumeClaimsByTabId[replacement.id]?.providerSession).toEqual({
       key: 'session_id',
-      id: 'codex-session-E'
+      id: 'codex-session-F'
     })
     expect(after.consumeTabStartupCommand(replacement.id)?.resumeProviderSession).toEqual({
       key: 'session_id',
-      id: 'codex-session-E'
+      id: 'codex-session-F'
     })
   })
 })
