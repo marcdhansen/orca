@@ -41,7 +41,7 @@ export function findUnhydratedHostMirrorForPane(
     return null
   }
   const environmentId = getRuntimeEnvironmentIdForWorktree(state, record.worktreeId)
-  if (environmentId && hasHostSessionMirrorHydrated(environmentId)) {
+  if (environmentId && hasHostSessionMirrorHydrated(environmentId, record.worktreeId)) {
     return null
   }
   return { environmentId }

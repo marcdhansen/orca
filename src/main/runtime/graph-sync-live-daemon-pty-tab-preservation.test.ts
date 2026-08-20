@@ -315,6 +315,27 @@ describe('graph sync must not prune a tab whose daemon PTY is live', () => {
     expect(h.snapshotTabIds(WT_CLI)).not.toContain(cliTabId)
   })
 
+  // N2: the renderer can republish before its de-persist reaches the host
+  // session, so a just-closed tab can linger for one frame. Confirming that
+  // window is TRANSIENT — the next publication prunes it — not a resurrection.
+  it('a close that races the renderer publication still prunes on the next sync', async () => {
+    const h = createHarness()
+    h.syncRendererGraph([WT_CLI])
+    const cliTabId = await h.createCliTerminal(WT_CLI)
+
+    // Publication lands first, while the session still lists the tab.
+    h.syncRendererGraph([WT_CLI])
+    vi.advanceTimersByTime(300)
+    expect(h.snapshotTabIds(WT_CLI)).toContain(cliTabId)
+
+    // The de-persist lands afterwards; the very next sync releases ownership.
+    h.retirePersistedTabs(WT_CLI)
+    h.syncRendererGraph([WT_CLI])
+    vi.advanceTimersByTime(300)
+
+    expect(h.snapshotTabIds(WT_CLI)).not.toContain(cliTabId)
+  })
+
   it('keeps every live CLI terminal when the renderer publishes no worktree at all', async () => {
     const h = createHarness()
     h.syncRendererGraph([WT_CLI, WT_OTHER])

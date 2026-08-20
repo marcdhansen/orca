@@ -42,7 +42,8 @@ import { isClientAuthoritativeAgentStatusPane } from '@/components/terminal-pane
 import { getExplicitRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
 import {
   clearHostSessionMirrorHydration,
-  markHostSessionMirrorHydrated
+  markHostSessionMirrorHydrated,
+  markHostSessionMirrorWorktreeHydrated
 } from './host-session-mirror-hydration'
 import {
   createWebRuntimeSessionTerminal,
@@ -4328,9 +4329,6 @@ export function useWebSessionTabsSync(): void {
                 }
                 const event = response.result as SessionTabsStreamEvent
                 const replayed = isRuntimeSubscriptionReplayResponse(response)
-                // Why: the stream is the other half of hydration — whichever of
-                // it and the one-shot listAll lands first settles the mirror.
-                markHostSessionMirrorHydrated(environmentId)
                 if (event.type === 'snapshots') {
                   const skipUnchangedResumeWork = awaitingVisibilityResumeInventory && !replayed
                   awaitingVisibilityResumeInventory = false
@@ -4452,10 +4450,19 @@ export function useWebSessionTabsSync(): void {
                       for (const finishRecovery of finishRecoveries) {
                         finishRecovery?.()
                       }
+                      // Why: a full inventory speaks for every worktree, but only
+                      // once its patch is in the store — settling earlier drains
+                      // parked recovery against state this frame has not written.
+                      if (isCurrent()) {
+                        markHostSessionMirrorHydrated(environmentId)
+                      }
                     })
                   return
                 }
                 if (event.type !== 'snapshot' && event.type !== 'updated') {
+                  // Why: a closed stream carries no frame to apply, and nothing
+                  // further is coming — settle so parked work cannot wedge.
+                  markHostSessionMirrorHydrated(environmentId)
                   return
                 }
                 const receivedFrame = recordReceivedWebSessionTabsSnapshot(environmentId, event)
@@ -4499,7 +4506,15 @@ export function useWebSessionTabsSync(): void {
                       console.warn('[web-session-tabs-sync] snapshot recovery failed:', error)
                     }
                   })
-                  .finally(finishRecovery)
+                  .finally(() => {
+                    finishRecovery()
+                    // Why: this frame speaks for its own worktree only; releasing
+                    // the environment would free panes parked on workspaces whose
+                    // snapshots have not arrived.
+                    if (isCurrent()) {
+                      markHostSessionMirrorWorktreeHydrated(environmentId, event.worktree)
+                    }
+                  })
               },
               onError: (error) => {
                 if (isCurrent()) {
@@ -4670,10 +4685,9 @@ export function useWebSessionTabsSync(): void {
                   return
                 }
                 const event = response.result as SessionTabsStreamEvent
-                // Why: the active-worktree mirror is a hydration conclusion too;
-                // deferred recovery must never wait on the global stream alone.
-                markHostSessionMirrorHydrated(environmentId)
                 if (event.type !== 'snapshot' && event.type !== 'updated') {
+                  // No frame to apply, and a closed stream is a conclusion.
+                  markHostSessionMirrorHydrated(environmentId)
                   return
                 }
                 const receivedFrame = recordReceivedWebSessionTabsSnapshot(environmentId, event)
@@ -4696,7 +4710,14 @@ export function useWebSessionTabsSync(): void {
                       )
                     }
                   })
-                  .finally(finishRecovery)
+                  .finally(() => {
+                    finishRecovery()
+                    // Why: the active-worktree mirror is authoritative for this
+                    // worktree alone, and only once its patch has been applied.
+                    if (isCurrent()) {
+                      markHostSessionMirrorWorktreeHydrated(environmentId, event.worktree)
+                    }
+                  })
               },
               onError: (error) => {
                 if (isCurrent()) {
