@@ -240,7 +240,11 @@ function createHarness() {
         ...session,
         tabsByWorktree: { ...session.tabsByWorktree, [worktreeId]: [] }
       }
-    }
+    },
+    persistedTabIds: (worktreeId: string): string[] =>
+      (session.tabsByWorktree?.[worktreeId] ?? []).map((tab) => tab.id),
+    isRuntimeSessionOwned: (ptyId: string): boolean =>
+      (runtime as unknown as RuntimeInternals).ptysById.get(ptyId)?.runtimeSessionOwned === true
   }
 }
 
@@ -333,6 +337,29 @@ describe('graph sync must not prune a tab whose daemon PTY is live', () => {
     h.syncRendererGraph([WT_CLI])
     vi.advanceTimersByTime(300)
 
+    expect(h.snapshotTabIds(WT_CLI)).not.toContain(cliTabId)
+  })
+
+  // The safety argument for always persisting rests on a real close actually
+  // DROPPING that persisted binding. Every other control here hands the
+  // de-persist to the harness, which would pass even if no close route did it.
+  // This one drives the real close and lets the production code decide.
+  it('a real paired close de-persists the CLI terminal and stops preserving it', async () => {
+    const h = createHarness()
+    h.syncRendererGraph([WT_CLI])
+    const cliTabId = await h.createCliTerminal(WT_CLI)
+    expect(h.persistedTabIds(WT_CLI)).toContain(cliTabId)
+    expect(h.isRuntimeSessionOwned(CLI_PTY)).toBe(true)
+
+    await h.runtime.closeMobileSessionTab(`id:${WT_CLI}`, cliTabId, { reason: 'user' })
+
+    // The close must drop the persisted binding, or the tab is preserved forever
+    // and STA-4593's closed-tab resurrection returns through the CLI path.
+    expect(h.persistedTabIds(WT_CLI)).not.toContain(cliTabId)
+    expect(h.isRuntimeSessionOwned(CLI_PTY)).toBe(false)
+
+    h.syncRendererGraph([WT_CLI])
+    vi.advanceTimersByTime(300)
     expect(h.snapshotTabIds(WT_CLI)).not.toContain(cliTabId)
   })
 
