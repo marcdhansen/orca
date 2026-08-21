@@ -133,11 +133,14 @@ describeOnWindows('ConPTY job ownership', () => {
     }
   }, 60_000)
 
-  it('still lets a child break away from the job', async () => {
-    // A job with no limits denies CREATE_BREAKAWAY_FROM_JOB outright, and
-    // installers, msiexec and some updater paths spawn that way deliberately.
-    // They would fail ONLY inside an Orca terminal, which is the worst shape a
-    // bug report can take, so JOB_OBJECT_LIMIT_BREAKAWAY_OK is load-bearing.
+  it('still starts a backgrounded child from inside the job', async () => {
+    // Scope note: `start /b` uses CREATE_NEW_CONSOLE, not
+    // CREATE_BREAKAWAY_FROM_JOB, so this does NOT prove the BREAKAWAY_OK flag
+    // is doing its job -- it proves job membership does not block ordinary
+    // backgrounding. The flag itself rests on the Win32 contract (a job lacking
+    // JOB_OBJECT_LIMIT_BREAKAWAY_OK denies breakaway with ERROR_ACCESS_DENIED
+    // regardless of its other limits) and is not covered by a test here.
+    // Covering it needs a helper that passes the flag to CreateProcess.
     const nodePty = await import('node-pty')
     const marker = join(mkdtempSync(join(tmpdir(), 'orca-breakaway-')), 'marker.txt')
     const proc = nodePty.spawn('cmd.exe', [], {

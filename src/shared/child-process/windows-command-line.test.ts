@@ -137,3 +137,16 @@ describe('isCmdInterpretedProgram', () => {
     expect(isCmdInterpretedProgram(program)).toBe(expected)
   })
 })
+
+describe('line breaks', () => {
+  it.each([
+    ['newline in an argument', 'agent', ['fix\nthis']],
+    ['carriage return in an argument', 'agent', ['fix\rthis']],
+    ['newline in the program path', 'C:\\a\nb.cmd', []]
+  ])('rejects %s rather than truncating it', (_case, program, args) => {
+    // cmd ends the command at a raw CR/LF whatever the quote state, so an
+    // encoded newline silently truncates the argument and can leave the
+    // remainder to run as a further command.
+    expect(() => buildWindowsCmdShimCommandLine(program, args)).toThrow(/line break/)
+  })
+})

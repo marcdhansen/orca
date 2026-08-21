@@ -27,7 +27,7 @@ patchedDependencies:
     hash: 7333b3837f80a7fbd045964db6d76ba4fc118e49134bdbabb00585b6b7b60673
     path: config/patches/lint-staged@16.4.0.patch
   node-pty@1.1.0:
-    hash: a8de16410ba90ef37d6486bebf03aaebcf2963514fbf1f5bd81f56eea7d96939
+    hash: c48841645e1873768dfdfec82cc018f54dec09c42293491aba043650801c09fe
     path: config/patches/node-pty@1.1.0.patch
 
 importers:
@@ -69,7 +69,7 @@ importers:
         version: 3.3.1
       node-pty:
         specifier: ^1.1.0
-        version: 1.1.0(patch_hash=a8de16410ba90ef37d6486bebf03aaebcf2963514fbf1f5bd81f56eea7d96939)
+        version: 1.1.0(patch_hash=c48841645e1873768dfdfec82cc018f54dec09c42293491aba043650801c09fe)
       posthog-node:
         specifier: ^5.33.3
         version: 5.33.3
@@ -12046,7 +12046,7 @@ snapshots:
 
   node-int64@0.4.0: {}
 
-  node-pty@1.1.0(patch_hash=a8de16410ba90ef37d6486bebf03aaebcf2963514fbf1f5bd81f56eea7d96939):
+  node-pty@1.1.0(patch_hash=c48841645e1873768dfdfec82cc018f54dec09c42293491aba043650801c09fe):
     dependencies:
       node-addon-api: 7.1.1
 

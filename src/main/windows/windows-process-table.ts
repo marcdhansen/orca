@@ -24,6 +24,11 @@ import { createProcessTableSnapshotReader } from '../../shared/process-table-sna
  *   PowerShell CIM        706 / 723  ms
  */
 
+/** Which of the per-process lookups a caller actually needs. */
+export type WindowsProcessFields = { memory?: boolean; commandLine?: boolean }
+
+const ALL_FIELDS: WindowsProcessFields = { memory: true, commandLine: true }
+
 export type WindowsProcessRow = {
   pid: number
   ppid: number
@@ -91,7 +96,7 @@ function loadWindowsProcessTree(): WindowsProcessTreeModule | null {
  */
 const WINDOWS_PROCESS_QUERY_TIMEOUT_MS = 3_000
 
-function readNativeRows(): Promise<WindowsProcessRow[]> {
+function readNativeRows(fields: WindowsProcessFields): Promise<WindowsProcessRow[]> {
   const native = moduleLoader()
   if (!native) {
     // Reject rather than resolve empty: an empty table is a claim that nothing
@@ -99,7 +104,13 @@ function readNativeRows(): Promise<WindowsProcessRow[]> {
     // tree dead. "Unavailable" has to stay distinguishable from "empty".
     return Promise.reject(new Error('windows process table unavailable'))
   }
-  const flags = native.ProcessDataFlag.Memory | native.ProcessDataFlag.CommandLine
+  // Why ask for the minimum: both extra flags do an OpenProcess per process --
+  // Memory adds GetProcessMemoryInfo, CommandLine adds a PEB read -- inline,
+  // for every process on the box, and the 1024-entry bound is patched out.
+  // Measured at 1050 processes: 15.9ms p50 for pid/ppid/name, 30.6ms with both.
+  const flags =
+    (fields.memory ? native.ProcessDataFlag.Memory : 0) |
+    (fields.commandLine ? native.ProcessDataFlag.CommandLine : 0)
   return new Promise((resolve, reject) => {
     try {
       const deadline = setTimeout(
@@ -143,8 +154,12 @@ function readNativeRows(): Promise<WindowsProcessRow[]> {
 // Why still cache: the snapshot is cheap but not free, and a worktree delete
 // tears down PTYs 32-wide. The shared TTL + single-in-flight reader collapses
 // that burst into one scan, exactly as the PowerShell path had to.
+// Why one reader and not one per field set: the cache exists so a 32-wide
+// worktree delete collapses into a single scan, and splitting it per caller
+// would restore the fan-out it prevents. The shared snapshot therefore carries
+// every field; the narrow read below is for callers that bypass the cache.
 const snapshotReader = createProcessTableSnapshotReader<WindowsProcessRow[]>({
-  runPs: readNativeRows,
+  runPs: () => readNativeRows(ALL_FIELDS),
   now: () => Date.now()
 })
 
@@ -161,6 +176,16 @@ export function readWindowsProcessTable(): Promise<WindowsProcessRow[]> {
  */
 export function readWindowsProcessTableFresh(): Promise<WindowsProcessRow[]> {
   return snapshotReader.getFreshSnapshot()
+}
+
+/**
+ * An uncached snapshot carrying only pid, ppid and name.
+ *
+ * For teardown identity, which needs ancestry and nothing else: skipping the
+ * two per-process OpenProcess lookups roughly halves the scan.
+ */
+export function readWindowsProcessAncestry(): Promise<WindowsProcessRow[]> {
+  return readNativeRows({})
 }
 
 /** Whether the native table can be read at all on this host. */

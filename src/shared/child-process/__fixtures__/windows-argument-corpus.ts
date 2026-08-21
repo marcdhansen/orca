@@ -15,6 +15,8 @@ export const WINDOWS_ARGUMENT_CORPUS: readonly { name: string; value: string }[]
   { name: 'empty', value: '' },
   { name: 'space', value: 'hello world' },
   { name: 'double-quote', value: 'say "hi" ok' },
+  { name: 'quote-only', value: '"' },
+  { name: 'two-quotes', value: '""' },
   { name: 'caret', value: 'a^b' },
   { name: 'ampersand', value: 'a&b' },
   { name: 'pipe', value: 'a|b' },
