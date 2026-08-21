@@ -15,9 +15,12 @@ const RENDERER_SRC = join(import.meta.dirname, '..')
 const SETTLE_RULE = [
   'The mirror latch settles EXACTLY when evidence reached the store.',
   'applyWebSessionTabsStorePatch returns the settle receipt for its own patch:',
-  'capture it and invoke it after the frame finishes recovery. A frame rejected',
-  'as stale settles through hostSessionMirrorSettleForStaleFrame, whose only',
-  'valid precondition is shouldApplyWebSessionTabsSnapshot returning false.',
+  'capture it and invoke it after the frame finishes recovery. A frame whose',
+  'patch wrote nothing settles through hostSessionMirrorSettleForPatchlessFrame,',
+  'and ONLY on a decision carrying settlesHostMirror — a rejection backed by the',
+  'equal/newer view already accepted into the store. Never derive that from a',
+  'bare boolean: "the mirror never writes this workspace" is also a rejection,',
+  'and settling on it drains parked resume work against state nobody wrote.',
   'Never call markHostSessionMirror*Hydrated from feature code, and never add a',
   'boolean that remembers "the patch landed" — that ordering bug shipped four',
   'times. If you added a legitimate new site, update this census deliberately.'
@@ -114,17 +117,42 @@ describe('host-session-mirror settle census', () => {
     })
   })
 
-  it('the stale-frame settle appears only at its audited sites', () => {
-    const staleCounts: Record<string, number> = {}
+  it('the patchless settle appears only at its audited sites', () => {
+    const patchlessCounts: Record<string, number> = {}
     for (const { path, source } of sources) {
-      const count = countOccurrences(source, 'hostSessionMirrorSettleForStaleFrame(')
+      const count = countOccurrences(source, 'hostSessionMirrorSettleForPatchlessFrame(')
       if (count > 0) {
-        staleCounts[path] = count
+        patchlessCounts[path] = count
       }
     }
-    expect(staleCounts, SETTLE_RULE).toEqual({
+    expect(patchlessCounts, SETTLE_RULE).toEqual({
       // The definition, the global singular frame, and the scoped active frame.
       'runtime/web-session-tabs-sync.ts': 3
+    })
+  })
+
+  it('only the audited decisions grant a rejected frame a settle', () => {
+    const settlingCounts: Record<string, number> = {}
+    const silentCounts: Record<string, number> = {}
+    for (const { path, source } of sources) {
+      const settling = countOccurrences(source, 'settlesHostMirror: true')
+      const silent = countOccurrences(source, 'settlesHostMirror: false')
+      if (settling > 0) {
+        settlingCounts[path] = settling
+      }
+      if (silent > 0) {
+        silentCounts[path] = silent
+      }
+    }
+    // A new decision has to be minted here, and minting one forces its author
+    // to say whether the frame is host evidence — the whole point of the pair.
+    expect(settlingCounts, SETTLE_RULE).toEqual({
+      // The applied frame (its own patch) and the outranked one (the accepted view).
+      'runtime/web-session-tabs-sync.ts': 2
+    })
+    expect(silentCounts, SETTLE_RULE).toEqual({
+      // The unmirrored frame: no accepted view of it ever reached the store.
+      'runtime/web-session-tabs-sync.ts': 1
     })
   })
 })

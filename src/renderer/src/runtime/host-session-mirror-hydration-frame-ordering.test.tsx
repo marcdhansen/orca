@@ -1,5 +1,78 @@
 // @vitest-environment happy-dom
 
+import { act, renderHook } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { RuntimeMobileSessionTabsResult } from '../../../shared/runtime-types'
+import type * as WebRuntimeSessionModule from './web-runtime-session'
+import type * as WebSessionTerminalHandleEventsModule from './web-session-terminal-handle-events'
+
+vi.mock('./web-session-terminal-handle-events', async (importOriginal) => {
+  const actual = await importOriginal<typeof WebSessionTerminalHandleEventsModule>()
+  const { frameOrderingMocks } = await import('./host-session-mirror-frame-fixtures')
+  return {
+    ...actual,
+    queueAcceptedWebSessionTerminalSnapshot: frameOrderingMocks.queueAcceptedSnapshot
+  }
+})
+
+vi.mock('./use-runtime-session-mirror-environment-key', async () => {
+  const { frameOrderingMocks } = await import('./host-session-mirror-frame-fixtures')
+  return {
+    useRuntimeSessionMirrorEnvironmentKey: frameOrderingMocks.runtimeSessionMirrorEnvironmentKey
+  }
+})
+
+vi.mock('./web-session-terminal-orphan-recovery', async () => {
+  const { frameOrderingMocks } = await import('./host-session-mirror-frame-fixtures')
+  return { recoverWebSessionTerminalOrphansBeforeApply: frameOrderingMocks.recoverSnapshot }
+})
+
+vi.mock('./web-runtime-session', async (importOriginal) => {
+  const actual = await importOriginal<typeof WebRuntimeSessionModule>()
+  const { frameOrderingMocks } = await import('./host-session-mirror-frame-fixtures')
+  return { ...actual, createWebRuntimeSessionTerminal: frameOrderingMocks.createTerminal }
+})
+
+import { useAppStore } from '@/store'
+import { resumeSleepingAgentSessionsForWorktree } from '@/lib/resume-sleeping-agent-session'
+import {
+  takeAllPendingBackgroundTerminalWorktreeMounts,
+  takePendingBackgroundTerminalWorktreeMount
+} from '@/components/terminal/background-terminal-worktree-mount'
+import { wakeSleepingAgentsForWorktreeInBackground } from '@/lib/wake-sleeping-agents-in-background'
+import {
+  BG_MIRROR_TAB_ID,
+  BG_WT,
+  ENV,
+  frameOrderingMocks as mocks,
+  HOST_PARENT_TAB_ID,
+  HOST_PTY_ID,
+  HOST_SURFACE_ID,
+  LEAF_ID,
+  MIRROR_TAB_ID,
+  makeEmptyHostSnapshot,
+  makeHostSnapshot,
+  OTHER_HOST_PARENT_TAB_ID,
+  OTHER_HOST_SURFACE_ID,
+  WT
+} from './host-session-mirror-frame-fixtures'
+import {
+  expectReplayedResume,
+  findSubscription,
+  installFrameOrderingHarness,
+  publish,
+  runtimeCall,
+  seedSleepingRecord,
+  settle,
+  setDocumentVisibility,
+  tabIds
+} from './host-session-mirror-frame-ordering-harness'
+import {
+  useWebSessionTabsSync,
+  WEB_SESSION_TABS_VISIBILITY_RESUME_STAGGER_MS
+} from './web-session-tabs-sync'
+import { WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS } from './window-visibility-subscription-parking'
+
 /**
  * Parked waiters drain synchronously, so a settle placed before its frame's
  * patch reaches the store re-runs recovery while ptyIdsByTabId is still empty
@@ -9,342 +82,8 @@
  * The second block pins the other half: this latch releases into replaying a
  * resume, so `unverifiable` must not read as `exited` and settle anything.
  */
-
-import { act, cleanup, renderHook } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { RuntimeMobileSessionTabsResult } from '../../../shared/runtime-types'
-import { makePaneKey } from '../../../shared/stable-pane-id'
-import { toWebTerminalSurfaceTabId } from '../../../shared/terminal-surface-id'
-import type * as WebRuntimeSessionModule from './web-runtime-session'
-import type * as WebSessionTerminalHandleEventsModule from './web-session-terminal-handle-events'
-
-const mocks = vi.hoisted(() => ({
-  createTerminal: vi.fn(),
-  // Inert by default: nothing here subscribes to web session terminal handles.
-  queueAcceptedSnapshot: vi.fn(),
-  recoverSnapshot: vi.fn(),
-  runtimeSessionMirrorEnvironmentKey: vi.fn()
-}))
-
-vi.mock('./web-session-terminal-handle-events', async (importOriginal) => {
-  const actual = await importOriginal<typeof WebSessionTerminalHandleEventsModule>()
-  return { ...actual, queueAcceptedWebSessionTerminalSnapshot: mocks.queueAcceptedSnapshot }
-})
-
-vi.mock('./use-runtime-session-mirror-environment-key', () => ({
-  useRuntimeSessionMirrorEnvironmentKey: mocks.runtimeSessionMirrorEnvironmentKey
-}))
-
-vi.mock('./web-session-terminal-orphan-recovery', () => ({
-  recoverWebSessionTerminalOrphansBeforeApply: mocks.recoverSnapshot
-}))
-
-vi.mock('./web-runtime-session', async (importOriginal) => {
-  const actual = await importOriginal<typeof WebRuntimeSessionModule>()
-  return { ...actual, createWebRuntimeSessionTerminal: mocks.createTerminal }
-})
-
-import { useAppStore, type AppState } from '@/store'
-import type { PublicKnownRuntimeEnvironment } from '../../../shared/runtime-environments'
-import {
-  takeAllPendingBackgroundTerminalWorktreeMounts,
-  takePendingBackgroundTerminalWorktreeMount
-} from '@/components/terminal/background-terminal-worktree-mount'
-import { resumeSleepingAgentSessionsForWorktree } from '@/lib/resume-sleeping-agent-session'
-import { wakeSleepingAgentsForWorktreeInBackground } from '@/lib/wake-sleeping-agents-in-background'
-import { resetStaleDocumentVisibilityForTesting } from '@/components/terminal-pane/stale-document-visibility'
-import { replaceRuntimeEnvironmentRevisions } from './runtime-environment-revision'
-import {
-  clearHostSessionMirrorHydration,
-  hasHostSessionMirrorHydrated,
-  resetHostSessionMirrorHydrationForTests
-} from './host-session-mirror-hydration'
-import { refreshWebRuntimeSessionTabsSnapshot } from './web-runtime-session'
-import {
-  resetWebSessionTabsSnapshotFreshnessForTests,
-  useWebSessionTabsSync,
-  WEB_SESSION_TABS_VISIBILITY_RESUME_STAGGER_MS
-} from './web-session-tabs-sync'
-import { WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS } from './window-visibility-subscription-parking'
-
-const ENV = 'env-abfee683'
-const REPO_ID = 'repo-1'
-const WT = `${REPO_ID}::/workspace/feature`
-const BG_WT = `${REPO_ID}::/workspace/background`
-const REVISION = 101
-const MIRROR_KEY = `${ENV}\u0001runtime-a\u00011\u0001${REVISION}`
-
-const LEAF_ID = '11111111-1111-4111-8111-111111111111'
-const HOST_PARENT_TAB_ID = 'host-tab-1'
-const HOST_SURFACE_ID = `${HOST_PARENT_TAB_ID}::${LEAF_ID}`
-// The mirror names its local tab after the host PARENT tab, not the surface id.
-const MIRROR_TAB_ID = toWebTerminalSurfaceTabId(HOST_PARENT_TAB_ID)
-const HOST_PTY_ID = `remote:${ENV}@@terminal-1`
-
-const BG_MIRROR_TAB_ID = toWebTerminalSurfaceTabId('host-tab-2')
-
-// A host tab that is NOT the parked mirror: publishing it retracts MIRROR_TAB_ID,
-// which is the host answering "that pane is gone" rather than staying silent.
-const OTHER_HOST_PARENT_TAB_ID = 'host-tab-9'
-const OTHER_HOST_SURFACE_ID = `${OTHER_HOST_PARENT_TAB_ID}::${LEAF_ID}`
-
-const initialState = useAppStore.getInitialState()
-
-type RuntimeSubscribe = typeof window.api.runtimeEnvironments.subscribe
-type RuntimeSubscription = {
-  request: Parameters<RuntimeSubscribe>[0]
-  callbacks: Parameters<RuntimeSubscribe>[1]
-}
-
-const subscriptions: RuntimeSubscription[] = []
-// Why: a resolved listAll would settle the mirror on its own and hide the race.
-const runtimeCall = vi.fn((_request: { method: string }) => new Promise(() => {}))
-const runtimeSubscribe = vi.fn<RuntimeSubscribe>(async (request, callbacks) => {
-  subscriptions.push({ request, callbacks })
-  return { unsubscribe: vi.fn(), sendBinary: vi.fn() }
-})
-
-async function settle(): Promise<void> {
-  await Promise.resolve()
-  await Promise.resolve()
-  await Promise.resolve()
-}
-
-function makeWorktree(id: string, path: string): AppState['worktreesByRepo'][string][number] {
-  return {
-    id,
-    repoId: REPO_ID,
-    path,
-    head: 'abc123',
-    branch: 'refs/heads/feature',
-    isBare: false,
-    isMainWorktree: false,
-    displayName: path,
-    comment: '',
-    linkedIssue: null,
-    linkedPR: null,
-    linkedLinearIssue: null,
-    isArchived: false,
-    isUnread: false,
-    isPinned: false,
-    sortOrder: 0,
-    lastActivityAt: 0,
-    // The workspace is owned by the paired runtime — the incident shape.
-    hostId: `runtime:${encodeURIComponent(ENV)}`
-  } as never
-}
-
-/** A host frame publishing one ready terminal surface backed by a live PTY. */
-function makeHostSnapshot(
-  worktree: string,
-  hostSurfaceId: string,
-  parentTabId: string
-): RuntimeMobileSessionTabsResult {
-  return {
-    worktree,
-    publicationEpoch: 'epoch-1',
-    snapshotVersion: 1,
-    activeGroupId: 'host-group-1',
-    activeTabId: hostSurfaceId,
-    activeTabType: 'terminal',
-    tabs: [
-      {
-        type: 'terminal',
-        id: hostSurfaceId,
-        title: 'Codex',
-        parentTabId,
-        leafId: LEAF_ID,
-        isActive: true,
-        launchAgent: 'codex',
-        status: 'ready',
-        terminal: 'terminal-1'
-      }
-    ]
-  } as never
-}
-
-/** The host reports zero terminals: the same frame retracts the mirror tab and
- *  asks the client to respawn one. */
-function makeEmptyHostSnapshot(worktree: string): RuntimeMobileSessionTabsResult {
-  return {
-    worktree,
-    publicationEpoch: 'epoch-1',
-    snapshotVersion: 1,
-    activeGroupId: null,
-    activeTabId: null,
-    activeTabType: null,
-    tabs: []
-  } as never
-}
-
-/** A published tab whose PTY handle has not landed yet — the undecidable
- *  mirror shape that makes a resume sweep park instead of deciding. */
-function makePtylessHostSnapshot(
-  worktree: string,
-  hostSurfaceId: string,
-  parentTabId: string,
-  snapshotVersion = 1
-): RuntimeMobileSessionTabsResult {
-  const snapshot = makeHostSnapshot(worktree, hostSurfaceId, parentTabId) as never as {
-    snapshotVersion: number
-    tabs: Record<string, unknown>[]
-  }
-  snapshot.snapshotVersion = snapshotVersion
-  Object.assign(snapshot.tabs[0]!, { status: 'pending-handle', terminal: null })
-  return snapshot as never
-}
-
-function mirrorTabRow(tabId: string, worktreeId: string): unknown {
-  return { id: tabId, title: 'Codex', ptyId: null, worktreeId }
-}
-
-function seedState(): void {
-  const runtimeEnvironments = [
-    { id: ENV, createdAt: 100, pairingRevision: REVISION }
-  ] as PublicKnownRuntimeEnvironment[]
-  replaceRuntimeEnvironmentRevisions(runtimeEnvironments)
-  const worktrees = [
-    makeWorktree(WT, '/workspace/feature'),
-    makeWorktree(BG_WT, '/workspace/background')
-  ]
-  useAppStore.setState(
-    {
-      ...initialState,
-      repos: [
-        {
-          id: REPO_ID,
-          path: '/workspace/repo',
-          displayName: 'repo',
-          badgeColor: '#000',
-          addedAt: 0
-        }
-      ],
-      worktreesByRepo: { [REPO_ID]: worktrees },
-      activeRepoId: REPO_ID,
-      activeWorktreeId: WT,
-      activeView: 'terminal',
-      workspaceSessionReady: true,
-      runtimeEnvironments,
-      runtimeStatusByEnvironmentId: new Map([
-        [ENV, { status: { runtimeId: 'runtime-a' }, connectionGeneration: 1 }]
-      ]) as AppState['runtimeStatusByEnvironmentId'],
-      // Mirror rows the host published before the app restarted; no live PTY
-      // handles yet, which is precisely why liveness is unknowable right now.
-      tabsByWorktree: {
-        [WT]: [mirrorTabRow(MIRROR_TAB_ID, WT)],
-        [BG_WT]: [mirrorTabRow(BG_MIRROR_TAB_ID, BG_WT)]
-      },
-      ptyIdsByTabId: {},
-      terminalLayoutsByTabId: {
-        [MIRROR_TAB_ID]: {
-          root: { type: 'leaf', leafId: LEAF_ID },
-          activeLeafId: LEAF_ID,
-          ptyIdsByLeafId: { [LEAF_ID]: 'pty-host-old-1' }
-        },
-        [BG_MIRROR_TAB_ID]: {
-          root: { type: 'leaf', leafId: LEAF_ID },
-          activeLeafId: LEAF_ID,
-          ptyIdsByLeafId: { [LEAF_ID]: 'pty-host-old-2' }
-        }
-      },
-      settings: { agentCmdOverrides: {}, setupScriptLaunchMode: 'new-tab' }
-    } as never,
-    true
-  )
-}
-
-function seedSleepingRecord(tabId: string, worktreeId: string, sessionId: string): string {
-  const paneKey = makePaneKey(tabId, LEAF_ID)
-  useAppStore.setState((s) => ({
-    sleepingAgentSessionsByPaneKey: {
-      ...s.sleepingAgentSessionsByPaneKey,
-      [paneKey]: {
-        paneKey,
-        tabId,
-        worktreeId,
-        agent: 'codex' as const,
-        providerSession: { key: 'session_id' as const, id: sessionId },
-        prompt: 'keep working',
-        state: 'working' as const,
-        origin: 'live' as const,
-        capturedAt: 1000,
-        updatedAt: 1000,
-        terminalTitle: 'Codex'
-      }
-    }
-  }))
-  return paneKey
-}
-
-function findSubscription(method: string, occurrence = 0): RuntimeSubscription {
-  const subscription = subscriptions.filter(({ request }) => request.method === method)[occurrence]
-  if (!subscription) {
-    throw new Error(`Missing ${method} subscription ${occurrence}`)
-  }
-  return subscription
-}
-
-function setDocumentVisibility(state: 'visible' | 'hidden'): void {
-  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state })
-  document.dispatchEvent(new Event('visibilitychange'))
-}
-
-async function publish(subscription: RuntimeSubscription, result: unknown): Promise<void> {
-  await act(async () => {
-    subscription.callbacks.onResponse({
-      id: 'subscription-event',
-      ok: true as const,
-      result,
-      _meta: { runtimeId: 'runtime-a' }
-    } as never)
-    await settle()
-  })
-}
-
-function tabIds(worktreeId: string): string[] {
-  return (useAppStore.getState().tabsByWorktree[worktreeId] ?? []).map((tab) => tab.id)
-}
-
-/** A drained waiter has to land a claiming replacement tab; a replay that only
- *  consumed the record launched nothing. */
-function expectReplayedResume(paneKey: string, worktreeId: string, sessionId: string): void {
-  const state = useAppStore.getState()
-  expect(state.sleepingAgentSessionsByPaneKey[paneKey]).toBeUndefined()
-  const claimedTabIds = Object.keys(state.automaticAgentResumeClaimsByTabId)
-  expect(claimedTabIds).toHaveLength(1)
-  const replacementTabId = claimedTabIds[0]!
-  expect(replacementTabId).not.toBe(MIRROR_TAB_ID)
-  expect(tabIds(worktreeId)).toContain(replacementTabId)
-  expect(state.automaticAgentResumeClaimsByTabId[replacementTabId]).toMatchObject({
-    launchAgent: 'codex',
-    providerSession: { key: 'session_id', id: sessionId }
-  })
-}
-
 describe('mirrored-pane resume deferral against real stream frames', () => {
-  beforeEach(() => {
-    subscriptions.length = 0
-    runtimeCall.mockClear().mockImplementation(() => new Promise(() => {}))
-    runtimeSubscribe.mockClear()
-    mocks.createTerminal.mockReset().mockResolvedValue(undefined)
-    mocks.recoverSnapshot.mockReset().mockImplementation(async (_state, snapshot) => snapshot)
-    mocks.runtimeSessionMirrorEnvironmentKey.mockReset().mockReturnValue(MIRROR_KEY)
-    Object.defineProperty(window, 'api', {
-      configurable: true,
-      value: { runtimeEnvironments: { call: runtimeCall, subscribe: runtimeSubscribe } }
-    })
-    resetWebSessionTabsSnapshotFreshnessForTests()
-    resetHostSessionMirrorHydrationForTests()
-    seedState()
-  })
-
-  afterEach(() => {
-    cleanup()
-    useAppStore.setState(initialState, true)
-    replaceRuntimeEnvironmentRevisions([])
-    resetWebSessionTabsSnapshotFreshnessForTests()
-    resetHostSessionMirrorHydrationForTests()
-  })
+  installFrameOrderingHarness()
 
   it('does not relaunch when a stream frame is the first hydration signal', async () => {
     renderHook(() => useWebSessionTabsSync())
@@ -476,29 +215,7 @@ describe('mirrored-pane resume deferral against real stream frames', () => {
 })
 
 describe('mirror latch verdicts against real stream failures', () => {
-  beforeEach(() => {
-    subscriptions.length = 0
-    runtimeCall.mockClear().mockImplementation(() => new Promise(() => {}))
-    runtimeSubscribe.mockClear()
-    mocks.createTerminal.mockReset().mockResolvedValue(undefined)
-    mocks.recoverSnapshot.mockReset().mockImplementation(async (_state, snapshot) => snapshot)
-    mocks.runtimeSessionMirrorEnvironmentKey.mockReset().mockReturnValue(MIRROR_KEY)
-    Object.defineProperty(window, 'api', {
-      configurable: true,
-      value: { runtimeEnvironments: { call: runtimeCall, subscribe: runtimeSubscribe } }
-    })
-    resetWebSessionTabsSnapshotFreshnessForTests()
-    resetHostSessionMirrorHydrationForTests()
-    seedState()
-  })
-
-  afterEach(() => {
-    cleanup()
-    useAppStore.setState(initialState, true)
-    replaceRuntimeEnvironmentRevisions([])
-    resetWebSessionTabsSnapshotFreshnessForTests()
-    resetHostSessionMirrorHydrationForTests()
-  })
+  installFrameOrderingHarness()
 
   it('a rejected inventory keeps a parked pane parked', async () => {
     let rejectListAll: (error: Error) => void = () => {}
@@ -613,31 +330,9 @@ describe('mirror latch verdicts against real stream failures', () => {
 })
 
 describe('a parked wake replay keeps the mount contract of its caller', () => {
-  beforeEach(() => {
-    subscriptions.length = 0
-    runtimeCall.mockClear().mockImplementation(() => new Promise(() => {}))
-    runtimeSubscribe.mockClear()
-    mocks.createTerminal.mockReset().mockResolvedValue(undefined)
-    mocks.recoverSnapshot.mockReset().mockImplementation(async (_state, snapshot) => snapshot)
-    mocks.runtimeSessionMirrorEnvironmentKey.mockReset().mockReturnValue(MIRROR_KEY)
-    Object.defineProperty(window, 'api', {
-      configurable: true,
-      value: { runtimeEnvironments: { call: runtimeCall, subscribe: runtimeSubscribe } }
-    })
-    takeAllPendingBackgroundTerminalWorktreeMounts()
-    resetWebSessionTabsSnapshotFreshnessForTests()
-    resetHostSessionMirrorHydrationForTests()
-    seedState()
-  })
-
-  afterEach(() => {
-    cleanup()
-    useAppStore.setState(initialState, true)
-    replaceRuntimeEnvironmentRevisions([])
-    takeAllPendingBackgroundTerminalWorktreeMounts()
-    resetWebSessionTabsSnapshotFreshnessForTests()
-    resetHostSessionMirrorHydrationForTests()
-  })
+  installFrameOrderingHarness()
+  beforeEach(takeAllPendingBackgroundTerminalWorktreeMounts)
+  afterEach(takeAllPendingBackgroundTerminalWorktreeMounts)
 
   it('background-mounts the resume tab a parked sweep replayed', async () => {
     renderHook(() => useWebSessionTabsSync())
@@ -664,35 +359,7 @@ describe('a parked wake replay keeps the mount contract of its caller', () => {
 })
 
 describe('an inventory whose post-patch bookkeeping throws', () => {
-  beforeEach(() => {
-    vi.useFakeTimers()
-    subscriptions.length = 0
-    runtimeCall.mockClear().mockImplementation(() => new Promise(() => {}))
-    runtimeSubscribe.mockClear()
-    mocks.createTerminal.mockReset().mockResolvedValue(undefined)
-    mocks.queueAcceptedSnapshot.mockReset()
-    mocks.recoverSnapshot.mockReset().mockImplementation(async (_state, snapshot) => snapshot)
-    mocks.runtimeSessionMirrorEnvironmentKey.mockReset().mockReturnValue(MIRROR_KEY)
-    Object.defineProperty(window, 'api', {
-      configurable: true,
-      value: { runtimeEnvironments: { call: runtimeCall, subscribe: runtimeSubscribe } }
-    })
-    setDocumentVisibility('visible')
-    resetWebSessionTabsSnapshotFreshnessForTests()
-    resetHostSessionMirrorHydrationForTests()
-    seedState()
-  })
-
-  afterEach(() => {
-    cleanup()
-    useAppStore.setState(initialState, true)
-    replaceRuntimeEnvironmentRevisions([])
-    resetWebSessionTabsSnapshotFreshnessForTests()
-    resetHostSessionMirrorHydrationForTests()
-    resetStaleDocumentVisibilityForTesting()
-    setDocumentVisibility('visible')
-    vi.useRealTimers()
-  })
+  installFrameOrderingHarness({ fakeTimers: true })
 
   it('still settles the frames that reached the store', async () => {
     renderHook(() => useWebSessionTabsSync())
@@ -738,221 +405,5 @@ describe('an inventory whose post-patch bookkeeping throws', () => {
     )
     expect(tabIds(BG_WT)).not.toContain(BG_MIRROR_TAB_ID)
     expectReplayedResume(paneKey, BG_WT, 'codex-session-bookkeeping-throw')
-  })
-})
-
-/** Registers the shared harness reset for the receipt-era describe blocks. */
-function installFrameOrderingHarness(options: { fakeTimers?: boolean } = {}): void {
-  beforeEach(() => {
-    if (options.fakeTimers) {
-      vi.useFakeTimers()
-    }
-    subscriptions.length = 0
-    runtimeCall.mockClear().mockImplementation(() => new Promise(() => {}))
-    runtimeSubscribe.mockClear()
-    mocks.createTerminal.mockReset().mockResolvedValue(undefined)
-    mocks.queueAcceptedSnapshot.mockReset()
-    mocks.recoverSnapshot.mockReset().mockImplementation(async (_state, snapshot) => snapshot)
-    mocks.runtimeSessionMirrorEnvironmentKey.mockReset().mockReturnValue(MIRROR_KEY)
-    Object.defineProperty(window, 'api', {
-      configurable: true,
-      value: { runtimeEnvironments: { call: runtimeCall, subscribe: runtimeSubscribe } }
-    })
-    if (options.fakeTimers) {
-      setDocumentVisibility('visible')
-    }
-    resetWebSessionTabsSnapshotFreshnessForTests()
-    resetHostSessionMirrorHydrationForTests()
-    seedState()
-  })
-
-  afterEach(() => {
-    cleanup()
-    useAppStore.setState(initialState, true)
-    replaceRuntimeEnvironmentRevisions([])
-    resetWebSessionTabsSnapshotFreshnessForTests()
-    resetHostSessionMirrorHydrationForTests()
-    if (options.fakeTimers) {
-      resetStaleDocumentVisibilityForTesting()
-      setDocumentVisibility('visible')
-      vi.useRealTimers()
-    }
-  })
-}
-
-describe('a global singular frame whose patch never lands', () => {
-  installFrameOrderingHarness()
-
-  it('settles nothing until a later frame reaches the store', async () => {
-    renderHook(() => useWebSessionTabsSync())
-    await act(settle)
-    const paneKey = seedSleepingRecord(MIRROR_TAB_ID, WT, 'codex-session-patch-throw')
-    expect(resumeSleepingAgentSessionsForWorktree(WT)).toBe(0)
-
-    // Acceptance bookkeeping dies after the frame passed its recovery gates but
-    // before its patch reached the store: nothing landed, so nothing may settle.
-    mocks.queueAcceptedSnapshot.mockImplementation(() => {
-      throw new Error('accepted-handle queue failed')
-    })
-    await publish(findSubscription('session.tabs.subscribeAll'), {
-      type: 'snapshot',
-      ...makeHostSnapshot(WT, OTHER_HOST_SURFACE_ID, OTHER_HOST_PARENT_TAB_ID)
-    })
-
-    expect(tabIds(WT)).toEqual([MIRROR_TAB_ID])
-    expect(useAppStore.getState().sleepingAgentSessionsByPaneKey[paneKey]).toBeDefined()
-    expect(Object.keys(useAppStore.getState().automaticAgentResumeClaimsByTabId)).toHaveLength(0)
-
-    // The next frame lands cleanly, so the parked pane is decided on evidence
-    // that is actually in the store — the latch healed rather than wedged.
-    mocks.queueAcceptedSnapshot.mockImplementation(() => {})
-    await publish(findSubscription('session.tabs.subscribeAll'), {
-      type: 'snapshot',
-      ...makeHostSnapshot(WT, OTHER_HOST_SURFACE_ID, OTHER_HOST_PARENT_TAB_ID),
-      snapshotVersion: 2
-    })
-
-    expect(tabIds(WT)).not.toContain(MIRROR_TAB_ID)
-    expectReplayedResume(paneKey, WT, 'codex-session-patch-throw')
-  })
-
-  it('settles nothing when the patch itself throws mid-apply', async () => {
-    renderHook(() => useWebSessionTabsSync())
-    await act(settle)
-    const paneKey = seedSleepingRecord(MIRROR_TAB_ID, WT, 'codex-session-apply-throw')
-    expect(resumeSleepingAgentSessionsForWorktree(WT)).toBe(0)
-
-    // A malformed 'ready' tab without a terminal handle blows up inside the
-    // store write itself: no receipt may exist for a commit that never was.
-    const malformed = makeHostSnapshot(
-      WT,
-      OTHER_HOST_SURFACE_ID,
-      OTHER_HOST_PARENT_TAB_ID
-    ) as never as { tabs: Record<string, unknown>[] }
-    malformed.tabs[0]!.terminal = undefined
-    await publish(findSubscription('session.tabs.subscribeAll'), {
-      type: 'snapshot',
-      ...malformed
-    })
-
-    expect(tabIds(WT)).toEqual([MIRROR_TAB_ID])
-    expect(useAppStore.getState().sleepingAgentSessionsByPaneKey[paneKey]).toBeDefined()
-    expect(Object.keys(useAppStore.getState().automaticAgentResumeClaimsByTabId)).toHaveLength(0)
-
-    await publish(findSubscription('session.tabs.subscribeAll'), {
-      type: 'snapshot',
-      ...makeHostSnapshot(WT, OTHER_HOST_SURFACE_ID, OTHER_HOST_PARENT_TAB_ID),
-      snapshotVersion: 2
-    })
-
-    expect(tabIds(WT)).not.toContain(MIRROR_TAB_ID)
-    expectReplayedResume(paneKey, WT, 'codex-session-apply-throw')
-  })
-})
-
-describe('a stale frame against a newer accepted view', () => {
-  installFrameOrderingHarness()
-
-  it('settles with no patch because rejection is backed by the accepted view', async () => {
-    renderHook(() => useWebSessionTabsSync())
-    await act(settle)
-
-    // The host publishes v2 for this pane before its PTY handle lands.
-    await publish(findSubscription('session.tabs.subscribeAll'), {
-      type: 'snapshot',
-      ...makePtylessHostSnapshot(WT, HOST_SURFACE_ID, HOST_PARENT_TAB_ID, 2)
-    })
-
-    // A re-pair voids every verdict; the accepted store view survives it.
-    act(() => clearHostSessionMirrorHydration(ENV))
-    const paneKey = seedSleepingRecord(MIRROR_TAB_ID, WT, 'codex-session-stale-settle')
-    expect(resumeSleepingAgentSessionsForWorktree(WT)).toBe(0)
-
-    // An older frame races in. Rejecting it is itself backed by the accepted
-    // v2 view, so the worktree settles even though nothing new landed.
-    await publish(findSubscription('session.tabs.subscribeAll'), {
-      type: 'snapshot',
-      ...makeHostSnapshot(WT, HOST_SURFACE_ID, HOST_PARENT_TAB_ID)
-    })
-
-    expect(hasHostSessionMirrorHydrated(ENV, WT)).toBe(true)
-    expectReplayedResume(paneKey, WT, 'codex-session-stale-settle')
-  })
-})
-
-describe('a deferred visibility-resume repair patch', () => {
-  installFrameOrderingHarness({ fakeTimers: true })
-
-  it('settles the omitted worktree its tombstone retracts', async () => {
-    renderHook(() => useWebSessionTabsSync())
-    await act(settle)
-
-    // Track both worktrees so the resume inventory can omit one of them.
-    await publish(findSubscription('session.tabs.subscribeAll'), {
-      type: 'snapshot',
-      ...makeHostSnapshot(WT, HOST_SURFACE_ID, HOST_PARENT_TAB_ID)
-    })
-    await publish(findSubscription('session.tabs.subscribeAll'), {
-      type: 'snapshot',
-      ...makePtylessHostSnapshot(BG_WT, `host-tab-2::${LEAF_ID}`, 'host-tab-2')
-    })
-    act(() => clearHostSessionMirrorHydration(ENV))
-    const paneKey = seedSleepingRecord(BG_MIRROR_TAB_ID, BG_WT, 'codex-session-tombstone')
-    expect(resumeSleepingAgentSessionsForWorktree(BG_WT)).toBe(0)
-
-    act(() => {
-      setDocumentVisibility('hidden')
-      vi.advanceTimersByTime(WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS)
-      setDocumentVisibility('visible')
-      vi.advanceTimersByTime(WEB_SESSION_TABS_VISIBILITY_RESUME_STAGGER_MS)
-    })
-    await act(settle)
-
-    // The resume inventory omits the background worktree, and recovery drops
-    // the one snapshot it did publish — so the inventory itself settles nothing.
-    mocks.recoverSnapshot.mockImplementation(
-      async (_state: unknown, snapshot: RuntimeMobileSessionTabsResult) =>
-        snapshot.worktree === WT ? null : snapshot
-    )
-    await publish(findSubscription('session.tabs.subscribeAll', 1), {
-      type: 'snapshots',
-      snapshots: [
-        { ...makeHostSnapshot(WT, HOST_SURFACE_ID, HOST_PARENT_TAB_ID), snapshotVersion: 2 }
-      ]
-    })
-
-    // The tombstone repair DID reach the store: the background mirror retracted,
-    // which is the host answering — the parked resume is finally justified.
-    expect(tabIds(BG_WT)).not.toContain(BG_MIRROR_TAB_ID)
-    expectReplayedResume(paneKey, BG_WT, 'codex-session-tombstone')
-  })
-})
-
-describe('the eager post-create list answers for its worktree', () => {
-  installFrameOrderingHarness()
-
-  it('releases the pane its retraction decides', async () => {
-    const paneKey = seedSleepingRecord(MIRROR_TAB_ID, WT, 'codex-session-eager-refresh')
-    expect(resumeSleepingAgentSessionsForWorktree(WT)).toBe(0)
-
-    runtimeCall.mockImplementation((request: { method: string }) =>
-      request.method === 'session.tabs.list'
-        ? Promise.resolve({
-            id: 'list',
-            ok: true as const,
-            result: makeHostSnapshot(WT, OTHER_HOST_SURFACE_ID, OTHER_HOST_PARENT_TAB_ID),
-            _meta: { runtimeId: 'runtime-a' }
-          })
-        : new Promise(() => {})
-    )
-    await act(async () => {
-      await refreshWebRuntimeSessionTabsSnapshot(ENV, WT)
-      await settle()
-    })
-
-    // The list retracted the mirror tab and its patch landed, so this worktree
-    // has its verdict: the parked resume must drain, not wait for a stream.
-    expect(tabIds(WT)).not.toContain(MIRROR_TAB_ID)
-    expectReplayedResume(paneKey, WT, 'codex-session-eager-refresh')
   })
 })

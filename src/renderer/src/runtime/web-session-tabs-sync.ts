@@ -570,20 +570,67 @@ export function acceptReplayedWebSessionTabsSnapshot(
   }
 }
 
+/**
+ * A frame's fate, paired with whether that fate is host evidence for the
+ * worktree — the mirror latch reads the pair, never a bare boolean.
+ *
+ * Settling on a REJECTED frame is correct only when the store already holds an
+ * equal-or-newer accepted view of that worktree, so every rejection branch has
+ * to state its answer here. A `false` that meant "the mirror never writes this workspace"
+ * would otherwise read as staleness and drain parked resume work — the sweep
+ * would treat an undecidable pane as decidable and fork a live agent.
+ */
+export type WebSessionTabsSnapshotDecision = {
+  readonly apply: boolean
+  readonly settlesHostMirror: boolean
+}
+
+/** The frame's own store patch carries the verdict. */
+const WEB_SESSION_TABS_FRAME_APPLIED = {
+  apply: true,
+  settlesHostMirror: true
+} as const satisfies WebSessionTabsSnapshotDecision
+
+/** Outranked by an equal-or-newer accepted view: the host HAS answered here. */
+const WEB_SESSION_TABS_FRAME_OUTRANKED = {
+  apply: false,
+  settlesHostMirror: true
+} as const satisfies WebSessionTabsSnapshotDecision
+
+/** Discarded because the mirror never writes this workspace at all, so no
+ *  accepted view backs the rejection and the pane stays unaccounted for. */
+const WEB_SESSION_TABS_FRAME_UNMIRRORED = {
+  apply: false,
+  settlesHostMirror: false
+} as const satisfies WebSessionTabsSnapshotDecision
+
+/** Why: the floating workspace is a local synthetic terminal the mirror never
+ *  writes, so its frames are no evidence about any mirrored pane. */
+function isHostMirroredWorktree(worktreeId: string): boolean {
+  return worktreeId !== FLOATING_TERMINAL_WORKTREE_ID
+}
+
 export function shouldApplyWebSessionTabsSnapshot(
   snapshot: RuntimeMobileSessionTabsResult,
   environmentId: string
 ): boolean {
+  return decideWebSessionTabsSnapshot(snapshot, environmentId).apply
+}
+
+export function decideWebSessionTabsSnapshot(
+  snapshot: RuntimeMobileSessionTabsResult,
+  environmentId: string
+): WebSessionTabsSnapshotDecision {
   const key = sessionTabsFreshnessKey(environmentId, snapshot.worktree)
   if ((snapshot as { removed?: unknown }).removed === true) {
     // Why: removed worktrees can stop publishing, so clean up their tracking now instead of waiting for a replacement snapshot that may never arrive.
     clearWebSessionTabsTrackingForWorktree(environmentId, snapshot.worktree)
     queueAcceptedWebSessionTerminalSnapshot(snapshot, environmentId)
-    return true
+    return WEB_SESSION_TABS_FRAME_APPLIED
   }
-  if (snapshot.worktree === FLOATING_TERMINAL_WORKTREE_ID) {
-    // Why: the floating workspace is a local synthetic terminal; a remote empty same-id snapshot would delete the user's local floating tabs.
-    return false
+  if (!isHostMirroredWorktree(snapshot.worktree)) {
+    // Why: a remote empty same-id snapshot would delete the user's local floating tabs.
+    return WEB_SESSION_TABS_FRAME_UNMIRRORED
   }
   rememberHostTerminalTabCount(environmentId, snapshot)
   const current = latestSessionTabsSnapshotByWorktree.get(key)
@@ -603,7 +650,7 @@ export function shouldApplyWebSessionTabsSnapshot(
     snapshot.snapshotVersion <= current.snapshotVersion &&
     !isExactCurrentReplay
   ) {
-    return false
+    return WEB_SESSION_TABS_FRAME_OUTRANKED
   }
   replayableSessionTabsSnapshotByWorktree.delete(key)
   latestSessionTabsSnapshotByWorktree.set(key, {
@@ -614,7 +661,7 @@ export function shouldApplyWebSessionTabsSnapshot(
   recordAcceptedWebSessionTabsEnvironment(environmentId, snapshot)
   // Why: a mounted mirror that exhausted bounded polling needs fresh host evidence without subscribing to every store write.
   queueAcceptedWebSessionTerminalSnapshot(snapshot, environmentId)
-  return true
+  return WEB_SESSION_TABS_FRAME_APPLIED
 }
 
 export function shouldBootstrapInitialWebRuntimeTerminal(args: {
@@ -3613,15 +3660,20 @@ function createHostSessionMirrorSettle(
   }
 }
 
-/** Settling with no patch is correct only for a frame rejected as stale: the
- *  rejection is backed by an equal/newer view already accepted into the store,
- *  so the host HAS answered for this worktree. No other precondition may use
- *  this — a transport failure is `unverifiable` and settles nothing. */
-function hostSessionMirrorSettleForStaleFrame(
+/** The settle a frame earns when its own patch wrote nothing — or null when it
+ *  earns none. Only a decision carrying `settlesHostMirror` may stand in for a
+ *  patch: it is backed by the equal/newer view already accepted into the store,
+ *  so the host HAS answered for this worktree. Taking the decision as the
+ *  argument is the point — a new rejection branch cannot inherit a settle by
+ *  defaulting, and a transport failure is `unverifiable` and never gets here. */
+function hostSessionMirrorSettleForPatchlessFrame(
+  decision: WebSessionTabsSnapshotDecision,
   environmentId: string,
   worktreeId: string
-): HostSessionMirrorSettle {
-  return () => markHostSessionMirrorWorktreeHydrated(environmentId, worktreeId)
+): HostSessionMirrorSettle | null {
+  return decision.settlesHostMirror
+    ? () => markHostSessionMirrorWorktreeHydrated(environmentId, worktreeId)
+    : null
 }
 
 export function applyWebSessionTabsStorePatch(
@@ -3851,14 +3903,28 @@ function loadInitialWebSessionTabs(
               receivedFrames[index]!
             )
         )
+        const decisions = applicable.map((snapshot) =>
+          decideWebSessionTabsSnapshot(snapshot, environmentId)
+        )
+        const freshSnapshots = applicable.filter(
+          (_snapshot, position) => decisions[position]!.apply
+        )
         settleHydration = applyWebSessionTabsStorePatch(
-          (state) => applyFreshWebSessionTabsSnapshots(state, applicable, environmentId),
+          (state) => applyWebSessionTabsSnapshots(state, freshSnapshots, environmentId),
           {
-            settles: applicable.map((snapshot) => ({
+            settles: applicable.flatMap((snapshot, position) =>
+              decisions[position]!.settlesHostMirror
+                ? [{ environmentId, worktreeId: snapshot.worktree }]
+                : []
+            ),
+            fullInventory: {
               environmentId,
-              worktreeId: snapshot.worktree
-            })),
-            fullInventory: { environmentId, publishedSnapshotCount: result.snapshots.length }
+              // Why: a workspace the mirror never writes is not part of the
+              // inventory the environment-wide verdict has to account for.
+              publishedSnapshotCount: result.snapshots.filter((snapshot) =>
+                isHostMirroredWorktree(snapshot.worktree)
+              ).length
+            }
           },
           applicable
         )
@@ -4493,25 +4559,32 @@ export function useWebSessionTabsSync(): void {
                             acceptReplayedWebSessionTabsSnapshot(environmentId, snapshot.worktree)
                           }
                         }
-                        const freshSnapshots = applicable.flatMap(({ index, snapshot }) =>
-                          !unchangedVisibilityResumeSnapshots[index] &&
-                          shouldApplyWebSessionTabsSnapshot(snapshot, environmentId)
-                            ? [snapshot]
-                            : []
+                        // Why: an unchanged resume snapshot is never re-decided
+                        // — the store already holds the view it would rewrite.
+                        const decisions = applicable.map(({ index, snapshot }) =>
+                          unchangedVisibilityResumeSnapshots[index]
+                            ? WEB_SESSION_TABS_FRAME_OUTRANKED
+                            : decideWebSessionTabsSnapshot(snapshot, environmentId)
                         )
-                        // Why: stale or unchanged members of `applicable` settle
-                        // too — their conclusions are the already-accepted view.
+                        const freshSnapshots = applicable.flatMap(({ snapshot }, position) =>
+                          decisions[position]!.apply ? [snapshot] : []
+                        )
                         settleHydration = applyWebSessionTabsStorePatch(
                           (state) =>
                             applyWebSessionTabsSnapshots(state, freshSnapshots, environmentId),
                           {
-                            settles: applicable.map(({ snapshot }) => ({
-                              environmentId,
-                              worktreeId: snapshot.worktree
-                            })),
+                            settles: applicable.flatMap(({ snapshot }, position) =>
+                              decisions[position]!.settlesHostMirror
+                                ? [{ environmentId, worktreeId: snapshot.worktree }]
+                                : []
+                            ),
                             fullInventory: {
                               environmentId,
-                              publishedSnapshotCount: event.snapshots.length
+                              // Why: a workspace the mirror never writes is not
+                              // part of the inventory this verdict accounts for.
+                              publishedSnapshotCount: event.snapshots.filter((snapshot) =>
+                                isHostMirroredWorktree(snapshot.worktree)
+                              ).length
                             }
                           },
                           freshSnapshots
@@ -4590,7 +4663,8 @@ export function useWebSessionTabsSync(): void {
                       if (replayed) {
                         acceptReplayedWebSessionTabsSnapshot(environmentId, recovered.worktree)
                       }
-                      if (shouldApplyWebSessionTabsSnapshot(recovered, environmentId)) {
+                      const decision = decideWebSessionTabsSnapshot(recovered, environmentId)
+                      if (decision.apply) {
                         settleHydration = applyWebSessionTabsStorePatch(
                           (state) => applyWebSessionTabsSnapshot(state, recovered, environmentId),
                           { settles: [{ environmentId, worktreeId: recovered.worktree }] },
@@ -4599,7 +4673,8 @@ export function useWebSessionTabsSync(): void {
                         )
                         recordVisibilityResumeSnapshot(environmentId, recovered, receivedFrame)
                       } else {
-                        settleHydration = hostSessionMirrorSettleForStaleFrame(
+                        settleHydration = hostSessionMirrorSettleForPatchlessFrame(
+                          decision,
                           environmentId,
                           recovered.worktree
                         )
@@ -4708,7 +4783,8 @@ export function useWebSessionTabsSync(): void {
         acceptReplayedWebSessionTabsSnapshot(environmentId, recovered.worktree)
       }
       const recoveredEvent: SessionTabsStreamEvent = { ...recovered, type: event.type }
-      const fresh = shouldApplyWebSessionTabsSnapshot(recovered, environmentId)
+      const decision = decideWebSessionTabsSnapshot(recovered, environmentId)
+      const fresh = decision.apply
       const syncState = useAppStore.getState()
       const localWorktreeTabs = syncState.tabsByWorktree[activeWorktreeId] ?? []
       const localTerminalCount = localWorktreeTabs.length
@@ -4731,10 +4807,10 @@ export function useWebSessionTabsSync(): void {
         hasLiveLocalPty,
         skipWakeRespawn: shouldSkipWebRuntimeWakeTerminalRespawn(activeWorktreeId)
       })
-      // Why: a stale frame is backed by an equal/newer store view already accepted.
+      // Why: a rejected frame settles only on the accepted view that outranked it.
       let settleMirror: HostSessionMirrorSettle | null = fresh
         ? null
-        : hostSessionMirrorSettleForStaleFrame(environmentId, recovered.worktree)
+        : hostSessionMirrorSettleForPatchlessFrame(decision, environmentId, recovered.worktree)
       try {
         if (fresh) {
           const replayed = isRuntimeSubscriptionReplayResponse(response)
