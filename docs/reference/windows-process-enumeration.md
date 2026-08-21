@@ -127,3 +127,17 @@ pty has no job — an outer job without `JOB_OBJECT_LIMIT_BREAKAWAY_OK` (some ED
 and container hosts) can refuse the assignment, and a pty started before this
 build has none. Callers must fall back, not conclude the tree is gone. That
 conflation is the original bug.
+
+### Known limitation: the baton table is not synchronised
+
+node-pty keeps its per-terminal handles in a plain `std::vector` and erases from
+it on a detached exit thread, while `get_pty_baton` is called from the main JS
+thread. That race predates this change — `PtyResize`, `PtyClear` and `PtyKill`
+all read the table the same way — but `terminatePtyJob` adds an instance of it:
+the exit thread can close `hJob` between the lookup and `TerminateJobObject`.
+
+Losing that race normally just returns `FALSE`, which surfaces as `unavailable`
+and falls back. The case that would not be benign is a recycled `HANDLE` value,
+where the call could reach a different job in the same process. Fixing it
+properly means synchronising node-pty's handle table rather than adding a lock
+around one accessor, so it is deliberately left alone here.
