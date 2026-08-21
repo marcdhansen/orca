@@ -9,8 +9,12 @@ import {
 
 const getAllProcesses = vi.fn()
 
+// A real snapshot always contains the querying process; the reader rejects a
+// table without it, because that is what a blocked CreateToolhelp32Snapshot
+// returns -- an empty list rather than an error.
+const SELF = { pid: process.pid, ppid: 0, name: 'vitest.exe' }
 const NATIVE = [
-  { pid: 4, ppid: 0, name: 'System' },
+  SELF,
   { pid: 100, ppid: 4, name: 'orca.exe', commandLine: '"C:/a b/orca.exe" --x', memory: 4096 }
 ]
 
@@ -38,7 +42,7 @@ describe('windows process table', () => {
   it('maps native rows, defaulting an unreadable command line to empty', async () => {
     const rows = await readWindowsProcessTableFresh()
     expect(rows).toEqual([
-      { pid: 4, ppid: 0, name: 'System', command: '', memoryBytes: undefined },
+      { pid: process.pid, ppid: 0, name: 'vitest.exe', command: '', memoryBytes: undefined },
       {
         pid: 100,
         ppid: 4,
@@ -72,6 +76,28 @@ describe('windows process table', () => {
     getAllProcesses.mockImplementation((cb: (rows: unknown) => void) => cb(undefined))
     resetWindowsProcessTableForTests()
     await expect(readWindowsProcessTableFresh()).rejects.toThrow()
+  })
+
+  it('rejects an empty snapshot rather than reporting an idle machine', async () => {
+    // CreateToolhelp32Snapshot failing under an EDR hook or a restricted token
+    // yields an empty vector, not an error. Callers act on "nothing is running"
+    // by concluding a live PTY root is already gone.
+    getAllProcesses.mockImplementation((cb: (rows: unknown) => void) => cb([]))
+    resetWindowsProcessTableForTests()
+    await expect(readWindowsProcessTableFresh()).rejects.toThrow(/unreadable/)
+  })
+
+  it('rejects when the snapshot never calls back', async () => {
+    // The vendored reader latches a module-global on a wedge, so without a
+    // deadline one hang kills the process table for the life of the app.
+    vi.useFakeTimers()
+    getAllProcesses.mockImplementation(() => {})
+    resetWindowsProcessTableForTests()
+    const pending = readWindowsProcessTableFresh()
+    const assertion = expect(pending).rejects.toThrow(/timed out/)
+    await vi.advanceTimersByTimeAsync(3_000)
+    await assertion
+    vi.useRealTimers()
   })
 
   it('is unavailable off Windows without attempting a require', async () => {

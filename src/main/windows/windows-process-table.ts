@@ -78,6 +78,19 @@ function loadWindowsProcessTree(): WindowsProcessTreeModule | null {
   return cachedModule
 }
 
+/**
+ * Upper bound on one snapshot.
+ *
+ * Why any bound at all: the vendored reader sets a module-global
+ * `requestInProgress` and clears it only after draining its callback queue,
+ * with no try/catch. One throw or one worker that never calls back leaves it
+ * latched, every later call enqueues a callback that never fires, and the
+ * single-flight cache above then holds a promise that never settles — the
+ * process table is dead for the life of the app. The PowerShell reader this
+ * replaced self-healed in 3s because execFile owned a timeout; keep that.
+ */
+const WINDOWS_PROCESS_QUERY_TIMEOUT_MS = 3_000
+
 function readNativeRows(): Promise<WindowsProcessRow[]> {
   const native = moduleLoader()
   if (!native) {
@@ -89,9 +102,26 @@ function readNativeRows(): Promise<WindowsProcessRow[]> {
   const flags = native.ProcessDataFlag.Memory | native.ProcessDataFlag.CommandLine
   return new Promise((resolve, reject) => {
     try {
+      const deadline = setTimeout(
+        () => reject(new Error('windows process table timed out')),
+        WINDOWS_PROCESS_QUERY_TIMEOUT_MS
+      )
+      deadline.unref?.()
       native.getAllProcesses((processes) => {
+        clearTimeout(deadline)
         if (!processes) {
           reject(new Error('windows process table returned no snapshot'))
+          return
+        }
+        // Why check for ourselves: the native snapshot returns an EMPTY list --
+        // not an error -- when CreateToolhelp32Snapshot fails, which is the
+        // normal outcome under an EDR hook or a restricted token. An empty
+        // table reads to callers as "nothing is running", and teardown acts on
+        // that by concluding a live PTY root is already gone. Our own pid is
+        // unfalsifiably present in any honest snapshot, so this one predicate
+        // catches empty, truncated and permission-filtered tables alike.
+        if (!processes.some((row) => row.pid === process.pid)) {
+          reject(new Error('windows process table is unreadable'))
           return
         }
         resolve(
