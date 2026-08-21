@@ -329,6 +329,7 @@ describe('WorktreeJumpPalette recent chats & terminals', () => {
     })
     await waitFor(() => {
       expect(getRenderedRowIds()).toContain('worktree:wt-weak')
+      expect(getRenderedRowIds()).toContain('__create_worktree__')
       expect(getCommandValue()).toBe('workspace-tab:tab-host')
     })
 

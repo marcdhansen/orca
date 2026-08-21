@@ -39,6 +39,15 @@ type CmdJPerformanceProbe = {
 
 type PerformanceProbeWindow = Window & { __cmdJPerformanceProbe?: CmdJPerformanceProbe }
 
+type PendingFeedbackProof = {
+  sawLoading: boolean
+  sawNoResults: boolean
+  sawPending: boolean
+  sawZeroResults: boolean
+}
+
+type PendingFeedbackWindow = Window & { __cmdJPendingFeedbackProof?: PendingFeedbackProof }
+
 async function seedAccumulatedWorkspaceCatalog(page: Page): Promise<void> {
   await page.evaluate(
     ({ workspaceCount, targetLocalName, targetRemoteName }) => {
@@ -179,6 +188,35 @@ async function seedAccumulatedWorkspaceCatalog(page: Page): Promise<void> {
   )
 }
 
+async function installPendingFeedbackObserver(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const proof: PendingFeedbackProof = {
+      sawLoading: false,
+      sawNoResults: false,
+      sawPending: false,
+      sawZeroResults: false
+    }
+    const sample = (): void => {
+      const list = document.querySelector<HTMLElement>('[data-worktree-search-pending]')
+      if (list?.dataset.worktreeSearchPending !== 'true') {
+        return
+      }
+      proof.sawPending = true
+      proof.sawLoading ||= list.textContent?.includes('Loading jump targets') === true
+      proof.sawNoResults ||= list.textContent?.includes('No results match your search') === true
+      proof.sawZeroResults ||=
+        list.closest('[role="dialog"]')?.textContent?.includes('0 results found') === true
+    }
+    new MutationObserver(sample).observe(document.body, {
+      attributes: true,
+      childList: true,
+      subtree: true
+    })
+    ;(window as PendingFeedbackWindow).__cmdJPendingFeedbackProof = proof
+    sample()
+  })
+}
+
 async function installPerformanceProbe(page: Page): Promise<void> {
   await page.evaluate((settlingWindowMs) => {
     const store = window.__store
@@ -234,7 +272,8 @@ async function installPerformanceProbe(page: Page): Promise<void> {
         const hasExpectedRows =
           items.length > 0 &&
           expectedTexts.every((expected) => visibleTexts.some((text) => text.includes(expected)))
-        const indexReady = document.querySelector('[data-worktree-index-pending="true"]') === null
+        const indexMarker = document.querySelector<HTMLElement>('[data-worktree-index-pending]')
+        const indexReady = indexMarker?.dataset.worktreeIndexPending === 'false'
         if (hasExpectedRows && indexReady) {
           indexReadyAt ??= now
         }
@@ -451,14 +490,26 @@ test.describe('Cmd-J cold accumulated-workspace performance @headful', () => {
       'false'
     )
     await expect.poll(() => readMetrics(orcaPage), { timeout: 10_000 }).not.toBeNull()
-    const warmReopen = await readMetrics(orcaPage)
-    expect(warmReopen).not.toBeNull()
+    const retainedReopen = await readMetrics(orcaPage)
+    expect(retainedReopen).not.toBeNull()
+    await expectHostQualifiedNeedleOrder(dialog)
+
+    await togglePaletteFromMain(electronApp)
+    await expect(dialog).toHaveCount(0)
+    await orcaPage.waitForTimeout(350)
+    await beginProbe(orcaPage, [TARGET_REMOTE_NAME, TARGET_LOCAL_NAME])
+    await togglePaletteFromMain(electronApp)
+    await expect(dialog).toBeVisible()
+    await expect.poll(() => readMetrics(orcaPage), { timeout: 10_000 }).not.toBeNull()
+    const remountedColdReopen = await readMetrics(orcaPage)
+    expect(remountedColdReopen).not.toBeNull()
     await expectHostQualifiedNeedleOrder(dialog)
 
     const report = {
       coldOpen,
       indexedQuery,
-      warmReopen,
+      retainedReopen,
+      remountedColdReopen,
       workspaceCount: WORKSPACE_COUNT
     }
     await testInfo.attach('cmd-j-cold-open-metrics.json', {
@@ -478,9 +529,13 @@ test.describe('Cmd-J cold accumulated-workspace performance @headful', () => {
     expectFrameSafe(coldOpen!)
     expect(indexedQuery!.firstVisibleMs).toBeLessThanOrEqual(MAX_FIRST_VISIBLE_MS)
     expectFrameSafe(indexedQuery!)
-    expect(warmReopen!.firstVisibleMs).toBeLessThanOrEqual(MAX_FIRST_VISIBLE_MS)
-    expect(warmReopen!.indexReadyMs).toBe(warmReopen!.firstVisibleMs)
-    expectFrameSafe(warmReopen!)
+    expect(retainedReopen!.firstVisibleMs).toBeLessThanOrEqual(MAX_FIRST_VISIBLE_MS)
+    expect(retainedReopen!.indexReadyMs).toBe(retainedReopen!.firstVisibleMs)
+    expectFrameSafe(retainedReopen!)
+    expect(remountedColdReopen!.firstVisibleMs).toBeLessThanOrEqual(MAX_FIRST_VISIBLE_MS)
+    expect(remountedColdReopen!.indexReadyMs).toBeLessThanOrEqual(MAX_COLD_INDEX_READY_MS)
+    expect(remountedColdReopen!.indexReadyMs).toBeGreaterThan(remountedColdReopen!.firstVisibleMs)
+    expectFrameSafe(remountedColdReopen!)
 
     await orcaPage.evaluate(() => (window as PerformanceProbeWindow).__cmdJPerformanceProbe?.stop())
   })
@@ -496,6 +551,7 @@ test.describe('Cmd-J cold accumulated-workspace performance @headful', () => {
     await togglePaletteFromMain(electronApp)
     const dialog = orcaPage.getByRole('dialog', { name: 'Jump to...' })
     await expect(dialog).toBeVisible()
+    await installPendingFeedbackObserver(orcaPage)
     await beginProbe(orcaPage, [
       TARGET_REMOTE_NAME,
       TARGET_LOCAL_NAME,
@@ -506,6 +562,16 @@ test.describe('Cmd-J cold accumulated-workspace performance @headful', () => {
     const coldImmediateQuery = await readMetrics(orcaPage)
     expect(coldImmediateQuery).not.toBeNull()
     await expectHostQualifiedNeedleOrder(dialog)
+    expect(
+      await orcaPage.evaluate(
+        () => (window as PendingFeedbackWindow).__cmdJPendingFeedbackProof ?? null
+      )
+    ).toEqual({
+      sawLoading: true,
+      sawNoResults: false,
+      sawPending: true,
+      sawZeroResults: false
+    })
 
     await testInfo.attach('cmd-j-cold-immediate-query-metrics.json', {
       body: Buffer.from(`${JSON.stringify(coldImmediateQuery, null, 2)}\n`),

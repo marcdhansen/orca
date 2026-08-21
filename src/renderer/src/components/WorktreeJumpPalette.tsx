@@ -3138,8 +3138,11 @@ function WorktreeJumpPaletteContent({
         }}
         className="max-h-[min(600px,calc(100vh-14rem))] px-2.5 pb-2.5 pt-2"
         data-worktree-index-pending={worktreeDocumentsPending ? 'true' : 'false'}
+        data-worktree-search-pending={worktreeSearchPending ? 'true' : 'false'}
       >
-        {isLoading && selectableItems.length === 0 && !showCreateAction ? (
+        {(isLoading || worktreeSearchPending) &&
+        selectableItems.length === 0 &&
+        !showCreateAction ? (
           <PaletteState
             title={translate(
               'auto.components.WorktreeJumpPalette.ff908adfe9',
@@ -3708,23 +3711,25 @@ function WorktreeJumpPaletteContent({
               value0: getPaletteFilterSelectionCount(filter)
             })} `
           : ''}
-        {deferredQuery.trim()
-          ? translate(
-              'auto.components.WorktreeJumpPalette.bb72c08e63',
-              '{{value0}} results found{{value1}}',
-              {
-                value0: resultCount,
-                value1: showCreateAction ? ', create worktree action available' : ''
-              }
-            )
-          : translate(
-              'auto.components.WorktreeJumpPalette.20af998bff',
-              '{{value0}} items available{{value1}}',
-              {
-                value0: resultCount,
-                value1: showCreateAction ? ', create worktree action available' : ''
-              }
-            )}
+        {worktreeSearchPending
+          ? translate('auto.components.WorktreeJumpPalette.ff908adfe9', 'Loading jump targets')
+          : deferredQuery.trim()
+            ? translate(
+                'auto.components.WorktreeJumpPalette.bb72c08e63',
+                '{{value0}} results found{{value1}}',
+                {
+                  value0: resultCount,
+                  value1: showCreateAction ? ', create worktree action available' : ''
+                }
+              )
+            : translate(
+                'auto.components.WorktreeJumpPalette.20af998bff',
+                '{{value0}} items available{{value1}}',
+                {
+                  value0: resultCount,
+                  value1: showCreateAction ? ', create worktree action available' : ''
+                }
+              )}
       </div>
     </CommandDialog>
   )
