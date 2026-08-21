@@ -375,3 +375,51 @@ describe('a host frame for a workspace the mirror never writes', () => {
     expectReplayedResume(paneKey, BG_WT, 'codex-session-floating-member')
   })
 })
+
+/**
+ * zustand commits before it notifies, so a subscriber that dies afterwards is
+ * a failure of something reading the store, not of the write. The receipt has
+ * to survive it — but only because `patchCommitted` proves the write happened.
+ */
+describe('a store subscriber that throws after the commit', () => {
+  installFrameOrderingHarness()
+
+  it('still settles the frame whose patch landed', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    renderHook(() => useWebSessionTabsSync())
+    await act(settle)
+    const paneKey = seedSleepingRecord(MIRROR_TAB_ID, WT, 'codex-session-subscriber-throw')
+    expect(resumeSleepingAgentSessionsForWorktree(WT)).toBe(0)
+
+    // Why: throw exactly once — the drain this releases writes to the same
+    // store, and a subscriber that kept throwing would take those writes down.
+    let threw = false
+    const unsubscribe = useAppStore.subscribe(() => {
+      if (threw) {
+        return
+      }
+      threw = true
+      throw new Error('agent status subscriber failed')
+    })
+    try {
+      await publish(findSubscription('session.tabs.subscribeAll'), {
+        type: 'snapshot',
+        ...makeHostSnapshot(WT, OTHER_HOST_SURFACE_ID, OTHER_HOST_PARENT_TAB_ID)
+      })
+    } finally {
+      unsubscribe()
+    }
+
+    // Without these the settle assertion would pass on a frame that never
+    // entered the catch at all — the branch under test would go unexercised.
+    expect(threw).toBe(true)
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('a store subscriber failed after the patch landed'),
+      expect.anything()
+    )
+
+    expect(tabIds(WT)).not.toContain(MIRROR_TAB_ID)
+    expectReplayedResume(paneKey, WT, 'codex-session-subscriber-throw')
+    warn.mockRestore()
+  })
+})
