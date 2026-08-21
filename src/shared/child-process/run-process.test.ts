@@ -79,8 +79,11 @@ describe('runProcessSync', () => {
       args: ['-e', 'process.kill(process.pid, "SIGTERM")'],
       timeoutMs: 30_000
     })
-    expect(result.signal).toBe('SIGTERM')
+    // Why not assert the signal: Windows has no signals, so the same deliberate
+    // kill reports an exit code there and a signal on POSIX. What must hold on
+    // both is that neither shape reads as a timeout.
     expect(result.timedOut).toBe(false)
+    expect(result.code === 0 && result.signal === null).toBe(false)
   })
 
   it('captures stdout and the exit code without throwing on failure', () => {
