@@ -29,6 +29,7 @@ const requireFromMain = createRequire(__filename)
 type ConptyNative = {
   terminateJob: (id: number, shellPid: number) => boolean
   listJobProcessIds: (id: number, shellPid: number) => number[] | null
+  assignCurrentProcessToJob: () => boolean
 }
 
 let cachedNative: ConptyNative | null | undefined
@@ -123,6 +124,35 @@ export function listPtyJobProcessIds(proc: IPty): readonly number[] | null {
     return native.listJobProcessIds(target.id, target.shellPid)
   } catch {
     return null
+  }
+}
+
+/**
+ * Put this process in a kill-on-close job so its descendants die with it.
+ *
+ * Why this is separate from the per-PTY jobs: those cannot carry
+ * KILL_ON_JOB_CLOSE, because their handle is released when the shell exits and
+ * that would reap whatever the user had backgrounded. This one is released only
+ * when the process itself dies, so it reaps a crashed host without changing
+ * what a clean exit means. Children inherit membership, so the per-PTY jobs
+ * nest inside it and every pty is covered.
+ *
+ * Call it from the terminal daemon, not from the app: an app-main crash must
+ * still leave sessions alive, which is what win-crash-survival-e2e asserts. A
+ * daemon death reaping its shells is the intended change (#9195, #10415).
+ *
+ * Returns false when the OS refuses -- an outer job that forbids nesting -- in
+ * which case orphan behaviour is simply what it was before.
+ */
+export function assignHostProcessToKillOnCloseJob(): boolean {
+  const native = nativeLoader()
+  if (!native) {
+    return false
+  }
+  try {
+    return native.assignCurrentProcessToJob()
+  } catch {
+    return false
   }
 }
 

@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs'
 import { startDaemon, type DaemonHandle } from './daemon-main'
 import { createPtySubprocess } from './pty-subprocess'
 import { warmWindowsConptyOnce } from './windows-conpty-warmup'
+import { assignHostProcessToKillOnCloseJob } from '../windows/windows-pty-job'
 import { warmPwshAvailabilityCache } from '../pwsh'
 import { createDaemonFileLog, createNoopDaemonFileLog } from './daemon-file-log'
 import { PROTOCOL_VERSION } from './types'
@@ -125,6 +126,14 @@ async function main(): Promise<void> {
   // Fail-open: a broken log path must never block daemon startup.
   const daemonLog = logFilePath ? createDaemonFileLog(logFilePath) : createNoopDaemonFileLog()
   daemonLog.log('startup', { protocolVersion: PROTOCOL_VERSION, socketPath })
+  if (process.platform === 'win32') {
+    // Why here and not in the app: an app-main crash must still leave sessions
+    // alive. A daemon death reaping its shells is the intended change -- CLI
+    // trees used to keep running detached after the daemon died (#9195,
+    // #10415). Children inherit job membership, so every pty spawned later is
+    // covered and the per-pty jobs nest inside this one.
+    daemonLog.log('host-job', { assigned: assignHostProcessToKillOnCloseJob() })
+  }
   void warmPwshAvailabilityCache()
 
   // Why: detached daemons destroy stderr, so the preflight's console.warn is lost;

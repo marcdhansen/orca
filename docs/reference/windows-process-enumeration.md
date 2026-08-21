@@ -111,10 +111,20 @@ running, so typing `exit` in a pane reaped a `start /b` server that used to
 survive. The job exists to make an *explicit* teardown exact, not to redefine
 what a clean exit means.
 
-That means reaping a dead daemon's shells (#9195, #10415) is **not** delivered
-by this job. It needs a separate daemon-level job that the daemon assigns
-itself to at startup; children inherit job membership, so its closure on daemon
-death reaps the shells without touching clean-exit semantics.
+Reaping a dead daemon's shells (#9195, #10415) is therefore a **second, nested
+job**, not this one. The terminal daemon assigns itself to a kill-on-close job
+at startup (`assignHostProcessToKillOnCloseJob`); children inherit membership,
+so every pty is covered and the per-PTY jobs nest inside it. Its handle is
+released only when the daemon process dies, so a crashed daemon reaps its tree
+without changing what a clean shell exit means.
+
+The split is the point. One job answers "kill exactly this pane's tree, now";
+the other answers "do not strand anything if the host dies". Trying to get both
+from one job is what reaped users' backgrounded work on a clean `exit`.
+
+It belongs to the daemon and never to the app: an app-main crash must still
+leave sessions alive, which `.github/workflows/win-crash-survival-e2e.yml`
+asserts.
 
 Once the shell exits, node-pty drops its handle record and closes the job, so a
 terminated tree reports `null` rather than `[]`. Null means *unverifiable* in

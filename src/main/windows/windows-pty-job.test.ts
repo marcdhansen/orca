@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { IPty } from 'node-pty'
 import {
   __setConptyJobNativeForTests,
+  assignHostProcessToKillOnCloseJob,
   isPtyJobOwnershipAvailable,
   listPtyJobProcessIds,
   terminatePtyJob
@@ -16,7 +17,11 @@ afterEach(() => {
 describe('terminatePtyJob', () => {
   it('terminates the job for a pty that has one', () => {
     const terminateJob = vi.fn().mockReturnValue(true)
-    __setConptyJobNativeForTests(() => ({ terminateJob, listJobProcessIds: vi.fn() }))
+    __setConptyJobNativeForTests(() => ({
+      terminateJob,
+      listJobProcessIds: vi.fn(),
+      assignCurrentProcessToJob: vi.fn().mockReturnValue(true)
+    }))
 
     expect(terminatePtyJob(ptyWithHandle(7))).toBe('terminated')
     expect(terminateJob).toHaveBeenCalledWith(7, 4242)
@@ -31,7 +36,8 @@ describe('terminatePtyJob', () => {
     // agent tree was declared dead and left holding the worktree open.
     __setConptyJobNativeForTests(() => ({
       terminateJob: vi.fn().mockReturnValue(nativeResult),
-      listJobProcessIds: vi.fn()
+      listJobProcessIds: vi.fn(),
+      assignCurrentProcessToJob: vi.fn().mockReturnValue(true)
     }))
     expect(terminatePtyJob(ptyWithHandle(7))).toBe('unavailable')
   })
@@ -42,7 +48,8 @@ describe('terminatePtyJob', () => {
   ])('reports unavailable for %s', (_case, id) => {
     __setConptyJobNativeForTests(() => ({
       terminateJob: vi.fn().mockReturnValue(true),
-      listJobProcessIds: vi.fn()
+      listJobProcessIds: vi.fn(),
+      assignCurrentProcessToJob: vi.fn().mockReturnValue(true)
     }))
     expect(terminatePtyJob(ptyWithHandle(id))).toBe('unavailable')
   })
@@ -52,7 +59,11 @@ describe('terminatePtyJob', () => {
     // in the same field, so an id alone can name a live ConPTY pane. The native
     // side refuses on a pid mismatch; this pins that we always send the pid.
     const terminateJob = vi.fn().mockReturnValue(true)
-    __setConptyJobNativeForTests(() => ({ terminateJob, listJobProcessIds: vi.fn() }))
+    __setConptyJobNativeForTests(() => ({
+      terminateJob,
+      listJobProcessIds: vi.fn(),
+      assignCurrentProcessToJob: vi.fn().mockReturnValue(true)
+    }))
 
     terminatePtyJob(ptyWithHandle(3, 9001))
     expect(terminateJob).toHaveBeenCalledWith(3, 9001)
@@ -61,7 +72,8 @@ describe('terminatePtyJob', () => {
   it('reports unavailable when the shell pid is unusable', () => {
     __setConptyJobNativeForTests(() => ({
       terminateJob: vi.fn().mockReturnValue(true),
-      listJobProcessIds: vi.fn()
+      listJobProcessIds: vi.fn(),
+      assignCurrentProcessToJob: vi.fn().mockReturnValue(true)
     }))
     expect(terminatePtyJob(ptyWithHandle(3, 0))).toBe('unavailable')
   })
@@ -78,7 +90,8 @@ describe('terminatePtyJob', () => {
       terminateJob: vi.fn().mockImplementation(() => {
         throw new Error('handle closed')
       }),
-      listJobProcessIds: vi.fn()
+      listJobProcessIds: vi.fn(),
+      assignCurrentProcessToJob: vi.fn().mockReturnValue(true)
     }))
     expect(terminatePtyJob(ptyWithHandle(7))).toBe('unavailable')
   })
@@ -91,7 +104,8 @@ describe('listPtyJobProcessIds', () => {
     // sees it. Job membership does.
     __setConptyJobNativeForTests(() => ({
       terminateJob: vi.fn(),
-      listJobProcessIds: vi.fn().mockReturnValue([107184, 91480])
+      listJobProcessIds: vi.fn().mockReturnValue([107184, 91480]),
+      assignCurrentProcessToJob: vi.fn().mockReturnValue(true)
     }))
     expect(listPtyJobProcessIds(ptyWithHandle(1))).toEqual([107184, 91480])
   })
@@ -106,8 +120,35 @@ describe('listPtyJobProcessIds', () => {
 
     __setConptyJobNativeForTests(() => ({
       terminateJob: vi.fn(),
-      listJobProcessIds: vi.fn().mockReturnValue(null)
+      listJobProcessIds: vi.fn().mockReturnValue(null),
+      assignCurrentProcessToJob: vi.fn().mockReturnValue(true)
     }))
     expect(listPtyJobProcessIds(ptyWithHandle(1))).toBeNull()
+  })
+})
+
+describe('assignHostProcessToKillOnCloseJob', () => {
+  it('reports whether the host process is now kill-on-close', () => {
+    const assignCurrentProcessToJob = vi.fn().mockReturnValue(true)
+    __setConptyJobNativeForTests(() => ({
+      terminateJob: vi.fn(),
+      listJobProcessIds: vi.fn(),
+      assignCurrentProcessToJob
+    }))
+    expect(assignHostProcessToKillOnCloseJob()).toBe(true)
+  })
+
+  it('degrades to false when the OS refuses the assignment', () => {
+    // An outer job that forbids nesting; orphan behaviour is then simply what
+    // it was before, rather than a crash.
+    __setConptyJobNativeForTests(() => ({
+      terminateJob: vi.fn(),
+      listJobProcessIds: vi.fn(),
+      assignCurrentProcessToJob: vi.fn().mockReturnValue(false)
+    }))
+    expect(assignHostProcessToKillOnCloseJob()).toBe(false)
+
+    __setConptyJobNativeForTests(() => null)
+    expect(assignHostProcessToKillOnCloseJob()).toBe(false)
   })
 })

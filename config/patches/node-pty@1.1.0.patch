@@ -430,7 +430,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
  }
  #endif
 diff --git a/src/win/conpty.cc b/src/win/conpty.cc
-index 7b286d3d644c26141df516929703aa6e129df4b2..17c5eb23519ef7771a288ae4bc30a2be49f6c7bc 100644
+index 7b286d3d644c26141df516929703aa6e129df4b2..d63bf76070efae27043efbe1d2ccaafdc2ede037 100644
 --- a/src/win/conpty.cc
 +++ b/src/win/conpty.cc
 @@ -18,6 +18,7 @@
@@ -589,7 +589,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..17c5eb23519ef7771a288ae4bc30a2be
  
    // Close the thread handle to avoid resource leak
    CloseHandle(piClient.hThread);
-@@ -567,6 +657,94 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
+@@ -567,6 +657,137 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
    return env.Undefined();
  }
  
@@ -681,15 +681,59 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..17c5eb23519ef7771a288ae4bc30a2be
 +  return env.Null();
 +}
 +
++/**
++ * Orca: put THIS process in a kill-on-close job, so its whole descendant tree
++ * dies with it.
++ *
++ * Why here and not per-pty: a per-pty job cannot carry KILL_ON_JOB_CLOSE,
++ * because its handle is released when the shell exits and that would reap
++ * whatever the user had backgrounded. This job's handle is released only when
++ * the process itself dies, so it reaps a crashed host without changing what a
++ * clean shell exit means. Children inherit job membership, so every pty the
++ * caller later spawns is covered without further work, and the per-pty jobs
++ * simply nest inside this one.
++ *
++ * The handle is deliberately never closed: it must outlive every caller, and
++ * process teardown is what releases it.
++ */
++static Napi::Value PtyAssignCurrentProcessToJob(const Napi::CallbackInfo& info) {
++  Napi::Env env(info.Env());
++  Napi::HandleScope scope(env);
++
++  static HANDLE hHostJob = nullptr;
++  if (hHostJob != nullptr) {
++    return Napi::Boolean::New(env, true);
++  }
++
++  HANDLE job = CreateJobObjectW(nullptr, nullptr);
++  if (job == nullptr) {
++    return Napi::Boolean::New(env, false);
++  }
++  JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
++  // BREAKAWAY_OK for the same reason as the per-pty job: without it a child
++  // asking for CREATE_BREAKAWAY_FROM_JOB is refused outright.
++  limits.BasicLimitInformation.LimitFlags =
++      JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
++  if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) ||
++      !AssignProcessToJobObject(job, GetCurrentProcess())) {
++    // An outer job that forbids nesting refuses this; the caller degrades.
++    CloseHandle(job);
++    return Napi::Boolean::New(env, false);
++  }
++  hHostJob = job;
++  return Napi::Boolean::New(env, true);
++}
++
  /**
  * Init
  */
-@@ -577,6 +755,8 @@ Napi::Object init(Napi::Env env, Napi::Object exports) {
+@@ -577,6 +798,9 @@ Napi::Object init(Napi::Env env, Napi::Object exports) {
    exports.Set("resize", Napi::Function::New(env, PtyResize));
    exports.Set("clear", Napi::Function::New(env, PtyClear));
    exports.Set("kill", Napi::Function::New(env, PtyKill));
 +  exports.Set("terminateJob", Napi::Function::New(env, PtyTerminateJob));
 +  exports.Set("listJobProcessIds", Napi::Function::New(env, PtyListJobProcessIds));
++  exports.Set("assignCurrentProcessToJob", Napi::Function::New(env, PtyAssignCurrentProcessToJob));
    return exports;
  };
  
