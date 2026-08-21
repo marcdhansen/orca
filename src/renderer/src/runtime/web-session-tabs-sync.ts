@@ -3715,6 +3715,23 @@ export function applyWebSessionTabsStorePatch(
   }
 }
 
+/** Why: absence from a FULLY applied inventory is itself a verdict, but a
+ *  partial one speaks only for the worktrees whose frames reached the store —
+ *  the rest wait for the next clean inventory rather than read as retracted. */
+function settleHostSessionMirrorForAppliedInventory(
+  environmentId: string,
+  appliedWorktreeIds: readonly string[],
+  publishedSnapshotCount: number
+): void {
+  if (appliedWorktreeIds.length === publishedSnapshotCount) {
+    markHostSessionMirrorHydrated(environmentId)
+    return
+  }
+  for (const worktreeId of appliedWorktreeIds) {
+    markHostSessionMirrorWorktreeHydrated(environmentId, worktreeId)
+  }
+}
+
 function loadInitialWebSessionTabs(
   environmentId: string,
   expectedEnvironmentPairingRevision: number | undefined,
@@ -3786,7 +3803,12 @@ function loadInitialWebSessionTabs(
           (state) => applyFreshWebSessionTabsSnapshots(state, applicable, environmentId),
           applicable
         )
-        settleHydration = () => markHostSessionMirrorHydrated(environmentId)
+        settleHydration = () =>
+          settleHostSessionMirrorForAppliedInventory(
+            environmentId,
+            applicable.map((snapshot) => snapshot.worktree),
+            result.snapshots.length
+          )
       } finally {
         for (const finishRecovery of finishRecoveries) {
           finishRecovery()
@@ -4371,6 +4393,7 @@ export function useWebSessionTabsSync(): void {
                           receivedFrames[index]!
                         )
                   )
+                  let settleHydration: (() => void) | null = null
                   void Promise.all(
                     event.snapshots.map((snapshot, index) =>
                       unchangedVisibilityResumeSnapshots[index]
@@ -4442,6 +4465,12 @@ export function useWebSessionTabsSync(): void {
                           inventoryReceivedFrame,
                           missingWorktrees
                         )
+                        settleHydration = () =>
+                          settleHostSessionMirrorForAppliedInventory(
+                            environmentId,
+                            applicable.map(({ snapshot }) => snapshot.worktree),
+                            event.snapshots.length
+                          )
                       }
                     })
                     .catch((error) => {
@@ -4453,11 +4482,11 @@ export function useWebSessionTabsSync(): void {
                       for (const finishRecovery of finishRecoveries) {
                         finishRecovery?.()
                       }
-                      // Why: a full inventory speaks for every worktree, but only
-                      // once its patch is in the store — settling earlier drains
-                      // parked recovery against state this frame has not written.
+                      // Why: an inventory speaks only once its patch is in the
+                      // store — settling earlier, or on snapshots recovery
+                      // discarded, drains parked work against state nobody wrote.
                       if (isCurrent()) {
-                        markHostSessionMirrorHydrated(environmentId)
+                        settleHydration?.()
                       }
                     })
                   return
@@ -4474,6 +4503,7 @@ export function useWebSessionTabsSync(): void {
                   event.worktree,
                   receivedFrame
                 )
+                let frameReachedStore = false
                 void recoverWebSessionTerminalOrphansBeforeApply(
                   useAppStore.getState(),
                   event,
@@ -4490,6 +4520,7 @@ export function useWebSessionTabsSync(): void {
                       ) &&
                       shouldApplyVisibilityResumeSnapshot(environmentId, recovered, receivedFrame)
                     ) {
+                      frameReachedStore = true
                       if (replayed) {
                         acceptReplayedWebSessionTabsSnapshot(environmentId, recovered.worktree)
                       }
@@ -4510,10 +4541,10 @@ export function useWebSessionTabsSync(): void {
                   })
                   .finally(() => {
                     finishRecovery()
-                    // Why: this frame speaks for its own worktree only; releasing
-                    // the environment would free panes parked on workspaces whose
-                    // snapshots have not arrived.
-                    if (isCurrent()) {
+                    // Why: this frame speaks for its own worktree only, and only
+                    // if it was applied — a discarded frame leaves the pane's PTY
+                    // as unaccounted for as before it arrived.
+                    if (isCurrent() && frameReachedStore) {
                       markHostSessionMirrorWorktreeHydrated(environmentId, event.worktree)
                     }
                   })
@@ -4579,12 +4610,14 @@ export function useWebSessionTabsSync(): void {
 
     let requestedInitialTerminal = false
     let requestedRespawnAfterWake = false
+    /** Resolves true only when the frame reached the store, which is what the
+     *  caller is allowed to settle the mirror on. */
     const applyActiveSnapshot = async (
       event: RuntimeMobileSessionTabsResult & { type: 'snapshot' | 'updated' },
       response: RuntimeRpcResponse<unknown>,
       isCurrent: () => boolean,
       receivedFrame: number
-    ): Promise<void> => {
+    ): Promise<boolean> => {
       const recovered = await recoverWebSessionTerminalOrphansBeforeApply(
         useAppStore.getState(),
         event,
@@ -4596,7 +4629,7 @@ export function useWebSessionTabsSync(): void {
         !shouldApplyRecoveredWebSessionTabsSnapshot(environmentId, recovered, receivedFrame) ||
         !shouldApplyVisibilityResumeSnapshotRef.current(environmentId, recovered, receivedFrame)
       ) {
-        return
+        return false
       }
       if (event.type === 'snapshot' || isRuntimeSubscriptionReplayResponse(response)) {
         // Why: the parallel global stream can consume an earlier replay allowance before this authoritative snapshot lands.
@@ -4655,6 +4688,7 @@ export function useWebSessionTabsSync(): void {
           selectWorktree: false
         }).finally(() => endWebRuntimeWakeTerminalRespawn(activeWorktreeId))
       }
+      return true
     }
     const disposeSubscription = installWindowVisibilitySubscriptionParking([
       {
@@ -4708,12 +4742,13 @@ export function useWebSessionTabsSync(): void {
                         error
                       )
                     }
+                    return false
                   })
-                  .finally(() => {
+                  .then((reachedStore) => {
                     finishRecovery()
                     // Why: the active-worktree mirror is authoritative for this
                     // worktree alone, and only once its patch has been applied.
-                    if (isCurrent()) {
+                    if (isCurrent() && reachedStore) {
                       markHostSessionMirrorWorktreeHydrated(environmentId, event.worktree)
                     }
                   })

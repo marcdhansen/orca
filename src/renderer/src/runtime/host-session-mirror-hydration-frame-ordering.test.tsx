@@ -404,4 +404,29 @@ describe('mirror latch verdicts against real stream failures', () => {
     expect(state.sleepingAgentSessionsByPaneKey[backgroundPaneKey]).toBeDefined()
     expect(Object.keys(state.automaticAgentResumeClaimsByTabId)).toHaveLength(0)
   })
+
+  it('an inventory whose recovery drops a worktree settles only the applied ones', async () => {
+    renderHook(() => useWebSessionTabsSync())
+    await act(settle)
+    const backgroundPaneKey = seedSleepingRecord(BG_MIRROR_TAB_ID, BG_WT, 'codex-session-bg-drop')
+    expect(resumeSleepingAgentSessionsForWorktree(BG_WT)).toBe(0)
+
+    // The background snapshot never reaches the store, so the pane it would
+    // have published a PTY for is still unaccounted for.
+    mocks.recoverSnapshot.mockImplementation(
+      async (_state: unknown, snapshot: RuntimeMobileSessionTabsResult) =>
+        snapshot.worktree === BG_WT ? null : snapshot
+    )
+    await publish(findSubscription('session.tabs.subscribeAll'), {
+      type: 'snapshots',
+      snapshots: [
+        makeHostSnapshot(WT, HOST_SURFACE_ID, HOST_PARENT_TAB_ID),
+        makeHostSnapshot(BG_WT, `host-tab-2::${LEAF_ID}`, 'host-tab-2')
+      ]
+    })
+
+    expect(useAppStore.getState().ptyIdsByTabId[MIRROR_TAB_ID]).toEqual([HOST_PTY_ID])
+    expect(tabIds(BG_WT)).toEqual([BG_MIRROR_TAB_ID])
+    expect(useAppStore.getState().sleepingAgentSessionsByPaneKey[backgroundPaneKey]).toBeDefined()
+  })
 })
