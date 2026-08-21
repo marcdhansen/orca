@@ -7,7 +7,7 @@ import {
   terminatePtyJob
 } from './windows-pty-job'
 
-const ptyWithHandle = (id: unknown): IPty => ({ _pty: id }) as unknown as IPty
+const ptyWithHandle = (id: unknown, pid = 4242): IPty => ({ _pty: id, pid }) as unknown as IPty
 
 afterEach(() => {
   __setConptyJobNativeForTests()
@@ -19,7 +19,7 @@ describe('terminatePtyJob', () => {
     __setConptyJobNativeForTests(() => ({ terminateJob, listJobProcessIds: vi.fn() }))
 
     expect(terminatePtyJob(ptyWithHandle(7))).toBe('terminated')
-    expect(terminateJob).toHaveBeenCalledWith(7)
+    expect(terminateJob).toHaveBeenCalledWith(7, 4242)
   })
 
   it.each([
@@ -45,6 +45,25 @@ describe('terminatePtyJob', () => {
       listJobProcessIds: vi.fn()
     }))
     expect(terminatePtyJob(ptyWithHandle(id))).toBe('unavailable')
+  })
+
+  it('passes the shell pid so an id from another backend cannot match', () => {
+    // winpty mints `pty` ids from its own counter and the JS layer stores both
+    // in the same field, so an id alone can name a live ConPTY pane. The native
+    // side refuses on a pid mismatch; this pins that we always send the pid.
+    const terminateJob = vi.fn().mockReturnValue(true)
+    __setConptyJobNativeForTests(() => ({ terminateJob, listJobProcessIds: vi.fn() }))
+
+    terminatePtyJob(ptyWithHandle(3, 9001))
+    expect(terminateJob).toHaveBeenCalledWith(3, 9001)
+  })
+
+  it('reports unavailable when the shell pid is unusable', () => {
+    __setConptyJobNativeForTests(() => ({
+      terminateJob: vi.fn().mockReturnValue(true),
+      listJobProcessIds: vi.fn()
+    }))
+    expect(terminatePtyJob(ptyWithHandle(3, 0))).toBe('unavailable')
   })
 
   it('reports unavailable when this build has no job support', () => {

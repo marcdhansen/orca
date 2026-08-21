@@ -430,7 +430,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
  }
  #endif
 diff --git a/src/win/conpty.cc b/src/win/conpty.cc
-index 7b286d3d644c26141df516929703aa6e129df4b2..a1a63d6380ba5b0a669339435064b9f51e0706dc 100644
+index 7b286d3d644c26141df516929703aa6e129df4b2..e62eadb7b8959a687a546da5d6c1a7b99fde43c5 100644
 --- a/src/win/conpty.cc
 +++ b/src/win/conpty.cc
 @@ -46,6 +46,11 @@ struct pty_baton {
@@ -471,7 +471,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..a1a63d6380ba5b0a669339435064b9f5
        envArg,                       // lpEnvironment
        mutableCwd.get(),             // lpCurrentDirectory
        &siEx.StartupInfo,            // lpStartupInfo
-@@ -426,6 +441,31 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+@@ -426,6 +441,39 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
      throw errorWithCode(info, "Cannot create process");
    }
  
@@ -495,18 +495,50 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..a1a63d6380ba5b0a669339435064b9f5
 +      hJob = nullptr;
 +    }
 +  }
-+  handle->hJob = hJob;
-+
 +  // Safe to run now: either it is in the job, or we accepted that it is not.
-+  ResumeThread(piClient.hThread);
++  if (ResumeThread(piClient.hThread) == static_cast<DWORD>(-1)) {
++    // Why fatal: a shell left suspended produces a pane that never prints and
++    // never exits, which is far harder to diagnose than a failed spawn.
++    if (hJob != nullptr) {
++      CloseHandle(hJob);
++    }
++    TerminateProcess(piClient.hProcess, 1);
++    CloseHandle(piClient.hProcess);
++    CloseHandle(piClient.hThread);
++    throw errorWithCode(info, "Cannot resume process");
++  }
 +
    HANDLE hLibrary = LoadConptyDll(info, useConptyDll);
    bool fLoadedDll = hLibrary != nullptr;
    if (useConptyDll && fLoadedDll)
-@@ -567,6 +607,72 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
+@@ -440,6 +488,10 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+ 
+   // Update handle
+   handle->hShell = piClient.hProcess;
++  // Why here and not earlier: LoadConptyDll above can throw, and a baton that
++  // carries a job but never reaches SetupExitCallback has nothing left to
++  // close it.
++  handle->hJob = hJob;
+ 
+   // Close the thread handle to avoid resource leak
+   CloseHandle(piClient.hThread);
+@@ -567,6 +619,85 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
    return env.Undefined();
  }
  
++/**
++ * Orca: confirm a baton really is the pty the caller means.
++ *
++ * The winpty backend mints its own `pty` ids from a separate counter, and the
++ * JS layer stores both in the same field -- so a winpty terminal's id can
++ * collide with a live ConPTY baton here and terminate an unrelated pane's whole
++ * process tree. Matching the shell pid makes the id unforgeable.
++ */
++static bool ownsShell(const pty_baton* handle, DWORD expectedShellPid) {
++  return handle != nullptr && handle->hJob != nullptr && handle->hShell != nullptr &&
++         expectedShellPid != 0 && GetProcessId(handle->hShell) == expectedShellPid;
++}
++
 +/**
 + * Orca: kill this pty's entire tree in one syscall.
 + *
@@ -518,12 +550,12 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..a1a63d6380ba5b0a669339435064b9f5
 +  Napi::Env env(info.Env());
 +  Napi::HandleScope scope(env);
 +
-+  if (info.Length() != 1 || !info[0].IsNumber()) {
-+    throw Napi::Error::New(env, "Usage: pty.terminateJob(id)");
++  if (info.Length() != 2 || !info[0].IsNumber() || !info[1].IsNumber()) {
++    throw Napi::Error::New(env, "Usage: pty.terminateJob(id, shellPid)");
 +  }
 +
 +  const pty_baton* handle = get_pty_baton(info[0].As<Napi::Number>().Int32Value());
-+  if (handle == nullptr || handle->hJob == nullptr) {
++  if (!ownsShell(handle, info[1].As<Napi::Number>().Uint32Value())) {
 +    return Napi::Boolean::New(env, false);
 +  }
 +  return Napi::Boolean::New(env, !!TerminateJobObject(handle->hJob, 1));
@@ -541,12 +573,12 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..a1a63d6380ba5b0a669339435064b9f5
 +  Napi::Env env(info.Env());
 +  Napi::HandleScope scope(env);
 +
-+  if (info.Length() != 1 || !info[0].IsNumber()) {
-+    throw Napi::Error::New(env, "Usage: pty.listJobProcessIds(id)");
++  if (info.Length() != 2 || !info[0].IsNumber() || !info[1].IsNumber()) {
++    throw Napi::Error::New(env, "Usage: pty.listJobProcessIds(id, shellPid)");
 +  }
 +
 +  const pty_baton* handle = get_pty_baton(info[0].As<Napi::Number>().Int32Value());
-+  if (handle == nullptr || handle->hJob == nullptr) {
++  if (!ownsShell(handle, info[1].As<Napi::Number>().Uint32Value())) {
 +    return env.Null();
 +  }
 +
@@ -576,7 +608,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..a1a63d6380ba5b0a669339435064b9f5
  /**
  * Init
  */
-@@ -577,6 +683,8 @@ Napi::Object init(Napi::Env env, Napi::Object exports) {
+@@ -577,6 +708,8 @@ Napi::Object init(Napi::Env env, Napi::Object exports) {
    exports.Set("resize", Napi::Function::New(env, PtyResize));
    exports.Set("clear", Napi::Function::New(env, PtyClear));
    exports.Set("kill", Napi::Function::New(env, PtyKill));

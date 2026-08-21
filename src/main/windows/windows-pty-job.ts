@@ -27,8 +27,8 @@ import { createRequire } from 'node:module'
 const requireFromMain = createRequire(__filename)
 
 type ConptyNative = {
-  terminateJob: (id: number) => boolean
-  listJobProcessIds: (id: number) => number[] | null
+  terminateJob: (id: number, shellPid: number) => boolean
+  listJobProcessIds: (id: number, shellPid: number) => number[] | null
 }
 
 let cachedNative: ConptyNative | null | undefined
@@ -60,14 +60,20 @@ function loadConptyNative(): ConptyNative | null {
 }
 
 /**
- * node-pty's per-terminal handle id.
+ * node-pty's per-terminal handle id, paired with the shell pid that proves it.
  *
- * Not on the public `IPty` surface, so read defensively: a winpty fallback
- * terminal and every POSIX terminal have none.
+ * Neither is on the public `IPty` surface, so read defensively. The pid is not
+ * belt-and-braces: the winpty backend mints `pty` ids from its own counter and
+ * the JS layer stores both in the same field, so an id alone can name a
+ * different, live ConPTY pane. The native side refuses on a pid mismatch.
  */
-function ptyHandleId(proc: IPty): number | null {
+function ptyJobTarget(proc: IPty): { id: number; shellPid: number } | null {
   const id = (proc as unknown as { _pty?: unknown })._pty
-  return typeof id === 'number' && Number.isInteger(id) ? id : null
+  const shellPid = proc.pid
+  if (!Number.isInteger(id) || !Number.isInteger(shellPid) || (shellPid as number) <= 0) {
+    return null
+  }
+  return { id: id as number, shellPid: shellPid as number }
 }
 
 export type JobTerminationOutcome = 'terminated' | 'unavailable'
@@ -81,13 +87,13 @@ export type JobTerminationOutcome = 'terminated' | 'unavailable'
  * to be misread as "nothing to kill".
  */
 export function terminatePtyJob(proc: IPty): JobTerminationOutcome {
-  const id = ptyHandleId(proc)
+  const target = ptyJobTarget(proc)
   const native = nativeLoader()
-  if (id === null || !native) {
+  if (!target || !native) {
     return 'unavailable'
   }
   try {
-    return native.terminateJob(id) ? 'terminated' : 'unavailable'
+    return native.terminateJob(target.id, target.shellPid) ? 'terminated' : 'unavailable'
   } catch {
     return 'unavailable'
   }
@@ -108,13 +114,13 @@ export function terminatePtyJob(proc: IPty): JobTerminationOutcome {
  * including children that detached from the console.
  */
 export function listPtyJobProcessIds(proc: IPty): readonly number[] | null {
-  const id = ptyHandleId(proc)
+  const target = ptyJobTarget(proc)
   const native = nativeLoader()
-  if (id === null || !native) {
+  if (!target || !native) {
     return null
   }
   try {
-    return native.listJobProcessIds(id)
+    return native.listJobProcessIds(target.id, target.shellPid)
   } catch {
     return null
   }
