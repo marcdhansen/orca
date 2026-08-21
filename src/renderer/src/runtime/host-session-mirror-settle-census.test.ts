@@ -21,10 +21,37 @@ const SETTLE_RULE = [
   'equal/newer view already accepted into the store. Never derive that from a',
   'bare boolean: "the mirror never writes this workspace" is also a rejection,',
   'and settling on it drains parked resume work against state nobody wrote.',
-  'Never call markHostSessionMirror*Hydrated from feature code, and never add a',
-  'boolean that remembers "the patch landed" — that ordering bug shipped four',
-  'times. If you added a legitimate new site, update this census deliberately.'
+  'A captured receipt that is never invoked wedges its pane instead, so every',
+  'receipt has to reach a call. Never call markHostSessionMirror*Hydrated from',
+  'feature code, and never add a boolean that remembers "the patch landed" —',
+  'that ordering bug shipped four times. If you added a legitimate new site,',
+  'update this census deliberately.'
 ].join(' ')
+
+/** Receipt-minting calls. Every one owes its caller an invocation. */
+const RECEIPT_CALLS = [
+  'applyWebSessionTabsStorePatch(',
+  'hostSessionMirrorSettleForPatchlessFrame('
+] as const
+
+/**
+ * The binding a receipt was captured into, read backwards from the call.
+ * TypeScript cannot express a must-call obligation and the invocation is
+ * deliberately deferred to after `finishRecovery`, so this stays textual:
+ * an unrecognised capture shape fails rather than passing unaudited.
+ */
+function receiptBindingName(before: string): string | null {
+  const lines = before.split('\n')
+  for (let line = lines.length - 1; line >= 0 && line > lines.length - 8; line -= 1) {
+    const match = /\b(?:const|let|var)?\s*([A-Za-z_$][\w$]*)\s*(?::[^=]*?)?=(?![=>])/.exec(
+      lines[line]!
+    )
+    if (match) {
+      return match[1]!
+    }
+  }
+  return null
+}
 
 function productionSources(): { path: string; source: string }[] {
   const sources: { path: string; source: string }[] = []
@@ -114,6 +141,52 @@ describe('host-session-mirror settle census', () => {
       'runtime/web-session-tabs-sync.ts': 5,
       // The eager post-create session.tabs.list refresh.
       'runtime/web-runtime-session.ts': 1
+    })
+  })
+
+  it('every captured settle receipt reaches an invocation', () => {
+    const receiptBindings: Record<string, Record<string, number>> = {}
+    for (const { path, source } of sources) {
+      for (const needle of RECEIPT_CALLS) {
+        for (
+          let index = source.indexOf(needle);
+          index !== -1;
+          index = source.indexOf(needle, index + 1)
+        ) {
+          const before = source.slice(0, index).trimEnd()
+          if (before.endsWith('function')) {
+            continue // The definition.
+          }
+          const name = receiptBindingName(before)
+          expect(
+            name,
+            `${path} captures a settle receipt in a shape this census cannot follow. ${SETTLE_RULE}`
+          ).not.toBeNull()
+          // The obligation is discharged by the next call of the same binding —
+          // a fresh declaration of that name in between means the call belongs
+          // to another receipt, so this one was dropped.
+          const rest = source.slice(index + needle.length)
+          const invocation = new RegExp(`\\b${name}\\s*(?:\\?\\.)?\\(`).exec(rest)
+          const redeclared =
+            invocation !== null &&
+            new RegExp(`\\b(?:let|const|var)\\s+${name}\\b`).test(rest.slice(0, invocation.index))
+          expect(
+            invocation !== null && !redeclared,
+            `${path} never invokes the settle receipt it captured into \`${name}\`. ${SETTLE_RULE}`
+          ).toBe(true)
+          const bindings = (receiptBindings[path] ??= {})
+          bindings[name!] = (bindings[name!] ?? 0) + 1
+        }
+      }
+    }
+    // Pinning the resolved names keeps the rule from going vacuous: a binding
+    // this census misreads settles on some other identifier's invocation.
+    expect(receiptBindings, SETTLE_RULE).toEqual({
+      // Four hydration receipts (initial listAll, full inventory, scoped active
+      // frame patch, and its patchless twin) and three mirror ones
+      // (visibility-resume repair, global singular frame patch and patchless).
+      'runtime/web-session-tabs-sync.ts': { settleHydration: 4, settleMirror: 3 },
+      'runtime/web-runtime-session.ts': { settleMirror: 1 }
     })
   })
 
