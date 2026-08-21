@@ -54,7 +54,12 @@ import { resumeSleepingAgentSessionsForWorktree } from '@/lib/resume-sleeping-ag
 import { wakeSleepingAgentsForWorktreeInBackground } from '@/lib/wake-sleeping-agents-in-background'
 import { resetStaleDocumentVisibilityForTesting } from '@/components/terminal-pane/stale-document-visibility'
 import { replaceRuntimeEnvironmentRevisions } from './runtime-environment-revision'
-import { resetHostSessionMirrorHydrationForTests } from './host-session-mirror-hydration'
+import {
+  clearHostSessionMirrorHydration,
+  hasHostSessionMirrorHydrated,
+  resetHostSessionMirrorHydrationForTests
+} from './host-session-mirror-hydration'
+import { refreshWebRuntimeSessionTabsSnapshot } from './web-runtime-session'
 import {
   resetWebSessionTabsSnapshotFreshnessForTests,
   useWebSessionTabsSync,
@@ -170,6 +175,23 @@ function makeEmptyHostSnapshot(worktree: string): RuntimeMobileSessionTabsResult
     activeTabType: null,
     tabs: []
   } as never
+}
+
+/** A published tab whose PTY handle has not landed yet — the undecidable
+ *  mirror shape that makes a resume sweep park instead of deciding. */
+function makePtylessHostSnapshot(
+  worktree: string,
+  hostSurfaceId: string,
+  parentTabId: string,
+  snapshotVersion = 1
+): RuntimeMobileSessionTabsResult {
+  const snapshot = makeHostSnapshot(worktree, hostSurfaceId, parentTabId) as never as {
+    snapshotVersion: number
+    tabs: Record<string, unknown>[]
+  }
+  snapshot.snapshotVersion = snapshotVersion
+  Object.assign(snapshot.tabs[0]!, { status: 'pending-handle', terminal: null })
+  return snapshot as never
 }
 
 function mirrorTabRow(tabId: string, worktreeId: string): unknown {
@@ -716,5 +738,221 @@ describe('an inventory whose post-patch bookkeeping throws', () => {
     )
     expect(tabIds(BG_WT)).not.toContain(BG_MIRROR_TAB_ID)
     expectReplayedResume(paneKey, BG_WT, 'codex-session-bookkeeping-throw')
+  })
+})
+
+/** Registers the shared harness reset for the receipt-era describe blocks. */
+function installFrameOrderingHarness(options: { fakeTimers?: boolean } = {}): void {
+  beforeEach(() => {
+    if (options.fakeTimers) {
+      vi.useFakeTimers()
+    }
+    subscriptions.length = 0
+    runtimeCall.mockClear().mockImplementation(() => new Promise(() => {}))
+    runtimeSubscribe.mockClear()
+    mocks.createTerminal.mockReset().mockResolvedValue(undefined)
+    mocks.queueAcceptedSnapshot.mockReset()
+    mocks.recoverSnapshot.mockReset().mockImplementation(async (_state, snapshot) => snapshot)
+    mocks.runtimeSessionMirrorEnvironmentKey.mockReset().mockReturnValue(MIRROR_KEY)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { runtimeEnvironments: { call: runtimeCall, subscribe: runtimeSubscribe } }
+    })
+    if (options.fakeTimers) {
+      setDocumentVisibility('visible')
+    }
+    resetWebSessionTabsSnapshotFreshnessForTests()
+    resetHostSessionMirrorHydrationForTests()
+    seedState()
+  })
+
+  afterEach(() => {
+    cleanup()
+    useAppStore.setState(initialState, true)
+    replaceRuntimeEnvironmentRevisions([])
+    resetWebSessionTabsSnapshotFreshnessForTests()
+    resetHostSessionMirrorHydrationForTests()
+    if (options.fakeTimers) {
+      resetStaleDocumentVisibilityForTesting()
+      setDocumentVisibility('visible')
+      vi.useRealTimers()
+    }
+  })
+}
+
+describe('a global singular frame whose patch never lands', () => {
+  installFrameOrderingHarness()
+
+  it('settles nothing until a later frame reaches the store', async () => {
+    renderHook(() => useWebSessionTabsSync())
+    await act(settle)
+    const paneKey = seedSleepingRecord(MIRROR_TAB_ID, WT, 'codex-session-patch-throw')
+    expect(resumeSleepingAgentSessionsForWorktree(WT)).toBe(0)
+
+    // Acceptance bookkeeping dies after the frame passed its recovery gates but
+    // before its patch reached the store: nothing landed, so nothing may settle.
+    mocks.queueAcceptedSnapshot.mockImplementation(() => {
+      throw new Error('accepted-handle queue failed')
+    })
+    await publish(findSubscription('session.tabs.subscribeAll'), {
+      type: 'snapshot',
+      ...makeHostSnapshot(WT, OTHER_HOST_SURFACE_ID, OTHER_HOST_PARENT_TAB_ID)
+    })
+
+    expect(tabIds(WT)).toEqual([MIRROR_TAB_ID])
+    expect(useAppStore.getState().sleepingAgentSessionsByPaneKey[paneKey]).toBeDefined()
+    expect(Object.keys(useAppStore.getState().automaticAgentResumeClaimsByTabId)).toHaveLength(0)
+
+    // The next frame lands cleanly, so the parked pane is decided on evidence
+    // that is actually in the store — the latch healed rather than wedged.
+    mocks.queueAcceptedSnapshot.mockImplementation(() => {})
+    await publish(findSubscription('session.tabs.subscribeAll'), {
+      type: 'snapshot',
+      ...makeHostSnapshot(WT, OTHER_HOST_SURFACE_ID, OTHER_HOST_PARENT_TAB_ID),
+      snapshotVersion: 2
+    })
+
+    expect(tabIds(WT)).not.toContain(MIRROR_TAB_ID)
+    expectReplayedResume(paneKey, WT, 'codex-session-patch-throw')
+  })
+
+  it('settles nothing when the patch itself throws mid-apply', async () => {
+    renderHook(() => useWebSessionTabsSync())
+    await act(settle)
+    const paneKey = seedSleepingRecord(MIRROR_TAB_ID, WT, 'codex-session-apply-throw')
+    expect(resumeSleepingAgentSessionsForWorktree(WT)).toBe(0)
+
+    // A malformed 'ready' tab without a terminal handle blows up inside the
+    // store write itself: no receipt may exist for a commit that never was.
+    const malformed = makeHostSnapshot(
+      WT,
+      OTHER_HOST_SURFACE_ID,
+      OTHER_HOST_PARENT_TAB_ID
+    ) as never as { tabs: Record<string, unknown>[] }
+    malformed.tabs[0]!.terminal = undefined
+    await publish(findSubscription('session.tabs.subscribeAll'), {
+      type: 'snapshot',
+      ...malformed
+    })
+
+    expect(tabIds(WT)).toEqual([MIRROR_TAB_ID])
+    expect(useAppStore.getState().sleepingAgentSessionsByPaneKey[paneKey]).toBeDefined()
+    expect(Object.keys(useAppStore.getState().automaticAgentResumeClaimsByTabId)).toHaveLength(0)
+
+    await publish(findSubscription('session.tabs.subscribeAll'), {
+      type: 'snapshot',
+      ...makeHostSnapshot(WT, OTHER_HOST_SURFACE_ID, OTHER_HOST_PARENT_TAB_ID),
+      snapshotVersion: 2
+    })
+
+    expect(tabIds(WT)).not.toContain(MIRROR_TAB_ID)
+    expectReplayedResume(paneKey, WT, 'codex-session-apply-throw')
+  })
+})
+
+describe('a stale frame against a newer accepted view', () => {
+  installFrameOrderingHarness()
+
+  it('settles with no patch because rejection is backed by the accepted view', async () => {
+    renderHook(() => useWebSessionTabsSync())
+    await act(settle)
+
+    // The host publishes v2 for this pane before its PTY handle lands.
+    await publish(findSubscription('session.tabs.subscribeAll'), {
+      type: 'snapshot',
+      ...makePtylessHostSnapshot(WT, HOST_SURFACE_ID, HOST_PARENT_TAB_ID, 2)
+    })
+
+    // A re-pair voids every verdict; the accepted store view survives it.
+    act(() => clearHostSessionMirrorHydration(ENV))
+    const paneKey = seedSleepingRecord(MIRROR_TAB_ID, WT, 'codex-session-stale-settle')
+    expect(resumeSleepingAgentSessionsForWorktree(WT)).toBe(0)
+
+    // An older frame races in. Rejecting it is itself backed by the accepted
+    // v2 view, so the worktree settles even though nothing new landed.
+    await publish(findSubscription('session.tabs.subscribeAll'), {
+      type: 'snapshot',
+      ...makeHostSnapshot(WT, HOST_SURFACE_ID, HOST_PARENT_TAB_ID)
+    })
+
+    expect(hasHostSessionMirrorHydrated(ENV, WT)).toBe(true)
+    expectReplayedResume(paneKey, WT, 'codex-session-stale-settle')
+  })
+})
+
+describe('a deferred visibility-resume repair patch', () => {
+  installFrameOrderingHarness({ fakeTimers: true })
+
+  it('settles the omitted worktree its tombstone retracts', async () => {
+    renderHook(() => useWebSessionTabsSync())
+    await act(settle)
+
+    // Track both worktrees so the resume inventory can omit one of them.
+    await publish(findSubscription('session.tabs.subscribeAll'), {
+      type: 'snapshot',
+      ...makeHostSnapshot(WT, HOST_SURFACE_ID, HOST_PARENT_TAB_ID)
+    })
+    await publish(findSubscription('session.tabs.subscribeAll'), {
+      type: 'snapshot',
+      ...makePtylessHostSnapshot(BG_WT, `host-tab-2::${LEAF_ID}`, 'host-tab-2')
+    })
+    act(() => clearHostSessionMirrorHydration(ENV))
+    const paneKey = seedSleepingRecord(BG_MIRROR_TAB_ID, BG_WT, 'codex-session-tombstone')
+    expect(resumeSleepingAgentSessionsForWorktree(BG_WT)).toBe(0)
+
+    act(() => {
+      setDocumentVisibility('hidden')
+      vi.advanceTimersByTime(WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS)
+      setDocumentVisibility('visible')
+      vi.advanceTimersByTime(WEB_SESSION_TABS_VISIBILITY_RESUME_STAGGER_MS)
+    })
+    await act(settle)
+
+    // The resume inventory omits the background worktree, and recovery drops
+    // the one snapshot it did publish — so the inventory itself settles nothing.
+    mocks.recoverSnapshot.mockImplementation(
+      async (_state: unknown, snapshot: RuntimeMobileSessionTabsResult) =>
+        snapshot.worktree === WT ? null : snapshot
+    )
+    await publish(findSubscription('session.tabs.subscribeAll', 1), {
+      type: 'snapshots',
+      snapshots: [
+        { ...makeHostSnapshot(WT, HOST_SURFACE_ID, HOST_PARENT_TAB_ID), snapshotVersion: 2 }
+      ]
+    })
+
+    // The tombstone repair DID reach the store: the background mirror retracted,
+    // which is the host answering — the parked resume is finally justified.
+    expect(tabIds(BG_WT)).not.toContain(BG_MIRROR_TAB_ID)
+    expectReplayedResume(paneKey, BG_WT, 'codex-session-tombstone')
+  })
+})
+
+describe('the eager post-create list answers for its worktree', () => {
+  installFrameOrderingHarness()
+
+  it('releases the pane its retraction decides', async () => {
+    const paneKey = seedSleepingRecord(MIRROR_TAB_ID, WT, 'codex-session-eager-refresh')
+    expect(resumeSleepingAgentSessionsForWorktree(WT)).toBe(0)
+
+    runtimeCall.mockImplementation((request: { method: string }) =>
+      request.method === 'session.tabs.list'
+        ? Promise.resolve({
+            id: 'list',
+            ok: true as const,
+            result: makeHostSnapshot(WT, OTHER_HOST_SURFACE_ID, OTHER_HOST_PARENT_TAB_ID),
+            _meta: { runtimeId: 'runtime-a' }
+          })
+        : new Promise(() => {})
+    )
+    await act(async () => {
+      await refreshWebRuntimeSessionTabsSnapshot(ENV, WT)
+      await settle()
+    })
+
+    // The list retracted the mirror tab and its patch landed, so this worktree
+    // has its verdict: the parked resume must drain, not wait for a stream.
+    expect(tabIds(WT)).not.toContain(MIRROR_TAB_ID)
+    expectReplayedResume(paneKey, WT, 'codex-session-eager-refresh')
   })
 })
