@@ -10,21 +10,32 @@
  * tab inherits the RENDERER's publicationEpoch, so epoch alone cannot save it.
  *
  * The window is causal: the old gate was `getAvailableAuthoritativeWindow() ===
- * null`, so a windowless host does NOT reproduce this. The renderer-first
- * publication is equally load-bearing — on a workspace only the host published,
- * the snapshot carries a headless epoch, which is preserved unconditionally.
- * Both preconditions are asserted, not assumed.
+ * null`, so a windowless host does NOT reproduce this (see the serve parity
+ * arm). The renderer-first publication is equally load-bearing — on a workspace
+ * only the host published, the snapshot carries a headless epoch, which is
+ * preserved unconditionally. Both preconditions are asserted, not assumed.
  *
- * SCOPE, measured three ways on this identical oracle — one renderer graph
- * sync after four back-to-back `terminal.create` calls plus a 12s gap:
- *   main@6e25a90085           tabs 1-4 all pruned
- *   branch, host fix removed  tabs 1-4 all pruned
- *   branch                    tab 1 pruned, tabs 2-4 retained
- * The host binding demonstrably improves retention, and something still retires
- * the oldest host-created tab. This spec therefore pins only what the branch
- * actually fixes: a dispatch whose sync follows it directly. The surviving
- * defect is tracked separately, deliberately NOT encoded here as an
- * expectation — a `test.fail` cannot tell a real prune from a setup error.
+ * SCOPE — retention on this branch is PARTIAL, and what decides it is not time.
+ * Measured a variable at a time on this oracle, one renderer graph sync after a
+ * `terminal.create`:
+ *
+ *   preceding host terminal | clientMutationId | gap    | retained
+ *   ------------------------------------------------------------
+ *   no                      | no               | 0s     | NO
+ *   no                      | no               | 12s    | NO
+ *   yes                     | no               | 0s/12s | yes
+ *   no                      | yes              | 0s     | yes
+ *
+ * Two things independently protect the tab: an earlier host-created terminal
+ * existing (even in another workspace), or a `clientMutationId` on the create.
+ * Elapsed time, and whether a paired client has mirrored the tab, are both
+ * irrelevant. On merge-base and with the host fix removed every terminal is
+ * pruned in every shape, so the binding is a real improvement.
+ *
+ * The real `orca terminal create` (src/cli/handlers/terminal.ts) sends no
+ * clientMutationId, so a user's FIRST host-created terminal in a workspace has
+ * neither protector — the reported incident. That is the `fixme` test below,
+ * under separate root-cause investigation.
  *
  * Run:
  *   pnpm exec playwright test tests/e2e/paired-cli-terminal-graph-sync-tab-retention.spec.ts \
@@ -32,7 +43,7 @@
  */
 import { rmSync } from 'node:fs'
 import path from 'node:path'
-import type { Page } from '@stablyai/playwright-test'
+import type { Page, TestInfo } from '@stablyai/playwright-test'
 import {
   toWebTerminalSurfaceTabId,
   WEB_TERMINAL_SURFACE_TAB_PREFIX
@@ -49,6 +60,7 @@ import {
   proveSameLivePty,
   readHostTerminalInventory,
   writeRetentionFixture,
+  type HostCreatedTerminal,
   type HostTerminalInventory,
   type RuntimeRpcCall
 } from './helpers/host-created-terminal-retention-oracle'
@@ -159,14 +171,11 @@ async function readHostInventoryWhenTabAppears(
 
 type RetentionFixture = {
   call: RuntimeRpcCall
-  client: PairedElectronClient
-  rendererTabId: string
   unrelatedWorktreeId: string
   worktreeId: string
 }
 
-/** Everything both tests need in place BEFORE the dispatch under test, so no
- *  setup work sits between that dispatch and the graph sync it races. */
+/** Everything both journeys need in place BEFORE the dispatch under test. */
 async function prepareRetentionFixture(
   orcaPage: Page,
   client: PairedElectronClient
@@ -218,17 +227,28 @@ async function prepareRetentionFixture(
     toWebTerminalSurfaceTabId(rendererTabId),
     'Paired client never mirrored the host renderer terminal tab'
   )
-  return { call, client, rendererTabId, unrelatedWorktreeId, worktreeId }
+  return { call, unrelatedWorktreeId, worktreeId }
 }
 
-test('keeps a host-created CLI terminal when the next dispatch syncs immediately', async ({
-  orcaPage
-}, testInfo) => {
-  test.setTimeout(600_000)
+/**
+ * One `orca terminal create` in the measured workspace, one renderer graph sync,
+ * both signals plus the negative-safety checks.
+ *
+ * `precedingHostTerminal` is the ONLY difference between the two tests, and on
+ * this branch it decides the verdict: the unrelated-workspace control terminal
+ * is created either before the target (protected shape) or after it (the
+ * incident shape, where the target is the first host-created terminal).
+ */
+async function runCliTerminalRetentionJourney(
+  orcaPage: Page,
+  testInfo: TestInfo,
+  clientName: string,
+  precedingHostTerminal: boolean
+): Promise<void> {
   const client = await launchPairedElectronClient(
     await createRuntimeDesktopPairingOffer(orcaPage),
     testInfo,
-    'cli-terminal-graph-sync'
+    clientName
   )
   const hostPageErrors: string[] = []
   const clientPageErrors: string[] = []
@@ -240,26 +260,30 @@ test('keeps a host-created CLI terminal when the next dispatch syncs immediately
     const fixture = await prepareRetentionFixture(orcaPage, client)
     call = fixture.call
     const { unrelatedWorktreeId, worktreeId } = fixture
-
-    // Control in an unrelated workspace, created FIRST so it cannot lengthen the
-    // gap the test under measurement depends on.
-    const unrelated = await createHostCliTerminal(
-      fixture.call,
-      unrelatedWorktreeId,
-      fixturePath,
-      path.join(scratch, 'unrelated-agent.log')
-    )
-    createdHandles.push(unrelated.handle)
     const baselineStrip = await readClientTerminalStrip(client.page, worktreeId)
 
-    // `orca terminal create`, then the graph sync a following dispatch drives.
+    const createUnrelated = async (): Promise<HostCreatedTerminal> => {
+      const terminal = await createHostCliTerminal(
+        fixture.call,
+        unrelatedWorktreeId,
+        fixturePath,
+        path.join(scratch, `${clientName}-unrelated.log`)
+      )
+      createdHandles.push(terminal.handle)
+      return terminal
+    }
+
+    const preceding = precedingHostTerminal ? await createUnrelated() : null
     const cli = await createHostCliTerminal(
       fixture.call,
       worktreeId,
       fixturePath,
-      path.join(scratch, 'cli-agent.log')
+      path.join(scratch, `${clientName}-target.log`)
     )
     createdHandles.push(cli.handle)
+    const unrelated = preceding ?? (await createUnrelated())
+
+    // The graph sync a following CLI dispatch drives.
     const secondRendererTabId = await createHostRendererTerminalTab(orcaPage, worktreeId)
 
     // SIGNAL 1 — the frame carrying the new renderer tab is the same merge that
@@ -313,7 +337,6 @@ test('keeps a host-created CLI terminal when the next dispatch syncs immediately
       await client.getDirectSshAttemptTargetIds(),
       'the paired client must reach the host through the pairing, never a local connection'
     ).toEqual([])
-
     expect(hostPageErrors, 'host renderer raised an uncaught error').toEqual([])
     expect(clientPageErrors, 'paired client renderer raised an uncaught error').toEqual([])
   } finally {
@@ -322,4 +345,29 @@ test('keeps a host-created CLI terminal when the next dispatch syncs immediately
     }
     await client.dispose()
   }
+}
+
+test('keeps a host-created CLI terminal when an earlier host-created terminal exists', async ({
+  orcaPage
+}, testInfo) => {
+  test.setTimeout(600_000)
+  await runCliTerminalRetentionJourney(orcaPage, testInfo, 'cli-terminal-graph-sync', true)
+})
+
+// The reported incident, and the shape the real CLI takes: `orca terminal
+// create` sends no clientMutationId, so a user's FIRST host-created terminal in
+// a workspace has neither protector, and the next renderer graph sync prunes it.
+// Confirmed red on this branch by running this exact body with the annotation
+// removed — SIGNAL 1 fires with the target absent from the host inventory.
+//
+// `fixme`, not `fail`: a `fail` test is satisfied by ANY failure, and this file
+// has twice aborted in fixture setup ("seeded e2e worktrees did not load"), so
+// `fail` would keep reporting success while measuring nothing. `fixme` records
+// the gap without pretending to assert it. Delete the annotation once the
+// residual defect under separate root-cause investigation is fixed.
+test.fixme('keeps a host-created CLI terminal that is the first one on the host', async ({
+  orcaPage
+}, testInfo) => {
+  test.setTimeout(600_000)
+  await runCliTerminalRetentionJourney(orcaPage, testInfo, 'cli-terminal-graph-sync-first', false)
 })
