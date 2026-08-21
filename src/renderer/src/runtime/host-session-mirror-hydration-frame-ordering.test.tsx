@@ -16,12 +16,20 @@ import type { RuntimeMobileSessionTabsResult } from '../../../shared/runtime-typ
 import { makePaneKey } from '../../../shared/stable-pane-id'
 import { toWebTerminalSurfaceTabId } from '../../../shared/terminal-surface-id'
 import type * as WebRuntimeSessionModule from './web-runtime-session'
+import type * as WebSessionTerminalHandleEventsModule from './web-session-terminal-handle-events'
 
 const mocks = vi.hoisted(() => ({
   createTerminal: vi.fn(),
+  // Inert by default: nothing here subscribes to web session terminal handles.
+  queueAcceptedSnapshot: vi.fn(),
   recoverSnapshot: vi.fn(),
   runtimeSessionMirrorEnvironmentKey: vi.fn()
 }))
+
+vi.mock('./web-session-terminal-handle-events', async (importOriginal) => {
+  const actual = await importOriginal<typeof WebSessionTerminalHandleEventsModule>()
+  return { ...actual, queueAcceptedWebSessionTerminalSnapshot: mocks.queueAcceptedSnapshot }
+})
 
 vi.mock('./use-runtime-session-mirror-environment-key', () => ({
   useRuntimeSessionMirrorEnvironmentKey: mocks.runtimeSessionMirrorEnvironmentKey
@@ -44,12 +52,15 @@ import {
 } from '@/components/terminal/background-terminal-worktree-mount'
 import { resumeSleepingAgentSessionsForWorktree } from '@/lib/resume-sleeping-agent-session'
 import { wakeSleepingAgentsForWorktreeInBackground } from '@/lib/wake-sleeping-agents-in-background'
+import { resetStaleDocumentVisibilityForTesting } from '@/components/terminal-pane/stale-document-visibility'
 import { replaceRuntimeEnvironmentRevisions } from './runtime-environment-revision'
 import { resetHostSessionMirrorHydrationForTests } from './host-session-mirror-hydration'
 import {
   resetWebSessionTabsSnapshotFreshnessForTests,
-  useWebSessionTabsSync
+  useWebSessionTabsSync,
+  WEB_SESSION_TABS_VISIBILITY_RESUME_STAGGER_MS
 } from './web-session-tabs-sync'
+import { WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS } from './window-visibility-subscription-parking'
 
 const ENV = 'env-abfee683'
 const REPO_ID = 'repo-1'
@@ -243,12 +254,17 @@ function seedSleepingRecord(tabId: string, worktreeId: string, sessionId: string
   return paneKey
 }
 
-function findSubscription(method: string): RuntimeSubscription {
-  const subscription = subscriptions.find(({ request }) => request.method === method)
+function findSubscription(method: string, occurrence = 0): RuntimeSubscription {
+  const subscription = subscriptions.filter(({ request }) => request.method === method)[occurrence]
   if (!subscription) {
-    throw new Error(`Missing ${method} subscription`)
+    throw new Error(`Missing ${method} subscription ${occurrence}`)
   }
   return subscription
+}
+
+function setDocumentVisibility(state: 'visible' | 'hidden'): void {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state })
+  document.dispatchEvent(new Event('visibilitychange'))
 }
 
 async function publish(subscription: RuntimeSubscription, result: unknown): Promise<void> {
@@ -622,5 +638,83 @@ describe('a parked wake replay keeps the mount contract of its caller', () => {
     // Why: the replayed tab is created activate:false, so nothing else mounts it
     // and its queued `--resume` never reaches a PTY.
     expect(takePendingBackgroundTerminalWorktreeMount(BG_WT)?.tabIds).toEqual([launchedTabId])
+  })
+})
+
+describe('an inventory whose post-patch bookkeeping throws', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    subscriptions.length = 0
+    runtimeCall.mockClear().mockImplementation(() => new Promise(() => {}))
+    runtimeSubscribe.mockClear()
+    mocks.createTerminal.mockReset().mockResolvedValue(undefined)
+    mocks.queueAcceptedSnapshot.mockReset()
+    mocks.recoverSnapshot.mockReset().mockImplementation(async (_state, snapshot) => snapshot)
+    mocks.runtimeSessionMirrorEnvironmentKey.mockReset().mockReturnValue(MIRROR_KEY)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { runtimeEnvironments: { call: runtimeCall, subscribe: runtimeSubscribe } }
+    })
+    setDocumentVisibility('visible')
+    resetWebSessionTabsSnapshotFreshnessForTests()
+    resetHostSessionMirrorHydrationForTests()
+    seedState()
+  })
+
+  afterEach(() => {
+    cleanup()
+    useAppStore.setState(initialState, true)
+    replaceRuntimeEnvironmentRevisions([])
+    resetWebSessionTabsSnapshotFreshnessForTests()
+    resetHostSessionMirrorHydrationForTests()
+    resetStaleDocumentVisibilityForTesting()
+    setDocumentVisibility('visible')
+    vi.useRealTimers()
+  })
+
+  it('still settles the frames that reached the store', async () => {
+    renderHook(() => useWebSessionTabsSync())
+    await act(settle)
+
+    // Seeds this worktree's freshness — so the resume inventory reads as
+    // unchanged for it — without settling the environment latch.
+    await publish(findSubscription('session.tabs.subscribe'), {
+      type: 'snapshot',
+      ...makeHostSnapshot(WT, HOST_SURFACE_ID, HOST_PARENT_TAB_ID)
+    })
+    const paneKey = seedSleepingRecord(BG_MIRROR_TAB_ID, BG_WT, 'codex-session-bookkeeping-throw')
+    expect(resumeSleepingAgentSessionsForWorktree(BG_WT)).toBe(0)
+
+    act(() => {
+      setDocumentVisibility('hidden')
+      vi.advanceTimersByTime(WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS)
+      setDocumentVisibility('visible')
+      vi.advanceTimersByTime(WEB_SESSION_TABS_VISIBILITY_RESUME_STAGGER_MS)
+    })
+    await act(settle)
+
+    // Bookkeeping for the unchanged worktree fails AFTER the background
+    // worktree's patch landed — a healthy host that has already spoken.
+    mocks.queueAcceptedSnapshot.mockImplementation((snapshot: RuntimeMobileSessionTabsResult) => {
+      if (snapshot.worktree === WT) {
+        throw new Error('accepted-handle queue failed')
+      }
+    })
+    await publish(findSubscription('session.tabs.subscribeAll', 1), {
+      type: 'snapshots',
+      snapshots: [
+        makeHostSnapshot(WT, HOST_SURFACE_ID, HOST_PARENT_TAB_ID),
+        makeHostSnapshot(BG_WT, OTHER_HOST_SURFACE_ID, OTHER_HOST_PARENT_TAB_ID)
+      ]
+    })
+
+    // Only the post-patch site queues the unchanged worktree, so this proves
+    // the throw landed after the background patch reached the store.
+    expect(mocks.queueAcceptedSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ worktree: WT }),
+      ENV
+    )
+    expect(tabIds(BG_WT)).not.toContain(BG_MIRROR_TAB_ID)
+    expectReplayedResume(paneKey, BG_WT, 'codex-session-bookkeeping-throw')
   })
 })

@@ -4443,6 +4443,14 @@ export function useWebSessionTabsSync(): void {
                             freshSnapshots
                           )
                         }
+                        // Why: the evidence is complete here — a throw in the
+                        // bookkeeping below cannot un-land the patch above.
+                        settleHydration = () =>
+                          settleHostSessionMirrorForAppliedInventory(
+                            environmentId,
+                            applicable.map(({ snapshot }) => snapshot.worktree),
+                            event.snapshots.length
+                          )
                         const freshSnapshotSet = new Set(freshSnapshots)
                         for (const { index, snapshot } of applicable) {
                           if (unchangedVisibilityResumeSnapshots[index]) {
@@ -4465,12 +4473,6 @@ export function useWebSessionTabsSync(): void {
                           inventoryReceivedFrame,
                           missingWorktrees
                         )
-                        settleHydration = () =>
-                          settleHostSessionMirrorForAppliedInventory(
-                            environmentId,
-                            applicable.map(({ snapshot }) => snapshot.worktree),
-                            event.snapshots.length
-                          )
                       }
                     })
                     .catch((error) => {
