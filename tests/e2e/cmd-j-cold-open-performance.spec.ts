@@ -7,6 +7,7 @@ const WORKSPACE_COUNT = 800
 const {
   rendererStoreDispatchMs: MAX_STORE_DISPATCH_MS,
   firstVisibleResultsMs: MAX_FIRST_VISIBLE_MS,
+  coldIndexReadyMs: MAX_COLD_INDEX_READY_MS,
   coldImmediateQueryResultsMs: MAX_COLD_IMMEDIATE_QUERY_MS,
   maxFrameGapMs: MAX_FRAME_GAP_MS
 } = PALETTE_INTERACTION_BUDGET
@@ -317,7 +318,7 @@ async function waitForStableFrameCadence(page: Page): Promise<void> {
           const now = performance.now()
           stableFrames = now - previousFrameAt <= 25 ? stableFrames + 1 : 0
           previousFrameAt = now
-          if (stableFrames >= 6) {
+          if (stableFrames >= 12) {
             resolve()
             return
           }
@@ -342,7 +343,22 @@ async function expectHostQualifiedNeedleOrder(dialog: Locator): Promise<void> {
   expect(matchingTexts[1]).toContain('acme/orca-local')
 }
 
-test.describe('Cmd-J cold accumulated-workspace performance', () => {
+async function expectHostSpecificNeedle(
+  dialog: Locator,
+  query: string,
+  expectedName: string,
+  expectedRepo: string
+): Promise<void> {
+  await dialog.getByPlaceholder(/Search chats, terminals, worktrees/).fill(query)
+  const matchingRows = dialog
+    .locator('[cmdk-item]:has([data-slot="palette-worktree-name"])')
+    .filter({ hasText: 'Needle' })
+  await expect(matchingRows).toHaveCount(1)
+  await expect(matchingRows).toContainText(expectedName)
+  await expect(matchingRows).toContainText(expectedRepo)
+}
+
+test.describe('Cmd-J cold accumulated-workspace performance @headful', () => {
   test.beforeEach(async ({ orcaPage }) => {
     await waitForSessionReady(orcaPage)
     await waitForActiveWorktree(orcaPage)
@@ -381,14 +397,28 @@ test.describe('Cmd-J cold accumulated-workspace performance', () => {
     expect(indexedQuery).not.toBeNull()
 
     await expectHostQualifiedNeedleOrder(dialog)
+    await expectHostSpecificNeedle(
+      dialog,
+      'accumulated-0399-remote',
+      TARGET_REMOTE_NAME,
+      'acme/orca-remote'
+    )
+    await expectHostSpecificNeedle(
+      dialog,
+      'accumulated-0399-local',
+      TARGET_LOCAL_NAME,
+      'acme/orca-local'
+    )
 
     await togglePaletteFromMain(electronApp)
-    await expect(dialog).not.toBeVisible()
-    // Reopen inside the close linger so documents and matcher indexes remain mounted.
-    await orcaPage.waitForTimeout(100)
+    await expect(dialog).toHaveAttribute('data-state', 'closed')
     await beginProbe(orcaPage, [TARGET_REMOTE_NAME, TARGET_LOCAL_NAME])
     await togglePaletteFromMain(electronApp)
     await expect(dialog).toBeVisible()
+    await expect(dialog.locator('[data-worktree-index-pending]')).toHaveAttribute(
+      'data-worktree-index-pending',
+      'false'
+    )
     await expect.poll(() => readMetrics(orcaPage), { timeout: 10_000 }).not.toBeNull()
     const warmReopen = await readMetrics(orcaPage)
     expect(warmReopen).not.toBeNull()
@@ -414,10 +444,12 @@ test.describe('Cmd-J cold accumulated-workspace performance', () => {
     expect(coldOpen!.storeDispatchMs).not.toBeNull()
     expect(coldOpen!.storeDispatchMs!).toBeLessThanOrEqual(MAX_STORE_DISPATCH_MS)
     expect(coldOpen!.firstVisibleMs).toBeLessThanOrEqual(MAX_FIRST_VISIBLE_MS)
+    expect(coldOpen!.indexReadyMs).toBeLessThanOrEqual(MAX_COLD_INDEX_READY_MS)
     expect(coldOpen!.maxFrameGapMs).toBeLessThanOrEqual(MAX_FRAME_GAP_MS)
     expect(indexedQuery!.firstVisibleMs).toBeLessThanOrEqual(MAX_FIRST_VISIBLE_MS)
     expect(indexedQuery!.maxFrameGapMs).toBeLessThanOrEqual(MAX_FRAME_GAP_MS)
     expect(warmReopen!.firstVisibleMs).toBeLessThanOrEqual(MAX_FIRST_VISIBLE_MS)
+    expect(warmReopen!.indexReadyMs).toBe(warmReopen!.firstVisibleMs)
     expect(warmReopen!.maxFrameGapMs).toBeLessThanOrEqual(MAX_FRAME_GAP_MS)
 
     await orcaPage.evaluate(() => (window as PerformanceProbeWindow).__cmdJPerformanceProbe?.stop())

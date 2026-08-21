@@ -2,6 +2,7 @@
 
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as ReactI18Next from 'react-i18next'
 import type { Repo } from '../../../shared/repo-types'
@@ -280,12 +281,13 @@ describe('WorktreeJumpPalette interleaved primary sections', () => {
     await act(async () => {
       setCommandQuery?.('perf')
     })
-    await flushEffects()
+    await waitFor(() => {
+      const rows = getPrimaryRowsBySectionHeader()
+      expect(rows.filter((row) => row.rowId.startsWith('workspace-tab:'))).toHaveLength(8)
+      expect(rows.filter((row) => row.rowId.startsWith('worktree:'))).toHaveLength(5)
+    })
 
     const rows = getPrimaryRowsBySectionHeader()
-    // Why the counts: both remainders must still render, just under a re-emitted header.
-    expect(rows.filter((row) => row.rowId.startsWith('workspace-tab:'))).toHaveLength(8)
-    expect(rows.filter((row) => row.rowId.startsWith('worktree:'))).toHaveLength(5)
     for (const { header, rowId } of rows) {
       expect(header).toBe(rowId.startsWith('workspace-tab:') ? 'Open Tabs' : 'Worktrees')
     }
@@ -297,7 +299,11 @@ describe('WorktreeJumpPalette interleaved primary sections', () => {
     await act(async () => {
       setCommandQuery?.('perf')
     })
-    await flushEffects()
+    await waitFor(() => {
+      const rows = getPrimaryRowsBySectionHeader()
+      expect(rows.filter((row) => row.rowId.startsWith('workspace-tab:'))).toHaveLength(8)
+      expect(rows.filter((row) => row.rowId.startsWith('worktree:'))).toHaveLength(5)
+    })
 
     const renderedIds = Array.from(
       testContainer.querySelectorAll<HTMLElement>('[data-command-item]')
@@ -336,10 +342,11 @@ describe('WorktreeJumpPalette interleaved primary sections', () => {
     await act(async () => {
       setCommandQuery?.('ubuntu')
     })
-    await flushEffects()
-
-    const rows = getPrimaryRowsBySectionHeader()
-    expect(rows).toEqual([{ header: 'Open Tabs', rowId: 'workspace-tab:tab-0' }])
+    await waitFor(() => {
+      expect(getPrimaryRowsBySectionHeader()).toEqual([
+        { header: 'Open Tabs', rowId: 'workspace-tab:tab-0' }
+      ])
+    })
     expect(testContainer.textContent).toContain('Open Tabs')
     expect(testContainer.textContent).not.toContain('Worktrees')
   })

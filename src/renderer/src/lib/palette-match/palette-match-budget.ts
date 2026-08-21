@@ -28,6 +28,7 @@ export const PALETTE_MATCH_BUDGET = {
 export const PALETTE_INTERACTION_BUDGET = {
   rendererStoreDispatchMs: 50,
   firstVisibleResultsMs: 100,
+  coldIndexReadyMs: 350,
   coldImmediateQueryResultsMs: 250,
   /** Five 60 Hz frames, including the palette's initial layout and focus commit. */
   maxFrameGapMs: 84
