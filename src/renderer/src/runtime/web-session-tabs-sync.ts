@@ -4659,36 +4659,47 @@ export function useWebSessionTabsSync(): void {
         hasLiveLocalPty,
         skipWakeRespawn: shouldSkipWebRuntimeWakeTerminalRespawn(activeWorktreeId)
       })
-      if (fresh) {
-        const replayed = isRuntimeSubscriptionReplayResponse(response)
-        applyWebSessionTabsStorePatch(
-          (state) => applyWebSessionTabsSnapshot(state, recovered, environmentId),
-          recovered,
-          event.type === 'updated' && !replayed
-        )
-        recordVisibilityResumeSnapshotRef.current(environmentId, recovered, receivedFrame)
+      // Why: a stale frame is backed by an equal/newer store view already accepted.
+      let reachedStore = !fresh
+      try {
+        if (fresh) {
+          const replayed = isRuntimeSubscriptionReplayResponse(response)
+          applyWebSessionTabsStorePatch(
+            (state) => applyWebSessionTabsSnapshot(state, recovered, environmentId),
+            recovered,
+            event.type === 'updated' && !replayed
+          )
+          reachedStore = true
+          recordVisibilityResumeSnapshotRef.current(environmentId, recovered, receivedFrame)
+        }
+        if (isCurrent() && shouldBootstrapInitialTerminal) {
+          requestedInitialTerminal = true
+          await createWebRuntimeSessionTerminal({
+            worktreeId: activeWorktreeId,
+            environmentId,
+            activate: true
+          })
+        } else if (
+          isCurrent() &&
+          shouldRespawnAfterWake &&
+          beginWebRuntimeWakeTerminalRespawn(activeWorktreeId)
+        ) {
+          requestedRespawnAfterWake = true
+          await createWebRuntimeSessionTerminal({
+            worktreeId: activeWorktreeId,
+            environmentId,
+            activate: true,
+            selectWorktree: false
+          }).finally(() => endWebRuntimeWakeTerminalRespawn(activeWorktreeId))
+        }
+      } catch (error) {
+        // Why: the spawn is a side effect of the frame, not part of it — failing
+        // after the patch landed cannot un-land it, and the host is still healthy.
+        if (isCurrent()) {
+          console.warn('[web-session-tabs-sync] snapshot follow-up failed:', error)
+        }
       }
-      if (isCurrent() && shouldBootstrapInitialTerminal) {
-        requestedInitialTerminal = true
-        await createWebRuntimeSessionTerminal({
-          worktreeId: activeWorktreeId,
-          environmentId,
-          activate: true
-        })
-      } else if (
-        isCurrent() &&
-        shouldRespawnAfterWake &&
-        beginWebRuntimeWakeTerminalRespawn(activeWorktreeId)
-      ) {
-        requestedRespawnAfterWake = true
-        await createWebRuntimeSessionTerminal({
-          worktreeId: activeWorktreeId,
-          environmentId,
-          activate: true,
-          selectWorktree: false
-        }).finally(() => endWebRuntimeWakeTerminalRespawn(activeWorktreeId))
-      }
-      return true
+      return reachedStore
     }
     const disposeSubscription = installWindowVisibilitySubscriptionParking([
       {
