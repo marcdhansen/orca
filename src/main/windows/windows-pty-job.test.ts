@@ -77,17 +77,18 @@ describe('listPtyJobProcessIds', () => {
     expect(listPtyJobProcessIds(ptyWithHandle(1))).toEqual([107184, 91480])
   })
 
-  it('distinguishes an empty tree from an unanswerable one', () => {
-    // Empty is a real answer -- the tree is gone. Null is the absence of one.
-    // Conflating them is how a registry kept reporting a dead terminal as
-    // connected (#15549).
+  it('reports null when there is no answer to give', () => {
+    // Null is 'unverifiable', never 'they died'. A dead tree also reads null,
+    // because node-pty drops its handle record on exit -- so a caller that
+    // treats null as proof of death would be right by accident here and wrong
+    // on a host that refused the job assignment.
+    __setConptyJobNativeForTests(() => null)
+    expect(listPtyJobProcessIds(ptyWithHandle(1))).toBeNull()
+
     __setConptyJobNativeForTests(() => ({
       terminateJob: vi.fn(),
-      listJobProcessIds: vi.fn().mockReturnValue([])
+      listJobProcessIds: vi.fn().mockReturnValue(null)
     }))
-    expect(listPtyJobProcessIds(ptyWithHandle(1))).toEqual([])
-
-    __setConptyJobNativeForTests(() => null)
     expect(listPtyJobProcessIds(ptyWithHandle(1))).toBeNull()
   })
 })

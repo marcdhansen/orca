@@ -110,14 +110,15 @@ describeOnWindows('ConPTY job ownership', () => {
     expect(isAlive(grandchildPid)).toBe(false)
   }, 60_000)
 
-  it('reports an emptied tree as empty, not as unavailable', async () => {
-    // Empty is evidence the pane is gone; null is the absence of evidence.
-    // A registry that cannot tell them apart keeps reporting dead terminals as
-    // connected (#15549).
+  it('stops answering once the tree is gone, rather than claiming it is empty', async () => {
+    // Measured, not assumed: node-pty drops its handle record and closes the
+    // job when the shell exits, so a dead tree is unverifiable here rather than
+    // observably empty. Callers must not read null as proof of death -- the
+    // verdict vocabulary in docs/reference/ssh-execution-boundary.md applies.
     const { proc } = await spawnShellWithDetachedGrandchild()
     terminatePtyJob(proc)
     await sleep(1_500)
 
-    expect(listPtyJobProcessIds(proc)).toEqual([])
+    expect(listPtyJobProcessIds(proc)).toBeNull()
   }, 60_000)
 })

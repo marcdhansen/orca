@@ -95,7 +95,8 @@ the shell can spawn anything. Assigning after the fact leaves a window in which
 a fast child escapes the job.
 
 - `terminatePtyJob(proc)` — one `TerminateJobObject` call for the whole tree.
-- `listPtyJobProcessIds(proc)` — the live pids, straight from the kernel.
+- `listPtyJobProcessIds(proc)` — the live pids under a tree that is still
+  tracked, including children that detached from the console.
 
 Measured on Windows 11 against a shell whose grandchild was spawned `detached`:
 job membership was `[shell, grandchild]` and one call killed both. Neither a
@@ -108,6 +109,12 @@ hosting process dies without unwinding. The job belongs to the **terminal
 daemon**, not to the app: an app-main crash leaves sessions alive (asserted by
 `.github/workflows/win-crash-survival-e2e.yml`), while a daemon death now reaps
 its shells instead of stranding them (#9195, #10415).
+
+Once the shell exits, node-pty drops its handle record and closes the job, so a
+terminated tree reports `null` rather than `[]`. Null means *unverifiable* in
+the sense of [`ssh-execution-boundary.md`](./ssh-execution-boundary.md) — no job
+support, not a ConPTY, or no longer tracked. It is never evidence that
+processes died.
 
 Both functions report `unavailable` / `null` rather than a false success when a
 pty has no job — an outer job without `JOB_OBJECT_LIMIT_BREAKAWAY_OK` (some EDR

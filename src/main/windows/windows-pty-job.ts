@@ -90,12 +90,18 @@ export function terminatePtyJob(proc: IPty): JobTerminationOutcome {
 }
 
 /**
- * Pids still alive in a PTY's tree, or null when the tree has no job.
+ * Pids still alive in a PTY's tree, or null when there is no answer.
  *
- * An empty array is a real answer — the tree is gone — and is the evidence a
- * stale JS map cannot provide. Null is the absence of an answer. Callers must
- * keep the two apart: conflating them is how a registry kept reporting a
- * terminal as connected after its process had exited (#15549).
+ * Measured on Windows 11: once the shell exits, node-pty drops its handle
+ * record and closes the job, so a terminated tree reports **null**, not `[]`.
+ * Null therefore means "unverifiable" in the sense of
+ * docs/reference/ssh-execution-boundary.md — this build has no job support,
+ * the terminal is not a ConPTY, or it is no longer tracked. It is never
+ * evidence that processes died.
+ *
+ * The value this does add is descendant liveness for a tree that IS still
+ * tracked: a pane whose shell is alive can be asked what is running under it,
+ * including children that detached from the console.
  */
 export function listPtyJobProcessIds(proc: IPty): readonly number[] | null {
   const id = ptyHandleId(proc)
