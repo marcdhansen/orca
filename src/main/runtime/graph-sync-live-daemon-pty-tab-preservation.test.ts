@@ -1,26 +1,17 @@
 /**
- * Aug-20 "windows 2" incident: a host app restart (and later, every orca-cli
- * dispatch) left live agent terminals running with NO TAB — visible only via
+ * Aug-20 "windows 2" incident: a CLI-created terminal on a host with an
+ * attached window was left running with NO TAB, visible only via
  * `orca terminal list`.
  *
- * Causal boundary: shouldPreserveHeadlessMobileSessionTab can classify a
- * renderer-omitted terminal as runtime-owned only via
- *  (a) a headless-built publication epoch,
- *  (b) pty.runtimeSessionOwned, or
- *  (c) a serve-/ssh-shaped ptyId — the daemon form <worktreeId>@@<uuid> is
- *      deliberately excluded.
- * A CLI-created terminal on a host whose window is attached used to get none of
- * the three: createTerminal gated persistHostSessionBinding on the absence of an
- * attached window, so the terminal carried neither a persisted tab nor runtime
- * ownership. While its PTY was provably CONNECTED the renderer graph sync pruned
- * its snapshot — and the client clears the strip on the removal frame.
+ * Why it was unclassifiable: shouldPreserveHeadlessMobileSessionTab calls a
+ * renderer-omitted terminal runtime-owned only via a headless-built publication
+ * epoch, pty.runtimeSessionOwned, or a serve-/ssh-shaped ptyId — and the daemon
+ * form <worktreeId>@@<uuid> is deliberately excluded. createTerminal is
+ * host-initiated by construction, so it now always persists the binding and
+ * takes ownership; a renderer de-persist (a user close) releases it again.
  *
- * createTerminal is host-initiated by construction, so it now always persists
- * the binding and takes runtime ownership; the renderer de-persisting the tab
- * (a user close) is what releases it again — the STA-4593 invariant.
- *
- * Liveness vocabulary: these tests assert only on a PTY the runtime records as
- * connected (live) versus one it recorded as exited. Never on "unverifiable".
+ * Liveness vocabulary: these assert only on a PTY the runtime records as
+ * connected (live) or exited. Never on "unverifiable".
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getDefaultWorkspaceSession } from '../../shared/constants'

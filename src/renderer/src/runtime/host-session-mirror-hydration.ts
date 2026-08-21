@@ -1,19 +1,14 @@
 import { getRuntimeEnvironmentConnectionGeneration } from '@/store/slices/runtime-status'
 
 /**
- * Tracks whether a paired runtime's session-tab mirror has concluded a
- * hydration pass, so client-side recovery can tell "the host reported no PTY"
- * apart from "the host has not answered yet".
+ * Tells "the host reported no PTY" apart from "the host has not answered yet"
+ * for mirrored `web-terminal-*` panes, whose PTY handle lands a round trip
+ * after the tab. Reading that gap as pane death relaunched agents the host was
+ * still running (codex `-32600 already has an active writer`).
  *
- * Why: mirrored `web-terminal-*` panes carry no local PTY handle until the host
- * snapshot lands, and treating that gap as pane death relaunched agents the
- * host was still running (codex `-32600 already has an active writer`).
- *
- * Evidence arrives at two granularities and they are NOT interchangeable. A
- * full inventory (listAll, or the global stream's `snapshots` frame) speaks for
- * every worktree, because absence from it is itself a verdict. A single-worktree
- * frame speaks only for its own worktree, so it must not release panes parked on
- * a background workspace whose snapshot has not arrived.
+ * The two granularities are NOT interchangeable: a full inventory speaks for
+ * every worktree because absence from it is itself a verdict, while a
+ * single-worktree frame says nothing about a background workspace.
  */
 
 type ParkedMirrorWaiter = { environmentId: string; worktreeId: string; run: () => void }
