@@ -18,6 +18,10 @@ import { createRequire } from 'node:module'
  * A job object replaces the inference with a handle. node-pty puts each shell
  * into its own job at creation, before it can spawn anything, so membership is
  * the kernel's answer rather than ours.
+ *
+ * The job is not kill-on-close: it makes an explicit teardown exact, and
+ * deliberately does not change what a clean shell exit means for anything the
+ * user backgrounded.
  */
 
 const requireFromMain = createRequire(__filename)

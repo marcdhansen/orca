@@ -430,7 +430,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
  }
  #endif
 diff --git a/src/win/conpty.cc b/src/win/conpty.cc
-index 7b286d3d644c26141df516929703aa6e129df4b2..4ae9ddec6ac3e9fdaa380000d3017bbb394f22d6 100644
+index 7b286d3d644c26141df516929703aa6e129df4b2..a1a63d6380ba5b0a669339435064b9f51e0706dc 100644
 --- a/src/win/conpty.cc
 +++ b/src/win/conpty.cc
 @@ -46,6 +46,11 @@ struct pty_baton {
@@ -449,9 +449,9 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ae9ddec6ac3e9fdaa380000d3017bbb
      GetExitCodeProcess(baton->hShell, (LPDWORD)(&exit_event->exit_code));
      // Clean up handles
      CloseHandle(baton->hShell);
-+    // Orca: closing the last job handle is what reaps whatever the shell left
-+    // behind. Without this the job outlives the pane and its descendants keep
-+    // running (and keep holding the worktree directory open).
++    // Orca: release the job once the shell is gone. Without kill-on-close this
++    // only frees the handle -- anything the user backgrounded is orphaned, as
++    // it was before this patch.
 +    if (baton->hJob != nullptr) {
 +      CloseHandle(baton->hJob);
 +      baton->hJob = nullptr;
@@ -480,14 +480,14 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ae9ddec6ac3e9fdaa380000d3017bbb
 +  // descendant that reparented, which is why detached agent children outlived
 +  // their pane and held the worktree directory open.
 +  //
-+  // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE means the tree also dies if this host
-+  // process dies without unwinding, so a crashed daemon cannot strand shells.
++  // Deliberately WITHOUT JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE. Measured on
++  // Windows 11: with that flag, closing the handle when the shell exits also
++  // kills whatever the user left running, so typing `exit` in a pane reaped a
++  // `start /b` server that used to survive. This job exists to make an
++  // EXPLICIT teardown exact, not to redefine what a clean exit means.
 +  HANDLE hJob = CreateJobObjectW(nullptr, nullptr);
 +  if (hJob != nullptr) {
-+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION jobLimits{};
-+    jobLimits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-+    if (!SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jobLimits, sizeof(jobLimits)) ||
-+        !AssignProcessToJobObject(hJob, piClient.hProcess)) {
++    if (!AssignProcessToJobObject(hJob, piClient.hProcess)) {
 +      // Why tolerate failure: an outer job without JOB_OBJECT_LIMIT_BREAKAWAY_OK
 +      // (some EDR and container hosts) refuses the assignment. The pty must
 +      // still start; ownership just degrades to the older best-effort path.

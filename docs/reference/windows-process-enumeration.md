@@ -104,11 +104,17 @@ parent-pid walk nor `GetConsoleProcessList` sees that grandchild — it leaves
 the console and reparents, which is what left `claude.exe`/`node.exe`/`cmd.exe`
 holding worktree directories open (#9045, #10475, #10897).
 
-`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` is set, so the tree is also reaped if the
-hosting process dies without unwinding. The job belongs to the **terminal
-daemon**, not to the app: an app-main crash leaves sessions alive (asserted by
-`.github/workflows/win-crash-survival-e2e.yml`), while a daemon death now reaps
-its shells instead of stranding them (#9195, #10415).
+The per-PTY job deliberately does **not** set
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. Measured on Windows 11: with that flag,
+releasing the handle when the shell exits also kills whatever the user left
+running, so typing `exit` in a pane reaped a `start /b` server that used to
+survive. The job exists to make an *explicit* teardown exact, not to redefine
+what a clean exit means.
+
+That means reaping a dead daemon's shells (#9195, #10415) is **not** delivered
+by this job. It needs a separate daemon-level job that the daemon assigns
+itself to at startup; children inherit job membership, so its closure on daemon
+death reaps the shells without touching clean-exit semantics.
 
 Once the shell exits, node-pty drops its handle record and closes the job, so a
 terminated tree reports `null` rather than `[]`. Null means *unverifiable* in
