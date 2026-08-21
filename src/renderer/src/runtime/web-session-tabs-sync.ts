@@ -3607,14 +3607,29 @@ type WebSessionTabsSnapshotOperation = {
   snapshot: RuntimeMobileSessionTabsResult
 }
 
+type DecidedWebSessionTabsSnapshotOperation = WebSessionTabsSnapshotOperation & {
+  decision: WebSessionTabsSnapshotDecision
+}
+
+/** Why: the settle must name the decision the apply ran on, so each operation
+ *  is decided once here instead of again inside the store updater. */
+function decideWebSessionTabsSnapshotOperations(
+  operations: readonly WebSessionTabsSnapshotOperation[]
+): DecidedWebSessionTabsSnapshotOperation[] {
+  return operations.map((operation) => ({
+    ...operation,
+    decision: decideWebSessionTabsSnapshot(operation.snapshot, operation.environmentId)
+  }))
+}
+
 function applyWebSessionTabsSnapshotOperations(
   state: WebSessionTabsSyncState,
-  operations: readonly WebSessionTabsSnapshotOperation[]
+  operations: readonly DecidedWebSessionTabsSnapshotOperation[]
 ): WebSessionTabsSyncState | Partial<WebSessionTabsSyncState> {
   let nextState = state
   let mergedPatch: Partial<WebSessionTabsSyncState> = {}
-  for (const { environmentId, snapshot } of operations) {
-    if (!shouldApplyWebSessionTabsSnapshot(snapshot, environmentId)) {
+  for (const { environmentId, snapshot, decision } of operations) {
+    if (!decision.apply) {
       continue
     }
     const patch = applyWebSessionTabsSnapshot(nextState, snapshot, environmentId)
@@ -3631,17 +3646,27 @@ function applyWebSessionTabsSnapshotOperations(
  *  frame's finishRecovery to settle the mirror latch for its verdicts. */
 export type HostSessionMirrorSettle = () => void
 
+/** A worktree the patch carried, named with the decision its frame's fate came
+ *  from. Requiring the decision is the point: a settle cannot be written for a
+ *  pair whose frame was never decided, so no site can overstate its evidence. */
+export type HostSessionMirrorPatchFrame = {
+  environmentId: string
+  worktreeId: string
+  decision: WebSessionTabsSnapshotDecision
+}
+
 /**
- * The host verdicts a store patch carries. `settles` may name a pair the patch
- * wrote no bytes for ONLY when the store already holds an equal/newer accepted
- * view of it (a stale or unchanged snapshot filtered inside `buildPatch`).
- * `fullInventory` upgrades a completely applied inventory to an
- * environment-wide verdict: absence from it is itself the host answering, but
- * a partial one speaks only for the worktrees whose frames reached the store —
- * the rest wait for the next clean inventory rather than read as retracted.
+ * The host verdicts a store patch carries. Every frame it touched is listed;
+ * only the ones whose decision carries `settlesHostMirror` settle, so a frame
+ * the patch wrote no bytes for settles ONLY when the store already holds an
+ * equal/newer accepted view of it. `fullInventory` upgrades a completely
+ * applied inventory to an environment-wide verdict: absence from it is itself
+ * the host answering, but a partial one speaks only for the worktrees whose
+ * frames reached the store — the rest wait for the next clean inventory rather
+ * than read as retracted.
  */
 export type HostSessionMirrorPatchVerdict = {
-  settles: readonly { environmentId: string; worktreeId: string }[]
+  frames: readonly HostSessionMirrorPatchFrame[]
   fullInventory?: { environmentId: string; publishedSnapshotCount: number }
 }
 
@@ -3649,7 +3674,8 @@ function createHostSessionMirrorSettle(
   verdict: HostSessionMirrorPatchVerdict
 ): HostSessionMirrorSettle {
   return () => {
-    const { settles, fullInventory } = verdict
+    const { frames, fullInventory } = verdict
+    const settles = frames.filter(({ decision }) => decision.settlesHostMirror)
     if (fullInventory && settles.length === fullInventory.publishedSnapshotCount) {
       markHostSessionMirrorHydrated(fullInventory.environmentId)
       return
@@ -3912,11 +3938,11 @@ function loadInitialWebSessionTabs(
         settleHydration = applyWebSessionTabsStorePatch(
           (state) => applyWebSessionTabsSnapshots(state, freshSnapshots, environmentId),
           {
-            settles: applicable.flatMap((snapshot, position) =>
-              decisions[position]!.settlesHostMirror
-                ? [{ environmentId, worktreeId: snapshot.worktree }]
-                : []
-            ),
+            frames: applicable.map((snapshot, position) => ({
+              environmentId,
+              worktreeId: snapshot.worktree,
+              decision: decisions[position]!
+            })),
             fullInventory: {
               environmentId,
               // Why: a workspace the mirror never writes is not part of the
@@ -4244,12 +4270,14 @@ export function useWebSessionTabsSync(): void {
         batch.deferredRepairWorktrees.delete(worktreeId)
       }
       if (operations.length > 0) {
+        const decided = decideWebSessionTabsSnapshotOperations(operations)
         const settleMirror = applyWebSessionTabsStorePatch(
-          (state) => applyWebSessionTabsSnapshotOperations(state, operations),
+          (state) => applyWebSessionTabsSnapshotOperations(state, decided),
           {
-            settles: operations.map(({ environmentId, snapshot }) => ({
+            frames: decided.map(({ environmentId, snapshot, decision }) => ({
               environmentId,
-              worktreeId: snapshot.worktree
+              worktreeId: snapshot.worktree,
+              decision
             }))
           },
           operations.map(({ snapshot }) => snapshot)
@@ -4573,11 +4601,11 @@ export function useWebSessionTabsSync(): void {
                           (state) =>
                             applyWebSessionTabsSnapshots(state, freshSnapshots, environmentId),
                           {
-                            settles: applicable.flatMap(({ snapshot }, position) =>
-                              decisions[position]!.settlesHostMirror
-                                ? [{ environmentId, worktreeId: snapshot.worktree }]
-                                : []
-                            ),
+                            frames: applicable.map(({ snapshot }, position) => ({
+                              environmentId,
+                              worktreeId: snapshot.worktree,
+                              decision: decisions[position]!
+                            })),
                             fullInventory: {
                               environmentId,
                               // Why: a workspace the mirror never writes is not
@@ -4667,7 +4695,9 @@ export function useWebSessionTabsSync(): void {
                       if (decision.apply) {
                         settleHydration = applyWebSessionTabsStorePatch(
                           (state) => applyWebSessionTabsSnapshot(state, recovered, environmentId),
-                          { settles: [{ environmentId, worktreeId: recovered.worktree }] },
+                          {
+                            frames: [{ environmentId, worktreeId: recovered.worktree, decision }]
+                          },
                           recovered,
                           event.type === 'updated' && !replayed
                         )
@@ -4816,7 +4846,7 @@ export function useWebSessionTabsSync(): void {
           const replayed = isRuntimeSubscriptionReplayResponse(response)
           settleMirror = applyWebSessionTabsStorePatch(
             (state) => applyWebSessionTabsSnapshot(state, recovered, environmentId),
-            { settles: [{ environmentId, worktreeId: recovered.worktree }] },
+            { frames: [{ environmentId, worktreeId: recovered.worktree, decision }] },
             recovered,
             event.type === 'updated' && !replayed
           )

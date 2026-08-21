@@ -254,6 +254,30 @@ describe('the eager post-create list answers for its worktree', () => {
     expect(tabIds(WT)).not.toContain(MIRROR_TAB_ID)
     expectReplayedResume(paneKey, WT, 'codex-session-eager-refresh')
   })
+
+  it('settles nothing when the list answers for a workspace the mirror never writes', async () => {
+    runtimeCall.mockImplementation((request: { method: string }) =>
+      request.method === 'session.tabs.list'
+        ? Promise.resolve({
+            id: 'list',
+            ok: true as const,
+            result: makeHostSnapshot(
+              FLOATING_TERMINAL_WORKTREE_ID,
+              FLOATING_HOST_SURFACE_ID,
+              FLOATING_HOST_PARENT_TAB_ID
+            ),
+            _meta: { runtimeId: 'runtime-a' }
+          })
+        : new Promise(() => {})
+    )
+    await act(async () => {
+      await refreshWebRuntimeSessionTabsSnapshot(ENV, FLOATING_TERMINAL_WORKTREE_ID)
+      await settle()
+    })
+
+    expect(useAppStore.getState().tabsByWorktree[FLOATING_TERMINAL_WORKTREE_ID]).toBeUndefined()
+    expect(hasHostSessionMirrorHydrated(ENV, FLOATING_TERMINAL_WORKTREE_ID)).toBe(false)
+  })
 })
 
 /**
