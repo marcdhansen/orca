@@ -2,6 +2,10 @@ import type { ElectronApplication, Locator, Page } from '@stablyai/playwright-te
 import { test, expect } from './helpers/orca-app'
 import { waitForActiveWorktree, waitForSessionReady } from './helpers/store'
 import { PALETTE_INTERACTION_BUDGET } from '../../src/renderer/src/lib/palette-match/palette-match-budget'
+import {
+  PALETTE_SECTION_RENDER_CAP,
+  TYPED_QUERY_LEADING_PREVIEW
+} from '../../src/renderer/src/components/cmd-j/palette-section-render-cap'
 
 const WORKSPACE_COUNT = 800
 const {
@@ -14,6 +18,7 @@ const {
 const TARGET_QUERY = 'needle 0399'
 const TARGET_LOCAL_NAME = 'Needle local 0399'
 const TARGET_REMOTE_NAME = 'Needle remote 0399'
+const RESULTS_SETTLING_WINDOW_MS = 250
 
 type InteractionMetrics = {
   firstVisibleMs: number
@@ -22,6 +27,7 @@ type InteractionMetrics = {
   maxFrameGapMs: number
   maxFrameGapStartedMs: number
   longTasks: { durationMs: number; startedMs: number }[]
+  sampledMs: number
   visibleTexts: string[]
 }
 
@@ -174,14 +180,14 @@ async function seedAccumulatedWorkspaceCatalog(page: Page): Promise<void> {
 }
 
 async function installPerformanceProbe(page: Page): Promise<void> {
-  await page.evaluate(() => {
+  await page.evaluate((settlingWindowMs) => {
     const store = window.__store
     if (!store) {
       throw new Error('window.__store is not available')
     }
     let actionStartedAt = 0
     let expectedTexts: string[] = []
-    let expectedVisibleFrameCount = 0
+    let resultsStableAt: number | null = null
     let firstVisibleAt: number | null = null
     let indexReadyAt: number | null = null
     let completedMetrics: InteractionMetrics | null = null
@@ -235,12 +241,12 @@ async function installPerformanceProbe(page: Page): Promise<void> {
         if (hasExpectedRows) {
           firstVisibleAt ??= now
         }
-        if (hasExpectedRows && indexReady) {
-          expectedVisibleFrameCount += 1
-        } else {
-          expectedVisibleFrameCount = 0
-        }
-        if (firstVisibleAt !== null && expectedVisibleFrameCount >= 3) {
+        resultsStableAt = hasExpectedRows && indexReady ? (resultsStableAt ?? now) : null
+        if (
+          firstVisibleAt !== null &&
+          resultsStableAt !== null &&
+          now - resultsStableAt >= settlingWindowMs
+        ) {
           completedMetrics = {
             firstVisibleMs: firstVisibleAt - actionStartedAt,
             indexReadyMs: (indexReadyAt ?? now) - actionStartedAt,
@@ -253,6 +259,7 @@ async function installPerformanceProbe(page: Page): Promise<void> {
                 durationMs: task.durationMs,
                 startedMs: task.startedAt - actionStartedAt
               })),
+            sampledMs: now - actionStartedAt,
             visibleTexts
           }
         }
@@ -265,8 +272,9 @@ async function installPerformanceProbe(page: Page): Promise<void> {
     ;(window as PerformanceProbeWindow).__cmdJPerformanceProbe = {
       begin: (nextExpectedTexts) => {
         actionStartedAt = performance.now()
+        previousFrameAt = actionStartedAt
         expectedTexts = nextExpectedTexts
-        expectedVisibleFrameCount = 0
+        resultsStableAt = null
         firstVisibleAt = null
         indexReadyAt = null
         completedMetrics = null
@@ -282,7 +290,7 @@ async function installPerformanceProbe(page: Page): Promise<void> {
         store.setState({ openModal: originalOpenModal })
       }
     }
-  })
+  }, RESULTS_SETTLING_WINDOW_MS)
 }
 
 async function beginProbe(page: Page, expectedTexts: string[]): Promise<void> {
@@ -358,21 +366,43 @@ async function expectHostSpecificNeedle(
   await expect(matchingRows).toContainText(expectedRepo)
 }
 
+async function expectAccumulatedCatalogCompleteness(dialog: Locator): Promise<void> {
+  const input = dialog.getByPlaceholder(/Search chats, terminals, worktrees/)
+  await input.fill('accumulated')
+  const rows = dialog.locator('[cmdk-item]:has([data-slot="palette-worktree-name"])')
+  await expect(rows).toHaveCount(PALETTE_SECTION_RENDER_CAP)
+  await expect(
+    dialog.getByText(
+      `${WORKSPACE_COUNT - TYPED_QUERY_LEADING_PREVIEW} more — scroll or keep typing to narrow`
+    )
+  ).toBeVisible()
+  const firstOrder = await rows.allTextContents()
+  expect(new Set(firstOrder).size).toBe(50)
+
+  await input.fill('')
+  await expect(rows).not.toHaveCount(PALETTE_SECTION_RENDER_CAP)
+  await input.fill('accumulated')
+  await expect(rows).toHaveCount(PALETTE_SECTION_RENDER_CAP)
+  expect(await rows.allTextContents()).toEqual(firstOrder)
+}
+
+function expectFrameSafe(metrics: InteractionMetrics): void {
+  expect(metrics.maxFrameGapMs).toBeLessThanOrEqual(MAX_FRAME_GAP_MS)
+  expect(Math.max(0, ...metrics.longTasks.map((task) => task.durationMs))).toBeLessThanOrEqual(
+    MAX_FRAME_GAP_MS
+  )
+}
+
 test.describe('Cmd-J cold accumulated-workspace performance @headful', () => {
   test.beforeEach(async ({ orcaPage }) => {
     await waitForSessionReady(orcaPage)
     await waitForActiveWorktree(orcaPage)
   })
 
-  test('paints complete host-qualified results without dropping a frame', async ({
+  test('paints complete host-qualified results within the frame-gap budget', async ({
     electronApp,
     orcaPage
   }, testInfo) => {
-    const startupTiming = await orcaPage.evaluate(() => ({
-      rendererReadyMs: performance.now(),
-      firstContentfulPaintMs:
-        performance.getEntriesByName('first-contentful-paint')[0]?.startTime ?? null
-    }))
     await seedAccumulatedWorkspaceCatalog(orcaPage)
     await installPerformanceProbe(orcaPage)
     await waitForStableFrameCadence(orcaPage)
@@ -409,6 +439,7 @@ test.describe('Cmd-J cold accumulated-workspace performance @headful', () => {
       TARGET_LOCAL_NAME,
       'acme/orca-local'
     )
+    await expectAccumulatedCatalogCompleteness(dialog)
 
     await togglePaletteFromMain(electronApp)
     await expect(dialog).toHaveAttribute('data-state', 'closed')
@@ -425,7 +456,6 @@ test.describe('Cmd-J cold accumulated-workspace performance @headful', () => {
     await expectHostQualifiedNeedleOrder(dialog)
 
     const report = {
-      startupTiming,
       coldOpen,
       indexedQuery,
       warmReopen,
@@ -445,12 +475,12 @@ test.describe('Cmd-J cold accumulated-workspace performance @headful', () => {
     expect(coldOpen!.storeDispatchMs!).toBeLessThanOrEqual(MAX_STORE_DISPATCH_MS)
     expect(coldOpen!.firstVisibleMs).toBeLessThanOrEqual(MAX_FIRST_VISIBLE_MS)
     expect(coldOpen!.indexReadyMs).toBeLessThanOrEqual(MAX_COLD_INDEX_READY_MS)
-    expect(coldOpen!.maxFrameGapMs).toBeLessThanOrEqual(MAX_FRAME_GAP_MS)
+    expectFrameSafe(coldOpen!)
     expect(indexedQuery!.firstVisibleMs).toBeLessThanOrEqual(MAX_FIRST_VISIBLE_MS)
-    expect(indexedQuery!.maxFrameGapMs).toBeLessThanOrEqual(MAX_FRAME_GAP_MS)
+    expectFrameSafe(indexedQuery!)
     expect(warmReopen!.firstVisibleMs).toBeLessThanOrEqual(MAX_FIRST_VISIBLE_MS)
     expect(warmReopen!.indexReadyMs).toBe(warmReopen!.firstVisibleMs)
-    expect(warmReopen!.maxFrameGapMs).toBeLessThanOrEqual(MAX_FRAME_GAP_MS)
+    expectFrameSafe(warmReopen!)
 
     await orcaPage.evaluate(() => (window as PerformanceProbeWindow).__cmdJPerformanceProbe?.stop())
   })
@@ -484,7 +514,7 @@ test.describe('Cmd-J cold accumulated-workspace performance @headful', () => {
     console.log(`[cmd-j-cold-immediate-query] ${JSON.stringify(coldImmediateQuery)}`)
 
     expect(coldImmediateQuery!.firstVisibleMs).toBeLessThanOrEqual(MAX_COLD_IMMEDIATE_QUERY_MS)
-    expect(coldImmediateQuery!.maxFrameGapMs).toBeLessThanOrEqual(MAX_FRAME_GAP_MS)
+    expectFrameSafe(coldImmediateQuery!)
     await orcaPage.evaluate(() => (window as PerformanceProbeWindow).__cmdJPerformanceProbe?.stop())
   })
 })

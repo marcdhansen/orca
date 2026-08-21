@@ -548,9 +548,14 @@ describe('worktree-palette-search', () => {
     ).toHaveLength(1)
   })
 
-  it('cooperatively preserves complete source ordering', async () => {
-    const worktrees = Array.from({ length: 20 }, (_, index) =>
-      makeWorktree({ id: `wt-${index}`, displayName: `Needle ${index}` })
+  it('cooperatively preserves all 800 host-qualified results in source order', async () => {
+    const worktrees = Array.from({ length: 800 }, (_, index) =>
+      makeWorktree({
+        id: `wt-${Math.floor(index / 2)}`,
+        hostId: index % 2 === 0 ? 'local' : 'ssh:perf-box',
+        displayName: `Needle ${index}`,
+        path: index % 2 === 0 ? `/work/wt-${index}` : `/srv/work/wt-${index}`
+      })
     )
     const yieldBetweenSlices = vi.fn(async () => {})
     const results = await searchWorktreeDocumentsCooperatively(
@@ -563,9 +568,9 @@ describe('worktree-palette-search', () => {
       { timeSliceMs: 0, yieldBetweenSlices }
     )
 
-    expect(results?.map((result) => result.worktreeId)).toEqual(
-      worktrees.map((worktree) => worktree.id)
-    )
+    expect(
+      results?.map(({ worktreeId, worktreeHostId }) => ({ worktreeId, worktreeHostId }))
+    ).toEqual(worktrees.map(({ id, hostId }) => ({ worktreeId: id, worktreeHostId: hostId })))
     expect(yieldBetweenSlices).toHaveBeenCalled()
   })
 
