@@ -326,8 +326,18 @@ describe('mirrored-pane resume deferral against real stream frames', () => {
     })
 
     // The background mirror tab was retracted by the inventory, so recovery is
-    // finally justified and the replacement resume tab appears.
-    expect(useAppStore.getState().sleepingAgentSessionsByPaneKey[backgroundPaneKey]).toBeUndefined()
+    // finally justified: the record is consumed INTO a replacement tab that
+    // claims the session. Asserting only the record would pass for a replay
+    // that cleared it and launched nothing.
+    const replayed = useAppStore.getState()
+    expect(replayed.sleepingAgentSessionsByPaneKey[backgroundPaneKey]).toBeUndefined()
+    const backgroundTabIds = tabIds(BG_WT)
+    expect(backgroundTabIds).toHaveLength(1)
+    expect(backgroundTabIds[0]).not.toBe(BG_MIRROR_TAB_ID)
+    expect(replayed.automaticAgentResumeClaimsByTabId[backgroundTabIds[0]!]).toMatchObject({
+      launchAgent: 'codex',
+      providerSession: { key: 'session_id', id: 'codex-session-bg-1' }
+    })
   })
 })
 
