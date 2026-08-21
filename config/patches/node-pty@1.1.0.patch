@@ -430,7 +430,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
  }
  #endif
 diff --git a/src/win/conpty.cc b/src/win/conpty.cc
-index 7b286d3d644c26141df516929703aa6e129df4b2..cad5cbcee5db36f510158e900e21849b298f4de5 100644
+index 7b286d3d644c26141df516929703aa6e129df4b2..9ede3298f311bff35c97c4d62122faed059c3bc9 100644
 --- a/src/win/conpty.cc
 +++ b/src/win/conpty.cc
 @@ -18,6 +18,7 @@
@@ -472,7 +472,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..cad5cbcee5db36f510158e900e21849b
  static volatile LONG ptyCounter;
  
  static pty_baton* get_pty_baton(int id) {
-@@ -102,8 +120,24 @@ void SetupExitCallback(Napi::Env env, Napi::Function cb, pty_baton* baton) {
+@@ -102,8 +120,27 @@ void SetupExitCallback(Napi::Env env, Napi::Function cb, pty_baton* baton) {
      // Get process exit code.
      GetExitCodeProcess(baton->hShell, (LPDWORD)(&exit_event->exit_code));
      // Clean up handles
@@ -496,10 +496,13 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..cad5cbcee5db36f510158e900e21849b
 +      assert(removed);
 +      (void)removed;
 +    }
++    // Why the lock ends here: BlockingCall below waits on the JS thread, and the
++    // JS thread can be waiting on ptyJobMutex inside PtyTerminateJob. Holding
++    // the lock across it deadlocks. Do not widen this scope.
  
      auto status = tsfn.BlockingCall(exit_event, callback); // In main thread
      switch (status) {
-@@ -416,7 +450,10 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+@@ -416,7 +453,10 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
        nullptr,                      // lpProcessAttributes
        nullptr,                      // lpThreadAttributes
        false,                        // bInheritHandles VERY IMPORTANT that this is false
@@ -511,7 +514,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..cad5cbcee5db36f510158e900e21849b
        envArg,                       // lpEnvironment
        mutableCwd.get(),             // lpCurrentDirectory
        &siEx.StartupInfo,            // lpStartupInfo
-@@ -426,6 +463,47 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+@@ -426,6 +466,47 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
      throw errorWithCode(info, "Cannot create process");
    }
  
@@ -559,7 +562,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..cad5cbcee5db36f510158e900e21849b
    HANDLE hLibrary = LoadConptyDll(info, useConptyDll);
    bool fLoadedDll = hLibrary != nullptr;
    if (useConptyDll && fLoadedDll)
-@@ -440,6 +518,11 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+@@ -440,6 +521,11 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
  
    // Update handle
    handle->hShell = piClient.hProcess;
@@ -571,7 +574,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..cad5cbcee5db36f510158e900e21849b
  
    // Close the thread handle to avoid resource leak
    CloseHandle(piClient.hThread);
-@@ -567,6 +650,94 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
+@@ -567,6 +653,94 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
    return env.Undefined();
  }
  
@@ -666,7 +669,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..cad5cbcee5db36f510158e900e21849b
  /**
  * Init
  */
-@@ -577,6 +748,8 @@ Napi::Object init(Napi::Env env, Napi::Object exports) {
+@@ -577,6 +751,8 @@ Napi::Object init(Napi::Env env, Napi::Object exports) {
    exports.Set("resize", Napi::Function::New(env, PtyResize));
    exports.Set("clear", Napi::Function::New(env, PtyClear));
    exports.Set("kill", Napi::Function::New(env, PtyKill));

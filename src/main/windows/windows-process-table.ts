@@ -96,6 +96,19 @@ function loadWindowsProcessTree(): WindowsProcessTreeModule | null {
  */
 const WINDOWS_PROCESS_QUERY_TIMEOUT_MS = 3_000
 
+/**
+ * How long to stop calling the reader after it misses its deadline.
+ *
+ * Why a cooldown and not just the deadline: a timed-out call leaves its
+ * callback in the vendored module's queue, and that queue only drains when the
+ * latched request finally completes -- which, in the wedge this guards against,
+ * never happens. Retrying at the caller's poll rate would then add a closure
+ * per tick forever. One probe per cooldown bounds it.
+ */
+const WINDOWS_PROCESS_QUERY_COOLDOWN_MS = 30_000
+
+let wedgedUntilMs = 0
+
 function readNativeRows(fields: WindowsProcessFields): Promise<WindowsProcessRow[]> {
   const native = moduleLoader()
   if (!native) {
@@ -108,18 +121,23 @@ function readNativeRows(fields: WindowsProcessFields): Promise<WindowsProcessRow
   // Memory adds GetProcessMemoryInfo, CommandLine adds a PEB read -- inline,
   // for every process on the box, and the 1024-entry bound is patched out.
   // Measured at 1050 processes: 15.9ms p50 for pid/ppid/name, 30.6ms with both.
+  if (Date.now() < wedgedUntilMs) {
+    return Promise.reject(new Error('windows process table is cooling down after a timeout'))
+  }
   const flags =
     (fields.memory ? native.ProcessDataFlag.Memory : 0) |
     (fields.commandLine ? native.ProcessDataFlag.CommandLine : 0)
   return new Promise((resolve, reject) => {
     try {
-      const deadline = setTimeout(
-        () => reject(new Error('windows process table timed out')),
-        WINDOWS_PROCESS_QUERY_TIMEOUT_MS
-      )
+      const deadline = setTimeout(() => {
+        wedgedUntilMs = Date.now() + WINDOWS_PROCESS_QUERY_COOLDOWN_MS
+        reject(new Error('windows process table timed out'))
+      }, WINDOWS_PROCESS_QUERY_TIMEOUT_MS)
       deadline.unref?.()
       native.getAllProcesses((processes) => {
         clearTimeout(deadline)
+        // A late callback proves the reader recovered, so stop refusing.
+        wedgedUntilMs = 0
         if (!processes) {
           reject(new Error('windows process table returned no snapshot'))
           return
@@ -205,6 +223,7 @@ export function __setWindowsProcessTreeLoaderForTests(
 ): void {
   moduleLoader = loader ?? loadWindowsProcessTree
   cachedModule = undefined
+  wedgedUntilMs = 0
   snapshotReader.reset()
 }
 
@@ -212,4 +231,5 @@ export function __setWindowsProcessTreeLoaderForTests(
 export function resetWindowsProcessTableForTests(): void {
   snapshotReader.reset()
   cachedModule = undefined
+  wedgedUntilMs = 0
 }

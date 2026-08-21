@@ -106,3 +106,42 @@ describe('windows process table', () => {
     expect(isWindowsProcessTableAvailable()).toBe(false)
   })
 })
+
+describe('wedge cooldown', () => {
+  let platform: PropertyDescriptor | undefined
+
+  beforeEach(() => {
+    platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    __setWindowsProcessTreeLoaderForTests()
+    if (platform) {
+      Object.defineProperty(process, 'platform', platform)
+    }
+  })
+
+  it('stops calling the reader after a timeout instead of queueing a callback per tick', async () => {
+    // The vendored reader latches a global while a request is in flight and
+    // drains its queue only when that request completes. In the wedge this
+    // guards against it never does, so every retry would add a closure that is
+    // never called. One probe per cooldown bounds that.
+    vi.useFakeTimers()
+    const getAllProcesses = vi.fn(() => {})
+    __setWindowsProcessTreeLoaderForTests(() => ({
+      ProcessDataFlag: { None: 0, Memory: 1, CommandLine: 2 },
+      getAllProcesses
+    }))
+
+    const first = readWindowsProcessTableFresh()
+    const firstAssertion = expect(first).rejects.toThrow(/timed out/)
+    await vi.advanceTimersByTimeAsync(3_000)
+    await firstAssertion
+    expect(getAllProcesses).toHaveBeenCalledTimes(1)
+
+    await expect(readWindowsProcessTableFresh()).rejects.toThrow(/cooling down/)
+    expect(getAllProcesses).toHaveBeenCalledTimes(1)
+  })
+})
