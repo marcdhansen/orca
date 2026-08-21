@@ -82,3 +82,35 @@ Do not adopt `getProcessCpuUsage()` from the package. It takes both CPU samples
 inside one call with a blocking `Sleep(1000)` in the middle, which would hold a
 libuv threadpool slot for a full second out of the Resource Manager's two-second
 poll.
+
+## Owning a PTY's process tree
+
+`src/main/windows/windows-pty-job.ts` is the counterpart to reading the table:
+it answers "is this tree mine, and how do I kill it?" with a handle instead of
+an inference.
+
+node-pty is patched (`config/patches/node-pty@1.1.0.patch`) to create a job
+object per ConPTY and assign the shell to it under `CREATE_SUSPENDED`, before
+the shell can spawn anything. Assigning after the fact leaves a window in which
+a fast child escapes the job.
+
+- `terminatePtyJob(proc)` — one `TerminateJobObject` call for the whole tree.
+- `listPtyJobProcessIds(proc)` — the live pids, straight from the kernel.
+
+Measured on Windows 11 against a shell whose grandchild was spawned `detached`:
+job membership was `[shell, grandchild]` and one call killed both. Neither a
+parent-pid walk nor `GetConsoleProcessList` sees that grandchild — it leaves
+the console and reparents, which is what left `claude.exe`/`node.exe`/`cmd.exe`
+holding worktree directories open (#9045, #10475, #10897).
+
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` is set, so the tree is also reaped if the
+hosting process dies without unwinding. The job belongs to the **terminal
+daemon**, not to the app: an app-main crash leaves sessions alive (asserted by
+`.github/workflows/win-crash-survival-e2e.yml`), while a daemon death now reaps
+its shells instead of stranding them (#9195, #10415).
+
+Both functions report `unavailable` / `null` rather than a false success when a
+pty has no job — an outer job without `JOB_OBJECT_LIMIT_BREAKAWAY_OK` (some EDR
+and container hosts) can refuse the assignment, and a pty started before this
+build has none. Callers must fall back, not conclude the tree is gone. That
+conflation is the original bug.

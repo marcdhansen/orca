@@ -35,7 +35,7 @@ index 1ac5758bedd8cf54f32280dea4e4aeb5afdee30d..e619813759c6f14694838bdfbd0ea5f8
 +++ b/deps/winpty/src/winpty.gyp
 @@ -10,7 +10,7 @@
      #    make -j4 CXX=i686-w64-mingw32-g++ LDFLAGS="-static -static-libgcc -static-libstdc++"
-
+ 
      'variables': {
 -        'WINPTY_COMMIT_HASH%': '<!(cmd /c "cd shared && GetCommitHash.bat")',
 +        'WINPTY_COMMIT_HASH%': '<!(cmd /c "cd shared && .\\GetCommitHash.bat")',
@@ -116,7 +116,7 @@ index 181ccabbbe9c4948a9725fb1db907a68e9de01fc..67f31facf85562b67adbfbd04ce28ddd
 --- a/src/conpty_console_list_agent.ts
 +++ b/src/conpty_console_list_agent.ts
 @@ -10,6 +10,12 @@ import { loadNativeModule } from './utils';
-
+ 
  const getConsoleProcessList = loadNativeModule('conpty_console_list').module.getConsoleProcessList;
  const shellPid = parseInt(process.argv[2], 10);
 -const consoleProcessList = getConsoleProcessList(shellPid);
@@ -141,12 +141,12 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
  #include <unistd.h>
 +#include <string>
  #include <thread>
-
+ 
  #include <sys/types.h>
 @@ -47,6 +49,25 @@
  #include <termios.h>
  #endif
-
+ 
 +/* Orca: glibc 2.32-2.34 relocated pthread_sigmask/openpty/forkpty into libc
 + * under new symbol versions, so building on a newer glibc produces references
 + * (GLIBC_2.32/2.34) absent on Ubuntu 20.04 (glibc 2.31) and the app fails to
@@ -171,7 +171,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
  #define VWERASE	VWERSE
 @@ -237,13 +258,23 @@ pty_getproc(int, char *);
  #endif
-
+ 
  #if defined(__APPLE__) || defined(__OpenBSD__)
 +struct pty_spawn_error {
 +  const char* step;
@@ -192,12 +192,12 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
 -                int* err);
 +                pty_spawn_error* err);
  #endif
-
+ 
  struct DelBuf {
 @@ -367,10 +398,11 @@ Napi::Value PtyFork(const Napi::CallbackInfo& info) {
      argv[i + 3] = strdup(arg.c_str());
    }
-
+ 
 -  int err = -1;
 -  pty_posix_spawn(argv, env, term, &winp, &master, &pid, &err);
 -  if (err != 0) {
@@ -212,7 +212,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
      throw Napi::Error::New(napiEnv, "Could not set master fd to nonblocking.");
 @@ -684,15 +716,73 @@ pty_getproc(int fd, char *tty) {
  #endif
-
+ 
  #if defined(__APPLE__)
 +static const char*
 +pty_errno_name(int errnum) {
@@ -283,7 +283,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
 +  bool acts_initialized = false;
 +  posix_spawnattr_t attrs;
 +  bool attrs_initialized = false;
-
+ 
    for (; count < 3; count++) {
      low_fds[count] = posix_openpt(O_RDWR);
 @@ -706,80 +796,118 @@ pty_posix_spawn(char** argv, char** env,
@@ -294,7 +294,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
 +    pty_set_spawn_error(err, "posix_openpt", errno);
 +    goto done;
    }
-
+ 
 -  int res = grantpt(*master) || unlockpt(*master);
 +  res = grantpt(*master);
    if (res == -1) {
@@ -308,7 +308,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
 +    pty_set_spawn_error(err, "unlockpt", errno);
 +    goto done;
    }
-
+ 
    // Use TIOCPTYGNAME instead of ptsname() to avoid threading problems.
 -  int slave;
    char slave_pty_name[128];
@@ -318,14 +318,14 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
 +    pty_set_spawn_error(err, "ioctl_TIOCPTYGNAME", errno);
 +    goto done;
    }
-
+ 
    slave = open(slave_pty_name, O_RDWR | O_NOCTTY);
    if (slave == -1) {
 -    return;
 +    pty_set_spawn_error(err, "open_slave", errno, "slave", slave_pty_name);
 +    goto done;
    }
-
+ 
    if (termp) {
      res = tcsetattr(slave, TCSANOW, termp);
      if (res == -1) {
@@ -334,7 +334,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
 +      goto done;
      };
    }
-
+ 
    if (winp) {
      res = ioctl(slave, TIOCSWINSZ, winp);
      if (res == -1) {
@@ -343,7 +343,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
 +      goto done;
      }
    }
-
+ 
 -  posix_spawn_file_actions_t acts;
 -  posix_spawn_file_actions_init(&acts);
 +  res = posix_spawn_file_actions_init(&acts);
@@ -357,7 +357,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
    posix_spawn_file_actions_adddup2(&acts, slave, STDERR_FILENO);
    posix_spawn_file_actions_addclose(&acts, slave);
    posix_spawn_file_actions_addclose(&acts, *master);
-
+ 
 -  posix_spawnattr_t attrs;
 -  posix_spawnattr_init(&attrs);
 -  *err = posix_spawnattr_setflags(&attrs, flags);
@@ -373,7 +373,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
 +    pty_set_spawn_error(err, "posix_spawnattr_setflags", res);
      goto done;
    }
-
+ 
    sigset_t signal_set;
    /* Reset all signal the child to their default behavior */
    sigfillset(&signal_set);
@@ -384,7 +384,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
 +    pty_set_spawn_error(err, "posix_spawnattr_setsigdefault", res);
      goto done;
    }
-
+ 
    /* Reset the signal mask for all signals */
    sigemptyset(&signal_set);
 -  *err = posix_spawnattr_setsigmask(&attrs, &signal_set);
@@ -394,7 +394,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
 +    pty_set_spawn_error(err, "posix_spawnattr_setsigmask", res);
      goto done;
    }
-
+ 
    do
 -    *err = posix_spawn(pid, argv[0], &acts, &attrs, argv, env);
 -  while (*err == EINTR);
@@ -419,7 +419,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
 +    close(*master);
 +    *master = -1;
 +  }
-
+ 
 -  for (; count > 0; count--) {
 -    close(low_fds[count]);
 +  for (size_t i = 0; i <= count && i < 3; i++) {
@@ -429,3 +429,159 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
    }
  }
  #endif
+diff --git a/src/win/conpty.cc b/src/win/conpty.cc
+index 7b286d3d644c26141df516929703aa6e129df4b2..4ae9ddec6ac3e9fdaa380000d3017bbb394f22d6 100644
+--- a/src/win/conpty.cc
++++ b/src/win/conpty.cc
+@@ -46,6 +46,11 @@ struct pty_baton {
+ 
+   HANDLE hShell;
+ 
++  // Orca: job object owning this pty's whole process tree. Null when the OS
++  // refused to create or assign one (an outer job without breakaway rights),
++  // in which case callers fall back to their pre-job behaviour.
++  HANDLE hJob = nullptr;
++
+   pty_baton(int _id, HANDLE _hIn, HANDLE _hOut, HPCON _hpc) : id(_id), hIn(_hIn), hOut(_hOut), hpc(_hpc) {};
+ };
+ 
+@@ -103,6 +108,13 @@ void SetupExitCallback(Napi::Env env, Napi::Function cb, pty_baton* baton) {
+     GetExitCodeProcess(baton->hShell, (LPDWORD)(&exit_event->exit_code));
+     // Clean up handles
+     CloseHandle(baton->hShell);
++    // Orca: closing the last job handle is what reaps whatever the shell left
++    // behind. Without this the job outlives the pane and its descendants keep
++    // running (and keep holding the worktree directory open).
++    if (baton->hJob != nullptr) {
++      CloseHandle(baton->hJob);
++      baton->hJob = nullptr;
++    }
+     assert(remove_pty_baton(baton->id));
+ 
+     auto status = tsfn.BlockingCall(exit_event, callback); // In main thread
+@@ -416,7 +428,10 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+       nullptr,                      // lpProcessAttributes
+       nullptr,                      // lpThreadAttributes
+       false,                        // bInheritHandles VERY IMPORTANT that this is false
+-      EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT, // dwCreationFlags
++      // Orca: CREATE_SUSPENDED so the shell is inside its job before it can
++      // spawn anything. Assigning after the fact leaves a window in which a
++      // fast child escapes the job and outlives the pane.
++      EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED, // dwCreationFlags
+       envArg,                       // lpEnvironment
+       mutableCwd.get(),             // lpCurrentDirectory
+       &siEx.StartupInfo,            // lpStartupInfo
+@@ -426,6 +441,31 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+     throw errorWithCode(info, "Cannot create process");
+   }
+ 
++  // Orca: own the tree with a handle instead of inferring it later from a
++  // parent-pid walk. A pid walk cannot survive pid reuse and cannot see a
++  // descendant that reparented, which is why detached agent children outlived
++  // their pane and held the worktree directory open.
++  //
++  // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE means the tree also dies if this host
++  // process dies without unwinding, so a crashed daemon cannot strand shells.
++  HANDLE hJob = CreateJobObjectW(nullptr, nullptr);
++  if (hJob != nullptr) {
++    JOBOBJECT_EXTENDED_LIMIT_INFORMATION jobLimits{};
++    jobLimits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
++    if (!SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jobLimits, sizeof(jobLimits)) ||
++        !AssignProcessToJobObject(hJob, piClient.hProcess)) {
++      // Why tolerate failure: an outer job without JOB_OBJECT_LIMIT_BREAKAWAY_OK
++      // (some EDR and container hosts) refuses the assignment. The pty must
++      // still start; ownership just degrades to the older best-effort path.
++      CloseHandle(hJob);
++      hJob = nullptr;
++    }
++  }
++  handle->hJob = hJob;
++
++  // Safe to run now: either it is in the job, or we accepted that it is not.
++  ResumeThread(piClient.hThread);
++
+   HANDLE hLibrary = LoadConptyDll(info, useConptyDll);
+   bool fLoadedDll = hLibrary != nullptr;
+   if (useConptyDll && fLoadedDll)
+@@ -567,6 +607,72 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
+   return env.Undefined();
+ }
+ 
++/**
++ * Orca: kill this pty's entire tree in one syscall.
++ *
++ * Replaces "scrape the process table, walk parent pids, hope none were
++ * recycled, then taskkill /T /F". Returns false when no job was assigned so
++ * the caller knows to fall back rather than assume the tree is gone.
++ */
++static Napi::Value PtyTerminateJob(const Napi::CallbackInfo& info) {
++  Napi::Env env(info.Env());
++  Napi::HandleScope scope(env);
++
++  if (info.Length() != 1 || !info[0].IsNumber()) {
++    throw Napi::Error::New(env, "Usage: pty.terminateJob(id)");
++  }
++
++  const pty_baton* handle = get_pty_baton(info[0].As<Napi::Number>().Int32Value());
++  if (handle == nullptr || handle->hJob == nullptr) {
++    return Napi::Boolean::New(env, false);
++  }
++  return Napi::Boolean::New(env, !!TerminateJobObject(handle->hJob, 1));
++}
++
++/**
++ * Orca: the pids still alive in this pty's tree, straight from the kernel.
++ *
++ * This is the liveness answer a stale JS map cannot give: a pane whose shell
++ * has exited reports an empty list, so a registry entry can no longer claim a
++ * terminal is connected when nothing is running.
++ * Returns null when no job was assigned.
++ */
++static Napi::Value PtyListJobProcessIds(const Napi::CallbackInfo& info) {
++  Napi::Env env(info.Env());
++  Napi::HandleScope scope(env);
++
++  if (info.Length() != 1 || !info[0].IsNumber()) {
++    throw Napi::Error::New(env, "Usage: pty.listJobProcessIds(id)");
++  }
++
++  const pty_baton* handle = get_pty_baton(info[0].As<Napi::Number>().Int32Value());
++  if (handle == nullptr || handle->hJob == nullptr) {
++    return env.Null();
++  }
++
++  // Grow until the buffer holds every pid: the count can change between calls,
++  // and a truncated list would read as "these children are gone".
++  DWORD capacity = 64;
++  for (int attempt = 0; attempt < 8; attempt++) {
++    const size_t bytes = sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) + sizeof(ULONG_PTR) * capacity;
++    std::vector<char> buffer(bytes, 0);
++    auto* list = reinterpret_cast<JOBOBJECT_BASIC_PROCESS_ID_LIST*>(buffer.data());
++    list->NumberOfAssignedProcesses = capacity;
++    if (QueryInformationJobObject(handle->hJob, JobObjectBasicProcessIdList, list, static_cast<DWORD>(bytes), nullptr)) {
++      auto pids = Napi::Array::New(env, list->NumberOfProcessIdsInList);
++      for (DWORD i = 0; i < list->NumberOfProcessIdsInList; i++) {
++        pids.Set(i, Napi::Number::New(env, static_cast<double>(list->ProcessIdList[i])));
++      }
++      return pids;
++    }
++    if (GetLastError() != ERROR_MORE_DATA) {
++      return env.Null();
++    }
++    capacity *= 4;
++  }
++  return env.Null();
++}
++
+ /**
+ * Init
+ */
+@@ -577,6 +683,8 @@ Napi::Object init(Napi::Env env, Napi::Object exports) {
+   exports.Set("resize", Napi::Function::New(env, PtyResize));
+   exports.Set("clear", Napi::Function::New(env, PtyClear));
+   exports.Set("kill", Napi::Function::New(env, PtyKill));
++  exports.Set("terminateJob", Napi::Function::New(env, PtyTerminateJob));
++  exports.Set("listJobProcessIds", Napi::Function::New(env, PtyListJobProcessIds));
+   return exports;
+ };
+ 
