@@ -109,3 +109,21 @@ describe('unkillable children', () => {
     expect(result.timedOut).toBe(true)
   }, 20_000)
 })
+
+describe('abort', () => {
+  it('settles after the grace period when an aborted child ignores the signal', async () => {
+    // An aborted caller has stopped waiting; an unkillable child must not keep
+    // the promise alive on their behalf either.
+    const controller = new AbortController()
+    const pending = runProcess({
+      program: process.execPath,
+      args: ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)'],
+      timeoutMs: 60_000,
+      signal: controller.signal
+    })
+    setTimeout(() => controller.abort(), 300)
+    const result = await pending
+    // Not a timeout: the caller asked it to stop.
+    expect(result.timedOut).toBe(false)
+  }, 20_000)
+})

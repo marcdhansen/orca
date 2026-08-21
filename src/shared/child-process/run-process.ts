@@ -179,12 +179,18 @@ export function runProcess(spec: ProcessSpec): Promise<ProcessResult> {
     child.stderr?.on('data', (chunk: Buffer | string) => stderr.write(chunk))
 
     let graceTimer: ReturnType<typeof setTimeout> | undefined
-    const timer = setTimeout(() => {
-      timedOut = true
+
+    /**
+     * Stop the child, then settle whether or not it complies.
+     *
+     * Why settle regardless: `close` only fires once the child is really gone,
+     * so one that traps the signal would hold the caller forever -- and both
+     * the pwsh cache and the snapshot reader hand later callers their in-flight
+     * promise, so a single unkillable child would wedge every one of them.
+     */
+    const stopAndSettle = (): void => {
       terminate(child)
-      // Escalate, then settle regardless: an unkillable child must not hold the
-      // caller past its deadline.
-      graceTimer = setTimeout(() => {
+      graceTimer ??= setTimeout(() => {
         terminate(child, 'SIGKILL')
         settle(() =>
           resolve({
@@ -192,15 +198,22 @@ export function runProcess(spec: ProcessSpec): Promise<ProcessResult> {
             signal: null,
             stdout: stdout.text(),
             stderr: stderr.text(),
-            timedOut: true
+            timedOut
           })
         )
       }, PROCESS_EXIT_GRACE_MS)
       graceTimer.unref?.()
+    }
+
+    const timer = setTimeout(() => {
+      timedOut = true
+      stopAndSettle()
     }, spec.timeoutMs ?? DEFAULT_PROCESS_TIMEOUT_MS)
     timer.unref?.()
 
-    const onAbort = (): void => terminate(child)
+    // Why the same escalation: an aborted caller has stopped waiting, so an
+    // unkillable child must not keep the promise alive on their behalf either.
+    const onAbort = (): void => stopAndSettle()
     spec.signal?.addEventListener('abort', onAbort, { once: true })
 
     child.once('error', (error) => settle(() => reject(error)))
