@@ -9,6 +9,7 @@ import type {
   WorkspacePortScanResult
 } from '../../shared/workspace-ports'
 import { getProcessOutputFields } from '../../shared/process-output-field-scanner'
+import { readWindowsProcessTable } from '../windows/windows-process-table'
 import { advertisedUrlWatcher, type AdvertisedUrlWatcher } from './advertised-url-watcher'
 import { isPortScanWorkerUnavailableError, runPortScanCommand } from './port-scan-command-client'
 import { PortScanCommandTimeoutError } from './port-scan-command-protocol'
