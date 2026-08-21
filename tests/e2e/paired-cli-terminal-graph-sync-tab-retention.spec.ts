@@ -51,12 +51,13 @@ import {
 } from './helpers/paired-electron-client'
 import {
   createHostCliTerminal,
+  createHostRendererTerminalTab,
   createRetentionFixtureDirectory,
   proveSameLivePty,
+  readHostInventoryWhenTabAppears,
   readHostTerminalInventory,
   writeRetentionFixture,
   type HostCreatedTerminal,
-  type HostTerminalInventory,
   type RuntimeRpcCall
 } from './helpers/host-created-terminal-retention-oracle'
 
@@ -113,55 +114,6 @@ async function readClientStripWhenTabAppears(
     )
     .toBe(true)
   return strip
-}
-
-/** A renderer-owned terminal tab on the HOST, i.e. an ordinary user pane. */
-async function createHostRendererTerminalTab(page: Page, worktreeId: string): Promise<string> {
-  const tabId = await page.evaluate((id) => {
-    const store = window.__store
-    if (!store) {
-      throw new Error('Host renderer store is unavailable')
-    }
-    store.getState().setActiveView('terminal')
-    store.getState().setActiveWorktree(id)
-    const tab = store.getState().createTab(id)
-    store.getState().setActiveTab(tab.id)
-    store.getState().setActiveTabType('terminal')
-    return tab.id
-  }, worktreeId)
-  await expect
-    .poll(
-      () =>
-        page.evaluate(
-          ({ worktreeId, tabId }) =>
-            (window.__store?.getState().tabsByWorktree[worktreeId] ?? []).find(
-              (tab) => tab.id === tabId
-            )?.ptyId ?? null,
-          { worktreeId, tabId }
-        ),
-      { timeout: 60_000, message: `Host renderer tab ${tabId} never spawned a PTY` }
-    )
-    .not.toBeNull()
-  return tabId
-}
-
-async function readHostInventoryWhenTabAppears(
-  call: RuntimeRpcCall,
-  worktreeId: string,
-  tabId: string,
-  message: string
-): Promise<HostTerminalInventory> {
-  let inventory: HostTerminalInventory | null = null
-  await expect
-    .poll(
-      async () => {
-        inventory = await readHostTerminalInventory(call, worktreeId)
-        return inventory.tabIds.includes(tabId)
-      },
-      { timeout: 60_000, message }
-    )
-    .toBe(true)
-  return inventory!
 }
 
 type RetentionFixture = {

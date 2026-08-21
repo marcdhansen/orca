@@ -1,9 +1,9 @@
 /**
  * Shared oracle for "a host-created terminal stays the live terminal".
  *
- * Both retention specs (attached-window desktop host, windowless `orca serve`)
- * import this file unchanged, so the two topologies are judged by identical
- * code and neither can be claimed to prove the other by accident.
+ * Every retention spec (paired desktop host, windowless `orca serve`, local
+ * unpaired CLI) imports this file unchanged, so the topologies are judged by
+ * identical code and none can be claimed to prove another by accident.
  *
  * Two independent signals per claim:
  *   1. the host's own session inventory still lists the tab and its ptyId;
@@ -14,13 +14,14 @@
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { expect } from '@stablyai/playwright-test'
+import { expect, type Page } from '@stablyai/playwright-test'
 
 export type RuntimeRpcCall = <TResult>(method: string, params: unknown) => Promise<TResult>
 
 export type HostCreatedTerminal = {
   handle: string
   tabId: string
+  leafId: string
   ptyId: string
   pid: string
   sinkPath: string
@@ -139,12 +140,19 @@ export async function createHostCliTerminal(
   if (!tabId) {
     throw new Error('Host did not report a tab id for the CLI-created terminal')
   }
-  const ptyId =
-    created.terminal.ptyId ??
-    (await call<{ terminal: { ptyId: string | null } }>('terminal.show', { terminal: handle }))
-      .terminal.ptyId
+  // The host mints the pane identity before spawn, so read it back from the host
+  // rather than from a renderer that may not have materialized the tab yet.
+  const summary = (
+    await call<{ terminal: { ptyId: string | null; leafId: string } }>('terminal.show', {
+      terminal: handle
+    })
+  ).terminal
+  const ptyId = created.terminal.ptyId ?? summary.ptyId
   if (!ptyId) {
     throw new Error('Host did not report a PTY for the CLI-created terminal')
+  }
+  if (!summary.leafId) {
+    throw new Error('Host did not report a leaf id for the CLI-created terminal')
   }
   expect(
     isDaemonShapedPtyId(ptyId, worktreeId),
@@ -159,6 +167,7 @@ export async function createHostCliTerminal(
   return {
     handle,
     tabId,
+    leafId: summary.leafId,
     ptyId,
     pid: readySignatures(sinkPath)[0]!.slice('READY:'.length),
     sinkPath
@@ -206,4 +215,57 @@ export async function proveSameLivePty(
     readySignatures(terminal.sinkPath),
     'the surviving terminal must be the original process, not a respawned replacement'
   ).toEqual([`READY:${terminal.pid}`])
+}
+
+/** A renderer-owned terminal tab on the HOST, i.e. an ordinary user pane. */
+export async function createHostRendererTerminalTab(
+  page: Page,
+  worktreeId: string
+): Promise<string> {
+  const tabId = await page.evaluate((id) => {
+    const store = window.__store
+    if (!store) {
+      throw new Error('Host renderer store is unavailable')
+    }
+    store.getState().setActiveView('terminal')
+    store.getState().setActiveWorktree(id)
+    const tab = store.getState().createTab(id)
+    store.getState().setActiveTab(tab.id)
+    store.getState().setActiveTabType('terminal')
+    return tab.id
+  }, worktreeId)
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          ({ worktreeId, tabId }) =>
+            (window.__store?.getState().tabsByWorktree[worktreeId] ?? []).find(
+              (tab) => tab.id === tabId
+            )?.ptyId ?? null,
+          { worktreeId, tabId }
+        ),
+      { timeout: 60_000, message: `Host renderer tab ${tabId} never spawned a PTY` }
+    )
+    .not.toBeNull()
+  return tabId
+}
+
+/** The host inventory exactly as it read on the poll tick that first carried `tabId`. */
+export async function readHostInventoryWhenTabAppears(
+  call: RuntimeRpcCall,
+  worktreeId: string,
+  tabId: string,
+  message: string
+): Promise<HostTerminalInventory> {
+  let inventory: HostTerminalInventory | null = null
+  await expect
+    .poll(
+      async () => {
+        inventory = await readHostTerminalInventory(call, worktreeId)
+        return inventory.tabIds.includes(tabId)
+      },
+      { timeout: 60_000, message }
+    )
+    .toBe(true)
+  return inventory!
 }
