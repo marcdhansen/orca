@@ -23,3 +23,10 @@ export const PALETTE_MATCH_BUDGET = {
    */
   documentPayloadMb: 24
 } as const
+
+/** User-visible budgets measured by the built Electron Cmd+J flow. */
+export const PALETTE_INTERACTION_BUDGET = {
+  openHandlerMs: 50,
+  firstVisibleResultsMs: 100,
+  maxFrameGapMs: 50
+} as const

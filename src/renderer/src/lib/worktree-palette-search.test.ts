@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   getWorktreePaletteSearchScope,
   makeEmptyPaletteSearchResult,
+  searchWorktreeDocumentsCooperatively,
   searchWorktrees
 } from './worktree-palette-search'
+import { buildWorktreePaletteDocuments } from './worktree-palette-document'
 import {
   WORKTREE_PALETTE_QUERY_MAX_BYTES,
   isWorktreePaletteQueryTooLarge
@@ -544,5 +546,50 @@ describe('worktree-palette-search', () => {
     expect(
       searchWorktrees([worktree], '300', repoMap, { workspacePortsByWorktreeId })
     ).toHaveLength(1)
+  })
+
+  it('cooperatively preserves complete source ordering', async () => {
+    const worktrees = Array.from({ length: 20 }, (_, index) =>
+      makeWorktree({ id: `wt-${index}`, displayName: `Needle ${index}` })
+    )
+    const yieldBetweenSlices = vi.fn(async () => {})
+    const results = await searchWorktreeDocumentsCooperatively(
+      {
+        worktrees,
+        query: 'needle',
+        documents: buildWorktreePaletteDocuments(worktrees, { repoMap }),
+        repoMap
+      },
+      { timeSliceMs: 0, yieldBetweenSlices }
+    )
+
+    expect(results?.map((result) => result.worktreeId)).toEqual(
+      worktrees.map((worktree) => worktree.id)
+    )
+    expect(yieldBetweenSlices).toHaveBeenCalled()
+  })
+
+  it('drops a cooperative result when its generation is stale', async () => {
+    const worktrees = Array.from({ length: 20 }, (_, index) =>
+      makeWorktree({ id: `wt-${index}`, displayName: `Needle ${index}` })
+    )
+    let current = true
+    const results = await searchWorktreeDocumentsCooperatively(
+      {
+        worktrees,
+        query: 'needle',
+        documents: buildWorktreePaletteDocuments(worktrees, { repoMap }),
+        repoMap
+      },
+      {
+        timeSliceMs: 0,
+        shouldContinue: () => current,
+        yieldBetweenSlices: async () => {
+          current = false
+        }
+      }
+    )
+
+    expect(results).toBeNull()
   })
 })

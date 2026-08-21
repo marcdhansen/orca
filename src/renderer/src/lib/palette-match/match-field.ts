@@ -4,7 +4,7 @@ import {
   paletteProfileAllowedQualities,
   type PaletteIndexedField
 } from './indexed-field'
-import { isLetterOnlyWord, type PaletteQueryToken } from './palette-query'
+import type { PaletteQueryToken } from './palette-query'
 import type { PaletteMatchQuality } from './match-quality'
 import type { PaletteAtom } from './text-segments'
 import { isPaletteTypoCandidate, isWithinOnePaletteEdit } from './typo-distance'
@@ -56,7 +56,7 @@ function passesSigilGate(field: PaletteIndexedField, token: PaletteQueryToken): 
 }
 
 function isWordStart(field: PaletteIndexedField, index: number): boolean {
-  return field.words.some((word) => word.start === index) || index === 0
+  return field.wordStarts.has(index) || index === 0
 }
 
 function matchAtomComponentRun(atom: PaletteAtom, compact: string): [number, number] | null {
@@ -92,11 +92,11 @@ function matchLiteral(
     return { quality: 'field-exact', ranges: toRanges(field, 0, normalized.length) }
   }
   if (qualities.has('word-exact')) {
-    const word = field.words.find((entry) => entry.text === text)
+    const word = field.firstWordByText.get(text)
     if (word) {
       return { quality: 'word-exact', ranges: toRanges(field, word.start, word.end) }
     }
-    const atom = field.atoms.find((entry) => normalized.slice(entry.start, entry.end) === text)
+    const atom = field.firstAtomByText.get(text)
     if (atom) {
       return { quality: 'word-exact', ranges: toRanges(field, atom.start, atom.end) }
     }
@@ -105,8 +105,8 @@ function matchLiteral(
     return { quality: 'field-prefix', ranges: toRanges(field, 0, text.length) }
   }
   if (qualities.has('word-prefix')) {
-    const word = field.words.find((entry) => entry.text.startsWith(text))
-    const atom = field.atoms.find((entry) => normalized.startsWith(text, entry.start))
+    const word = field.uniqueWords.find((entry) => entry.text.startsWith(text))
+    const atom = field.uniqueAtoms.find((entry) => normalized.startsWith(text, entry.start))
     const start = word && atom ? Math.min(word.start, atom.start) : (word?.start ?? atom?.start)
     if (start !== undefined) {
       return { quality: 'word-prefix', ranges: toRanges(field, start, start + text.length) }
@@ -157,12 +157,11 @@ function matchTypo(
   if (!qualities.has('typo') || !token.isLetterOnly || !isPaletteTypoCandidate(token.text)) {
     return null
   }
-  for (const word of field.words) {
-    if (!isPaletteTypoCandidate(word.text) || !isLetterOnlyWord(word.text)) {
-      continue
-    }
-    if (isWithinOnePaletteEdit(token.text, word.text)) {
-      return { quality: 'typo', ranges: toRanges(field, word.start, word.end) }
+  for (let length = token.text.length - 1; length <= token.text.length + 1; length += 1) {
+    for (const word of field.typoWordsByLength.get(length) ?? []) {
+      if (isWithinOnePaletteEdit(token.text, word.text)) {
+        return { quality: 'typo', ranges: toRanges(field, word.start, word.end) }
+      }
     }
   }
   return null

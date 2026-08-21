@@ -1,13 +1,5 @@
 /* oxlint-disable max-lines */
-import React, {
-  useCallback,
-  useDeferredValue,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState
-} from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -74,11 +66,12 @@ import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { queueWorkspaceActivationTerminalFocus } from '@/lib/workspace-activation-terminal-focus'
 import {
   getWorktreePaletteSearchScope,
-  searchWorktreeDocuments,
   type MatchRange,
   type PaletteSearchResult
 } from '@/lib/worktree-palette-search'
 import { buildWorktreePaletteDocuments } from '@/lib/worktree-palette-document'
+import { useCooperativeWorktreePaletteSearch } from './cmd-j/use-cooperative-worktree-palette-search'
+import { usePaintDeferredValue } from './cmd-j/use-paint-deferred-value'
 import {
   resolveWorktreeBranchLabel,
   resolveWorktreeDisplayName
@@ -775,7 +768,7 @@ function WorktreeJumpPaletteContent({
   const settingsSections = useSettingsNavigationMetadata()
 
   const [query, setQuery] = useState('')
-  const deferredQuery = useDeferredValue(query)
+  const deferredQuery = usePaintDeferredValue(query)
   const liveQueryRef = useRef(query)
   liveQueryRef.current = query
   // Why a ref: creation must follow an explicit ArrowDown/click, and typing re-arms
@@ -1165,25 +1158,14 @@ function WorktreeJumpPaletteContent({
     ]
   )
 
-  const worktreeMatches = useMemo(
-    () =>
-      searchWorktreeDocuments({
-        worktrees: sortedWorktrees,
-        query: paletteSearchQuery,
-        documents: worktreeDocuments,
-        repoMap,
-        repoMapByHostIdentity: repoByHostIdentity,
-        checksReviewByWorktree
-      }),
-    [
-      sortedWorktrees,
-      paletteSearchQuery,
-      worktreeDocuments,
-      repoByHostIdentity,
-      repoMap,
-      checksReviewByWorktree
-    ]
-  )
+  const worktreeMatches = useCooperativeWorktreePaletteSearch({
+    worktrees: sortedWorktrees,
+    query: paletteSearchQuery,
+    documents: worktreeDocuments,
+    repoMap,
+    repoMapByHostIdentity: repoByHostIdentity,
+    checksReviewByWorktree
+  })
 
   const browserPageEntries = useMemo<SearchableBrowserPage[]>(() => {
     if (!paletteStatusInputsActive) {

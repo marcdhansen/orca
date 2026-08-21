@@ -1,4 +1,5 @@
 import { normalizePaletteText, type NormalizedText } from './normalized-text'
+import { isLetterOnlyWord } from './palette-query'
 import { segmentPaletteText, type PaletteAtom, type PaletteWord } from './text-segments'
 import type { PaletteMatchQuality } from './match-quality'
 
@@ -40,9 +41,44 @@ export type PaletteIndexedField = {
   text: NormalizedText
   atoms: readonly PaletteAtom[]
   words: readonly PaletteWord[]
+  firstAtomByText: ReadonlyMap<string, PaletteAtom>
+  firstWordByText: ReadonlyMap<string, PaletteWord>
+  uniqueAtoms: readonly PaletteAtom[]
+  uniqueWords: readonly PaletteWord[]
+  wordStarts: ReadonlySet<number>
+  typoWordsByLength: ReadonlyMap<number, readonly PaletteWord[]>
   evidenceId: string | null
   identifier: PaletteIdentifierOptions | null
   isContainer: boolean
+}
+
+function indexFirstByText<T>(entries: readonly T[], textOf: (entry: T) => string): Map<string, T> {
+  const firstByText = new Map<string, T>()
+  for (const entry of entries) {
+    const text = textOf(entry)
+    if (!firstByText.has(text)) {
+      firstByText.set(text, entry)
+    }
+  }
+  return firstByText
+}
+
+function indexTypoWordsByLength(words: readonly PaletteWord[]): Map<number, PaletteWord[]> {
+  const byLength = new Map<number, PaletteWord[]>()
+  const seen = new Set<string>()
+  for (const word of words) {
+    if (word.text.length < 4 || !isLetterOnlyWord(word.text) || seen.has(word.text)) {
+      continue
+    }
+    seen.add(word.text)
+    const bucket = byLength.get(word.text.length)
+    if (bucket) {
+      bucket.push(word)
+    } else {
+      byLength.set(word.text.length, [word])
+    }
+  }
+  return byLength
 }
 
 const IDENTIFIER_PREFIX_KINDS: ReadonlySet<PaletteIdentifierKind> = new Set<PaletteIdentifierKind>([
@@ -121,12 +157,22 @@ export function indexPaletteField(source: PaletteFieldSource): PaletteIndexedFie
   }
   const text = normalizePaletteText(trimmed)
   const segments = segmentPaletteText(text)
+  const firstAtomByText = indexFirstByText(segments.atoms, (atom) =>
+    text.normalized.slice(atom.start, atom.end)
+  )
+  const firstWordByText = indexFirstByText(segments.words, (word) => word.text)
   return {
     id: source.id,
     profile: source.profile,
     text,
     atoms: segments.atoms,
     words: segments.words,
+    firstAtomByText,
+    firstWordByText,
+    uniqueAtoms: [...firstAtomByText.values()],
+    uniqueWords: [...firstWordByText.values()],
+    wordStarts: new Set(segments.words.map((word) => word.start)),
+    typoWordsByLength: indexTypoWordsByLength(segments.words),
     evidenceId: source.evidenceId ?? null,
     identifier: source.identifier ?? null,
     isContainer: Boolean(source.isContainer)
