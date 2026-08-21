@@ -14,9 +14,14 @@ type CompletedSearch = {
   results: PaletteSearchResult[]
 }
 
+type CooperativeWorktreePaletteSearch = {
+  pending: boolean
+  results: PaletteSearchResult[]
+}
+
 export function useCooperativeWorktreePaletteSearch(
   args: WorktreePaletteSearchArgs
-): PaletteSearchResult[] {
+): CooperativeWorktreePaletteSearch {
   const { worktrees, query, documents, repoMap, repoMapByHostIdentity, checksReviewByWorktree } =
     args
   const request = useMemo<WorktreePaletteSearchArgs>(
@@ -57,5 +62,10 @@ export function useCooperativeWorktreePaletteSearch(
     }
   }, [cooperative, request])
 
-  return immediateResults ?? (completed?.request === request ? completed.results : [])
+  if (immediateResults) {
+    return { pending: false, results: immediateResults }
+  }
+  return completed?.request === request
+    ? { pending: false, results: completed.results }
+    : { pending: true, results: [] }
 }

@@ -244,15 +244,16 @@ export async function searchWorktreeDocumentsCooperatively(
   const results: PaletteSearchResult[] = []
   let sliceStartedAt = performance.now()
 
-  for (const worktree of args.worktrees) {
+  for (let index = 0; index < args.worktrees.length; index += 1) {
     if (!shouldContinue()) {
       return null
     }
+    const worktree = args.worktrees[index]
     const match = matchPreparedWorktree(args, worktree, prepared, null)
     if (match) {
       results.push(match)
     }
-    if (performance.now() - sliceStartedAt < timeSliceMs) {
+    if (index === args.worktrees.length - 1 || performance.now() - sliceStartedAt < timeSliceMs) {
       continue
     }
     await yieldBetweenSlices()

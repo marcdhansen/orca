@@ -6,7 +6,7 @@ import {
 } from './indexed-field'
 import type { PaletteQueryToken } from './palette-query'
 import type { PaletteMatchQuality } from './match-quality'
-import type { PaletteAtom } from './text-segments'
+import type { PaletteAtom, PaletteWord } from './text-segments'
 import { isPaletteTypoCandidate, isWithinOnePaletteEdit } from './typo-distance'
 
 export type PaletteFieldMatch = {
@@ -157,14 +157,20 @@ function matchTypo(
   if (!qualities.has('typo') || !token.isLetterOnly || !isPaletteTypoCandidate(token.text)) {
     return null
   }
+  let firstMatch: PaletteWord | null = null
   for (let length = token.text.length - 1; length <= token.text.length + 1; length += 1) {
     for (const word of field.typoWordsByLength.get(length) ?? []) {
-      if (isWithinOnePaletteEdit(token.text, word.text)) {
-        return { quality: 'typo', ranges: toRanges(field, word.start, word.end) }
+      if (
+        isWithinOnePaletteEdit(token.text, word.text) &&
+        (!firstMatch || word.start < firstMatch.start)
+      ) {
+        firstMatch = word
       }
     }
   }
-  return null
+  return firstMatch
+    ? { quality: 'typo', ranges: toRanges(field, firstMatch.start, firstMatch.end) }
+    : null
 }
 
 /** Best allowed match of one token against one field, or null when unmatched. */

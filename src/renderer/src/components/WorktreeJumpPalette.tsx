@@ -1158,14 +1158,15 @@ function WorktreeJumpPaletteContent({
     ]
   )
 
-  const worktreeMatches = useCooperativeWorktreePaletteSearch({
-    worktrees: sortedWorktrees,
-    query: paletteSearchQuery,
-    documents: worktreeDocuments,
-    repoMap,
-    repoMapByHostIdentity: repoByHostIdentity,
-    checksReviewByWorktree
-  })
+  const { pending: worktreeSearchPending, results: worktreeMatches } =
+    useCooperativeWorktreePaletteSearch({
+      worktrees: sortedWorktrees,
+      query: paletteSearchQuery,
+      documents: worktreeDocuments,
+      repoMap,
+      repoMapByHostIdentity: repoByHostIdentity,
+      checksReviewByWorktree
+    })
 
   const browserPageEntries = useMemo<SearchableBrowserPage[]>(() => {
     if (!paletteStatusInputsActive) {
@@ -1896,7 +1897,8 @@ function WorktreeJumpPaletteContent({
   )
   const createWorktreeName = taskSourceUrl ? query.trim() : deferredCreateWorktreeName
   // Why: a task URL bypasses query deferral, so it arms create on its own.
-  const showCreateAction = deferredShowCreateAction || taskSourceUrl !== null
+  const showCreateAction =
+    !worktreeSearchPending && (deferredShowCreateAction || taskSourceUrl !== null)
 
   // Why: arm the lookup before Enter can target the newly rendered Linear row.
   useLayoutEffect(() => {
