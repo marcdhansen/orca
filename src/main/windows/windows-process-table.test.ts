@@ -144,4 +144,55 @@ describe('wedge cooldown', () => {
     await expect(readWindowsProcessTableFresh()).rejects.toThrow(/cooling down/)
     expect(getAllProcesses).toHaveBeenCalledTimes(1)
   })
+
+  it('lets exactly one caller probe when the cooldown expires', async () => {
+    // Without claiming the recovery slot before probing, every concurrent
+    // caller passes the cooldown check at expiry and each enqueues a callback
+    // into the still-latched native queue -- so each cycle leaks another batch
+    // rather than bounding it to one probe.
+    vi.useFakeTimers()
+    const getAllProcesses = vi.fn(() => {})
+    __setWindowsProcessTreeLoaderForTests(() => ({
+      ProcessDataFlag: { None: 0, Memory: 1, CommandLine: 2 },
+      getAllProcesses
+    }))
+
+    const wedge = readWindowsProcessTableFresh()
+    const wedgeAssertion = expect(wedge).rejects.toThrow(/timed out/)
+    await vi.advanceTimersByTimeAsync(3_000)
+    await wedgeAssertion
+    expect(getAllProcesses).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(30_000)
+    const attempts = [
+      readWindowsProcessTableFresh().catch(() => 'rejected'),
+      readWindowsProcessTableFresh().catch(() => 'rejected'),
+      readWindowsProcessTableFresh().catch(() => 'rejected')
+    ]
+    await vi.advanceTimersByTimeAsync(3_000)
+    await Promise.all(attempts)
+
+    // One recovery probe, not three.
+    expect(getAllProcesses).toHaveBeenCalledTimes(2)
+  })
+
+  it('clears the deadline when the reader throws synchronously', async () => {
+    // An orphaned timer would fire later and wedge a reader that had recovered.
+    vi.useFakeTimers()
+    const getAllProcesses = vi.fn(() => {
+      throw new Error('addon exploded')
+    })
+    __setWindowsProcessTreeLoaderForTests(() => ({
+      ProcessDataFlag: { None: 0, Memory: 1, CommandLine: 2 },
+      getAllProcesses
+    }))
+
+    await expect(readWindowsProcessTableFresh()).rejects.toThrow(/exploded/)
+    await vi.advanceTimersByTimeAsync(10_000)
+
+    // The recovered reader must answer, not report a wedge left by a dead timer.
+    getAllProcesses.mockImplementation((cb: (rows: unknown) => void) => cb(NATIVE))
+    resetWindowsProcessTableForTests()
+    await expect(readWindowsProcessTableFresh()).resolves.toHaveLength(NATIVE.length)
+  })
 })

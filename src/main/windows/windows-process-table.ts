@@ -103,6 +103,9 @@ const WINDOWS_PROCESS_QUERY_TIMEOUT_MS = 3_000
 const WINDOWS_PROCESS_QUERY_COOLDOWN_MS = 30_000
 
 let wedgedUntilMs = 0
+// Why a generation: a request that already lost its deadline must not later
+// clear or re-arm the wedge on behalf of the request that replaced it.
+let readGeneration = 0
 
 function readNativeRows(): Promise<WindowsProcessRow[]> {
   const native = moduleLoader()
@@ -112,9 +115,19 @@ function readNativeRows(): Promise<WindowsProcessRow[]> {
     // tree dead. "Unavailable" has to stay distinguishable from "empty".
     return Promise.reject(new Error('windows process table unavailable'))
   }
-  if (Date.now() < wedgedUntilMs) {
+  const startedAt = Date.now()
+  if (startedAt < wedgedUntilMs) {
     return Promise.reject(new Error('windows process table is cooling down after a timeout'))
   }
+  if (wedgedUntilMs > 0) {
+    // Coming out of a wedge: re-arm the cooldown BEFORE probing, so exactly one
+    // caller gets through. Without this every concurrent caller passes the
+    // check above at expiry, each enqueues a callback into the still-latched
+    // native queue, and each cooldown cycle leaks another batch rather than
+    // bounding it to one probe.
+    wedgedUntilMs = startedAt + WINDOWS_PROCESS_QUERY_COOLDOWN_MS
+  }
+  const generation = ++readGeneration
   // Why always both flags: each adds an OpenProcess per process (Memory a
   // GetProcessMemoryInfo, CommandLine a PEB read), so asking for less would be
   // cheaper -- 15.9ms p50 versus 30.6ms at 1050 processes. But every read shares
@@ -123,16 +136,24 @@ function readNativeRows(): Promise<WindowsProcessRow[]> {
   // would restore exactly the fan-out it exists to prevent.
   const flags = native.ProcessDataFlag.Memory | native.ProcessDataFlag.CommandLine
   return new Promise((resolve, reject) => {
+    // Hoisted so a synchronous throw from getAllProcesses can clear it. An
+    // orphaned timer would otherwise fire later and wedge a reader that had
+    // already recovered.
+    let deadline: ReturnType<typeof setTimeout> | undefined
     try {
-      const deadline = setTimeout(() => {
-        wedgedUntilMs = Date.now() + WINDOWS_PROCESS_QUERY_COOLDOWN_MS
+      deadline = setTimeout(() => {
+        if (generation === readGeneration) {
+          wedgedUntilMs = Date.now() + WINDOWS_PROCESS_QUERY_COOLDOWN_MS
+        }
         reject(new Error('windows process table timed out'))
       }, WINDOWS_PROCESS_QUERY_TIMEOUT_MS)
       deadline.unref?.()
       native.getAllProcesses((processes) => {
         clearTimeout(deadline)
-        // A late callback proves the reader recovered, so stop refusing.
-        wedgedUntilMs = 0
+        // A callback proves the reader is answering, so stop refusing.
+        if (generation === readGeneration) {
+          wedgedUntilMs = 0
+        }
         if (!processes) {
           reject(new Error('windows process table returned no snapshot'))
           return
@@ -159,6 +180,7 @@ function readNativeRows(): Promise<WindowsProcessRow[]> {
         )
       }, flags)
     } catch (error) {
+      clearTimeout(deadline)
       reject(error instanceof Error ? error : new Error(String(error)))
     }
   })

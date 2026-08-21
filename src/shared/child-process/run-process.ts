@@ -226,6 +226,13 @@ export function runProcess(spec: ProcessSpec): Promise<ProcessResult> {
     // Why close rather than leave open: a child that reads stdin (a hook
     // draining its payload, a CLI probing for a TTY) otherwise blocks until the
     // timeout instead of seeing EOF immediately.
+    // Why an error listener and not just end(): a child that exits without
+    // reading makes the queued write fail with EPIPE, and an unhandled error on
+    // a stream is an uncaught exception -- which takes the whole main process
+    // down. The child's own error listener does not cover this stream. The
+    // exit code already carries the outcome, so failing to deliver stdin is
+    // not separately interesting.
+    child.stdin?.on('error', () => {})
     child.stdin?.end(spec.input)
   })
 }

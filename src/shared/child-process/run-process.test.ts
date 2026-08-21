@@ -127,3 +127,18 @@ describe('abort', () => {
     expect(result.timedOut).toBe(false)
   }, 20_000)
 })
+
+describe('stdin delivery failures', () => {
+  it('survives a child that exits without reading its input', async () => {
+    // The queued write fails with EPIPE, and an unhandled error on a stream is
+    // an uncaught exception — it would take the whole main process down.
+    const result = await runProcess({
+      program: process.execPath,
+      args: ['-e', 'process.exit(7)'],
+      input: 'x'.repeat(1024 * 1024),
+      timeoutMs: 15_000
+    })
+    expect(result.code).toBe(7)
+    expect(result.timedOut).toBe(false)
+  }, 20_000)
+})
