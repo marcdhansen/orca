@@ -3720,6 +3720,9 @@ function loadInitialWebSessionTabs(
   expectedEnvironmentPairingRevision: number | undefined,
   isCurrent: () => boolean
 ): void {
+  // Why: only a conclusion that reached the store may settle the mirror, so
+  // this stays null on every failure exit below.
+  let settleHydration: (() => void) | null = null
   void window.api.runtimeEnvironments
     .call({
       selector: environmentId,
@@ -3783,6 +3786,7 @@ function loadInitialWebSessionTabs(
           (state) => applyFreshWebSessionTabsSnapshots(state, applicable, environmentId),
           applicable
         )
+        settleHydration = () => markHostSessionMirrorHydrated(environmentId)
       } finally {
         for (const finishRecovery of finishRecoveries) {
           finishRecovery()
@@ -3798,14 +3802,14 @@ function loadInitialWebSessionTabs(
       }
     })
     .finally(() => {
-      // Why: every outcome — snapshots, an empty inventory, a host error, a
-      // timeout — settles the mirror. Work parked on "liveness still unknown"
-      // would otherwise wait forever on the failure paths.
+      // Why: a rejected or timed-out inventory is `unverifiable`, never proof a
+      // host-owned PTY exited, and this latch releases into replaying a resume.
+      // Parked work waits for the next inventory instead.
       if (
         isCurrent() &&
         getRuntimeEnvironmentRevision(environmentId) === expectedEnvironmentPairingRevision
       ) {
-        markHostSessionMirrorHydrated(environmentId)
+        settleHydration?.()
       }
     })
 }
@@ -4324,7 +4328,6 @@ export function useWebSessionTabsSync(): void {
                     '[web-session-tabs-sync] global subscription failed:',
                     response.error.message
                   )
-                  markHostSessionMirrorHydrated(environmentId)
                   return
                 }
                 const event = response.result as SessionTabsStreamEvent
@@ -4460,9 +4463,8 @@ export function useWebSessionTabsSync(): void {
                   return
                 }
                 if (event.type !== 'snapshot' && event.type !== 'updated') {
-                  // Why: a closed stream carries no frame to apply, and nothing
-                  // further is coming — settle so parked work cannot wedge.
-                  markHostSessionMirrorHydrated(environmentId)
+                  // Why: silence carries no frame, and a stream that stopped
+                  // talking has not reported a single PTY dead.
                   return
                 }
                 const receivedFrame = recordReceivedWebSessionTabsSnapshot(environmentId, event)
@@ -4519,7 +4521,6 @@ export function useWebSessionTabsSync(): void {
               onError: (error) => {
                 if (isCurrent()) {
                   console.warn('[web-session-tabs-sync] global subscription error:', error.message)
-                  markHostSessionMirrorHydrated(environmentId)
                 }
               }
             }
@@ -4530,7 +4531,6 @@ export function useWebSessionTabsSync(): void {
             '[web-session-tabs-sync] failed to subscribe globally:',
             error instanceof Error ? error.message : String(error)
           )
-          markHostSessionMirrorHydrated(environmentId)
         },
         onUnsubscribeError: (error) => {
           console.warn('[web-session-tabs-sync] failed to unsubscribe globally:', error)
@@ -4681,13 +4681,12 @@ export function useWebSessionTabsSync(): void {
                     '[web-session-tabs-sync] subscription failed:',
                     response.error.message
                   )
-                  markHostSessionMirrorHydrated(environmentId)
                   return
                 }
                 const event = response.result as SessionTabsStreamEvent
                 if (event.type !== 'snapshot' && event.type !== 'updated') {
-                  // No frame to apply, and a closed stream is a conclusion.
-                  markHostSessionMirrorHydrated(environmentId)
+                  // No frame to apply, and a dead stream is not a verdict about
+                  // this worktree — let alone about the whole environment.
                   return
                 }
                 const receivedFrame = recordReceivedWebSessionTabsSnapshot(environmentId, event)
@@ -4722,7 +4721,6 @@ export function useWebSessionTabsSync(): void {
               onError: (error) => {
                 if (isCurrent()) {
                   console.warn('[web-session-tabs-sync] subscription error:', error.message)
-                  markHostSessionMirrorHydrated(environmentId)
                 }
               }
             }

@@ -64,13 +64,10 @@ function drainParkedWaiters(matches: (waiter: ParkedMirrorWaiter) => boolean): v
 }
 
 /**
- * Settles the whole environment. Call only for a conclusion that speaks for
- * every worktree: a full inventory that has ALREADY been applied to the store,
- * or a failure that proves no inventory is coming (a host error, a transport
- * failure, a closed stream). Waiters drain synchronously, so calling this
- * before the frame's store patch lands would re-run recovery against state the
- * frame has not populated yet — which is the bug this whole module exists to
- * prevent.
+ * Settles the whole environment. Call only for a full inventory ALREADY applied
+ * to the store — never for a failure, which is `unverifiable` and no evidence a
+ * host-owned PTY exited. Waiters drain synchronously, so settling before the
+ * patch lands re-runs recovery against state the frame has not written yet.
  */
 export function markHostSessionMirrorHydrated(environmentId: string): void {
   hydratedGenerationByEnvironment.set(

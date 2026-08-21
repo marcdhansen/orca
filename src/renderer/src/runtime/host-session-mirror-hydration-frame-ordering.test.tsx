@@ -14,6 +14,9 @@
  *
  * The one-shot listAll is deliberately left PENDING so the stream frame is the
  * first hydration signal, which is exactly the race the fix has to survive.
+ *
+ * The second block pins the other half: a failure settles NOTHING. This latch
+ * releases into replaying a resume, so `unverifiable` must not read as `exited`.
  */
 
 import { act, cleanup, renderHook } from '@testing-library/react'
@@ -152,12 +155,21 @@ function seedState(): void {
     { id: ENV, createdAt: 100, pairingRevision: REVISION }
   ] as PublicKnownRuntimeEnvironment[]
   replaceRuntimeEnvironmentRevisions(runtimeEnvironments)
-  const worktrees = [makeWorktree(WT, '/workspace/feature'), makeWorktree(BG_WT, '/workspace/background')]
+  const worktrees = [
+    makeWorktree(WT, '/workspace/feature'),
+    makeWorktree(BG_WT, '/workspace/background')
+  ]
   useAppStore.setState(
     {
       ...initialState,
       repos: [
-        { id: REPO_ID, path: '/workspace/repo', displayName: 'repo', badgeColor: '#000', addedAt: 0 }
+        {
+          id: REPO_ID,
+          path: '/workspace/repo',
+          displayName: 'repo',
+          badgeColor: '#000',
+          addedAt: 0
+        }
       ],
       worktreesByRepo: { [REPO_ID]: worktrees },
       activeRepoId: REPO_ID,
@@ -315,8 +327,81 @@ describe('mirrored-pane resume deferral against real stream frames', () => {
 
     // The background mirror tab was retracted by the inventory, so recovery is
     // finally justified and the replacement resume tab appears.
-    expect(
-      useAppStore.getState().sleepingAgentSessionsByPaneKey[backgroundPaneKey]
-    ).toBeUndefined()
+    expect(useAppStore.getState().sleepingAgentSessionsByPaneKey[backgroundPaneKey]).toBeUndefined()
+  })
+})
+
+describe('mirror latch verdicts against real stream failures', () => {
+  beforeEach(() => {
+    subscriptions.length = 0
+    runtimeCall.mockClear()
+    runtimeSubscribe.mockClear()
+    mocks.createTerminal.mockReset().mockResolvedValue(undefined)
+    mocks.recoverSnapshot.mockReset().mockImplementation(async (_state, snapshot) => snapshot)
+    mocks.runtimeSessionMirrorEnvironmentKey.mockReset().mockReturnValue(MIRROR_KEY)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { runtimeEnvironments: { call: runtimeCall, subscribe: runtimeSubscribe } }
+    })
+    resetWebSessionTabsSnapshotFreshnessForTests()
+    resetHostSessionMirrorHydrationForTests()
+    seedState()
+  })
+
+  afterEach(() => {
+    cleanup()
+    useAppStore.setState(initialState, true)
+    replaceRuntimeEnvironmentRevisions([])
+    resetWebSessionTabsSnapshotFreshnessForTests()
+    resetHostSessionMirrorHydrationForTests()
+  })
+
+  it('a rejected inventory keeps a parked pane parked', async () => {
+    let rejectListAll: (error: Error) => void = () => {}
+    runtimeCall.mockImplementation((request: { method: string }) =>
+      request.method === 'session.tabs.listAll'
+        ? new Promise((_resolve, reject) => {
+            rejectListAll = reject
+          })
+        : new Promise(() => {})
+    )
+    renderHook(() => useWebSessionTabsSync())
+    await act(settle)
+    const paneKey = seedSleepingRecord(MIRROR_TAB_ID, WT, 'codex-session-listall-reject')
+    expect(resumeSleepingAgentSessionsForWorktree(WT)).toBe(0)
+
+    // Contact is lost AFTER the pane parked. That is `unverifiable`, not proof
+    // the host-owned PTY exited, so nothing may drain on it.
+    await act(async () => {
+      rejectListAll(new Error('relay disconnected'))
+      await settle()
+    })
+
+    expect(tabIds(WT)).toEqual([MIRROR_TAB_ID])
+    expect(useAppStore.getState().sleepingAgentSessionsByPaneKey[paneKey]).toBeDefined()
+    expect(Object.keys(useAppStore.getState().automaticAgentResumeClaimsByTabId)).toHaveLength(0)
+  })
+
+  it('a scoped stream error settles neither its own worktree nor another', async () => {
+    renderHook(() => useWebSessionTabsSync())
+    await act(settle)
+    const activePaneKey = seedSleepingRecord(MIRROR_TAB_ID, WT, 'codex-session-active-error')
+    const backgroundPaneKey = seedSleepingRecord(BG_MIRROR_TAB_ID, BG_WT, 'codex-session-bg-error')
+    expect(resumeSleepingAgentSessionsForWorktree(WT)).toBe(0)
+    expect(resumeSleepingAgentSessionsForWorktree(BG_WT)).toBe(0)
+
+    await act(async () => {
+      findSubscription('session.tabs.subscribe').callbacks.onError?.({
+        message: 'stream closed'
+      } as never)
+      await settle()
+    })
+
+    const state = useAppStore.getState()
+    expect(tabIds(WT)).toEqual([MIRROR_TAB_ID])
+    expect(state.sleepingAgentSessionsByPaneKey[activePaneKey]).toBeDefined()
+    expect(tabIds(BG_WT)).toEqual([BG_MIRROR_TAB_ID])
+    expect(state.sleepingAgentSessionsByPaneKey[backgroundPaneKey]).toBeDefined()
+    expect(Object.keys(state.automaticAgentResumeClaimsByTabId)).toHaveLength(0)
   })
 })
