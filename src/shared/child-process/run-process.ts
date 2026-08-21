@@ -108,7 +108,14 @@ export function resolveSpawn(spec: ProcessSpec, platform: NodeJS.Platform): Reso
   }
 }
 
-/** Start a child process. Use for long-lived or streaming children. */
+/**
+ * Start a child process. Use for long-lived or streaming children.
+ *
+ * The caller owns the returned streams, including their `error` events — an
+ * unhandled one is an uncaught exception that takes the main process down.
+ * `runProcess` handles that for you; here it cannot, because a blanket handler
+ * would also defeat callers that track and remove their own listeners.
+ */
 export function spawnProcess(spec: ProcessSpec): ChildProcess {
   const resolved = resolveSpawn(spec, process.platform)
   return nodeSpawn(resolved.file, [...resolved.args], resolved.options)
@@ -177,6 +184,15 @@ export function runProcess(spec: ProcessSpec): Promise<ProcessResult> {
 
     child.stdout?.on('data', (chunk: Buffer | string) => stdout.write(chunk))
     child.stderr?.on('data', (chunk: Buffer | string) => stderr.write(chunk))
+    // Why listeners that do nothing: an unhandled `error` on a stream is an
+    // uncaught exception, and that takes the whole main process down. A child
+    // that exits without reading makes the queued stdin write fail with EPIPE,
+    // and a broken pipe can surface on the read side too. The child's own
+    // `error` listener does not cover its streams. Losing output is not worth a
+    // crash, and the exit code still reaches the caller.
+    for (const stream of [child.stdin, child.stdout, child.stderr]) {
+      stream?.on('error', () => {})
+    }
 
     let graceTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -226,13 +242,6 @@ export function runProcess(spec: ProcessSpec): Promise<ProcessResult> {
     // Why close rather than leave open: a child that reads stdin (a hook
     // draining its payload, a CLI probing for a TTY) otherwise blocks until the
     // timeout instead of seeing EOF immediately.
-    // Why an error listener and not just end(): a child that exits without
-    // reading makes the queued write fail with EPIPE, and an unhandled error on
-    // a stream is an uncaught exception -- which takes the whole main process
-    // down. The child's own error listener does not cover this stream. The
-    // exit code already carries the outcome, so failing to deliver stdin is
-    // not separately interesting.
-    child.stdin?.on('error', () => {})
     child.stdin?.end(spec.input)
   })
 }

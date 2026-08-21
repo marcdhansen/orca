@@ -191,8 +191,10 @@ describe('wedge cooldown', () => {
     await vi.advanceTimersByTimeAsync(10_000)
 
     // The recovered reader must answer, not report a wedge left by a dead timer.
-    getAllProcesses.mockImplementation((cb: (rows: unknown) => void) => cb(NATIVE))
-    resetWindowsProcessTableForTests()
+    __setWindowsProcessTreeLoaderForTests(() => ({
+      ProcessDataFlag: { None: 0, Memory: 1, CommandLine: 2 },
+      getAllProcesses: (cb: (rows: typeof NATIVE | undefined) => void) => cb(NATIVE)
+    }))
     await expect(readWindowsProcessTableFresh()).resolves.toHaveLength(NATIVE.length)
   })
 })
