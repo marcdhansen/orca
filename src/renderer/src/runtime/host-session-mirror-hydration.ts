@@ -93,7 +93,9 @@ export function markHostSessionMirrorWorktreeHydrated(
 }
 
 /** Why: waiters survive this reset — a re-pair or effect restart replaces the
- *  verdict, it does not cancel the recovery the client still owes. */
+ *  verdict, it does not cancel the recovery the client still owes. A permanently
+ *  removed environment therefore keeps its waiters: bounded at one per worktree,
+ *  and inert, because nothing can settle an environment that never returns. */
 export function clearHostSessionMirrorHydration(environmentId: string): void {
   hydratedGenerationByEnvironment.delete(environmentId)
   const prefix = `${environmentId}\0`
