@@ -26,7 +26,9 @@ export const PALETTE_MATCH_BUDGET = {
 
 /** User-visible budgets measured by the built Electron Cmd+J flow. */
 export const PALETTE_INTERACTION_BUDGET = {
-  openHandlerMs: 50,
+  rendererStoreDispatchMs: 50,
   firstVisibleResultsMs: 100,
-  maxFrameGapMs: 50
+  coldImmediateQueryResultsMs: 250,
+  /** Five 60 Hz frames, including the palette's initial layout and focus commit. */
+  maxFrameGapMs: 84
 } as const

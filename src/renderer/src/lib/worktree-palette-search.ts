@@ -30,7 +30,7 @@ import {
   matchWorktreePaletteTaskUrl,
   parseCmdJTaskSourceUrl
 } from './worktree-palette-task-url-match'
-import { yieldToEventLoop } from '../../../shared/event-loop-yield'
+import { yieldToPalettePaint } from './palette-cooperative-scheduler'
 
 export type { MatchRange }
 
@@ -161,18 +161,6 @@ export type WorktreePaletteSearchArgs = {
   repoMap: ReadonlyMap<string, Repo>
   repoMapByHostIdentity?: ReadonlyMap<string, Repo>
   checksReviewByWorktree?: ReadonlyMap<Worktree, HostedReviewInfo | null>
-}
-
-async function yieldToPalettePaint(): Promise<void> {
-  if (typeof requestAnimationFrame !== 'function') {
-    await yieldToEventLoop()
-    return
-  }
-  await new Promise<void>((resolve) => {
-    requestAnimationFrame(() => {
-      void yieldToEventLoop().then(resolve)
-    })
-  })
 }
 
 function matchPreparedWorktree(

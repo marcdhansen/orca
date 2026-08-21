@@ -69,8 +69,8 @@ import {
   type MatchRange,
   type PaletteSearchResult
 } from '@/lib/worktree-palette-search'
-import { buildWorktreePaletteDocuments } from '@/lib/worktree-palette-document'
 import { useCooperativeWorktreePaletteSearch } from './cmd-j/use-cooperative-worktree-palette-search'
+import { useCooperativeWorktreePaletteDocuments } from './cmd-j/use-cooperative-worktree-palette-documents'
 import { usePaintDeferredValue } from './cmd-j/use-paint-deferred-value'
 import {
   resolveWorktreeBranchLabel,
@@ -1131,23 +1131,21 @@ function WorktreeJumpPaletteContent({
 
   // Why keyed on the unsorted list: normalized documents depend only on text
   // inputs, so re-sorting for recency re-ranks without re-normalizing anything.
-  const worktreeDocuments = useMemo(
-    () =>
-      // Archived workspaces are never searchable, so normalizing them is waste.
-      buildWorktreePaletteDocuments(
-        allWorktrees.filter((worktree) => !worktree.isArchived),
-        {
-          repoMap,
-          repoMapByHostIdentity: repoByHostIdentity,
-          prCache,
-          issueCache,
-          workspacePortsByWorktreeId: getWorkspacePortsByWorktreeId(workspacePortScan),
-          checksReviewByWorktree,
-          hostLabelByWorktreeId
-        }
-      ),
+  const searchableWorktrees = useMemo(
+    () => allWorktrees.filter((worktree) => !worktree.isArchived),
+    [allWorktrees]
+  )
+  const worktreeDocumentSources = useMemo(
+    () => ({
+      repoMap,
+      repoMapByHostIdentity: repoByHostIdentity,
+      prCache,
+      issueCache,
+      workspacePortsByWorktreeId: getWorkspacePortsByWorktreeId(workspacePortScan),
+      checksReviewByWorktree,
+      hostLabelByWorktreeId
+    }),
     [
-      allWorktrees,
       repoByHostIdentity,
       repoMap,
       prCache,
@@ -1157,12 +1155,15 @@ function WorktreeJumpPaletteContent({
       hostLabelByWorktreeId
     ]
   )
+  const { documents: worktreeDocuments, pending: worktreeDocumentsPending } =
+    useCooperativeWorktreePaletteDocuments(searchableWorktrees, worktreeDocumentSources)
 
   const { pending: worktreeSearchPending, results: worktreeMatches } =
     useCooperativeWorktreePaletteSearch({
       worktrees: sortedWorktrees,
       query: paletteSearchQuery,
       documents: worktreeDocuments,
+      documentsPending: worktreeDocumentsPending,
       repoMap,
       repoMapByHostIdentity: repoByHostIdentity,
       checksReviewByWorktree
@@ -3136,6 +3137,7 @@ function WorktreeJumpPaletteContent({
           selectionMovedByUserRef.current = true
         }}
         className="max-h-[min(600px,calc(100vh-14rem))] px-2.5 pb-2.5 pt-2"
+        data-worktree-index-pending={worktreeDocumentsPending ? 'true' : 'false'}
       >
         {isLoading && selectableItems.length === 0 && !showCreateAction ? (
           <PaletteState
