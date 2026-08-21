@@ -1,22 +1,19 @@
 /**
  * GUARD TESTS — deliberately NOT red-first for this diff. They pass with the
- * host-session-binding fix reverted, and that is the point: they pin the
- * invariant that fix DEPENDS on, not the fix itself. Do not delete them as
- * vacuous.
+ * host-session-binding fix reverted, and that is the point: they pin the store
+ * invariant that fix DEPENDS on. Do not delete them as vacuous.
  *
- * The invariant: creating a host-initiated terminal must not arm its repo's
- * topology fence. An armed fence makes rebaseWorkspaceSessionTerminalMembership
- * treat every later renderer close as a stale replay and restore the row,
- * leaving the durable de-persist to ride the PTY exit — which is asynchronous
- * and can fail outright. A close whose kill never lands would then stay
- * persisted forever: a session-level twin of the closed-tab resurrection
- * STA-4593 fixed at the snapshot layer.
- *
- * Safety is one guard away — advanceTopologyFence's
+ * Seam under test: store.persistPtyBinding must not arm the repo's topology
+ * fence. An armed fence makes rebaseWorkspaceSessionTerminalMembership treat a
+ * later renderer close as a stale replay and restore the row, leaving the
+ * durable de-persist to ride the PTY exit — asynchronous, and able to fail
+ * outright. Safety is one guard away: advanceTopologyFence's
  * `currentRevision <= 0 && !establishesSplitAuthority` early return
- * (persistence/loading-store/store.ts:3284-3293). If anyone arms the fence from
- * the create path (passes expectedSourceBinding, or relaxes that guard), these
- * fail immediately and that scenario becomes real.
+ * (persistence/loading-store/store.ts:3284-3293).
+ *
+ * These drive the store directly, so they do NOT cover what createTerminal
+ * passes it — cli-terminal-create-host-session-binding.test.ts and
+ * graph-sync-live-daemon-pty-tab-preservation.test.ts own that path.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -41,7 +38,10 @@ const TAB = 'cli-tab-1'
 const LEAF = '11111111-1111-4111-8111-111111111111'
 const PTY = `${WT}@@a1b2c3d4`
 
-function rendererWriteWithout(session: WorkspaceSessionState, tabId: string): WorkspaceSessionState {
+function rendererWriteWithout(
+  session: WorkspaceSessionState,
+  tabId: string
+): WorkspaceSessionState {
   // A renderer session write after closing `tabId`: the row is gone, and the
   // renderer never writes the host-private topology fence.
   const next: WorkspaceSessionState = {
