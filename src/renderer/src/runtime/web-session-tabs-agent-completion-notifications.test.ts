@@ -78,6 +78,7 @@ function makeAgentSnapshot(
 function applySnapshot(snapshot: RuntimeMobileSessionTabsResult, live: boolean): void {
   applyWebSessionTabsStorePatch(
     (state) => applyWebSessionTabsSnapshot(state, snapshot, ENVIRONMENT_ID, NOW),
+    { settles: [{ environmentId: ENVIRONMENT_ID, worktreeId: snapshot.worktree }] },
     snapshot,
     live
   )

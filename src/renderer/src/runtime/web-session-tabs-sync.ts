@@ -3580,12 +3580,60 @@ function applyWebSessionTabsSnapshotOperations(
   return Object.keys(mergedPatch).length === 0 ? state : mergedPatch
 }
 
+/** Proof that a session-tabs store patch committed. Invoke it after the
+ *  frame's finishRecovery to settle the mirror latch for its verdicts. */
+export type HostSessionMirrorSettle = () => void
+
+/**
+ * The host verdicts a store patch carries. `settles` may name a pair the patch
+ * wrote no bytes for ONLY when the store already holds an equal/newer accepted
+ * view of it (a stale or unchanged snapshot filtered inside `buildPatch`).
+ * `fullInventory` upgrades a completely applied inventory to an
+ * environment-wide verdict: absence from it is itself the host answering, but
+ * a partial one speaks only for the worktrees whose frames reached the store —
+ * the rest wait for the next clean inventory rather than read as retracted.
+ */
+export type HostSessionMirrorPatchVerdict = {
+  settles: readonly { environmentId: string; worktreeId: string }[]
+  fullInventory?: { environmentId: string; publishedSnapshotCount: number }
+}
+
+function createHostSessionMirrorSettle(
+  verdict: HostSessionMirrorPatchVerdict
+): HostSessionMirrorSettle {
+  return () => {
+    const { settles, fullInventory } = verdict
+    if (fullInventory && settles.length === fullInventory.publishedSnapshotCount) {
+      markHostSessionMirrorHydrated(fullInventory.environmentId)
+      return
+    }
+    for (const { environmentId, worktreeId } of settles) {
+      markHostSessionMirrorWorktreeHydrated(environmentId, worktreeId)
+    }
+  }
+}
+
+/** Settling with no patch is correct only for a frame rejected as stale: the
+ *  rejection is backed by an equal/newer view already accepted into the store,
+ *  so the host HAS answered for this worktree. No other precondition may use
+ *  this — a transport failure is `unverifiable` and settles nothing. */
+function hostSessionMirrorSettleForStaleFrame(
+  environmentId: string,
+  worktreeId: string
+): HostSessionMirrorSettle {
+  return () => markHostSessionMirrorWorktreeHydrated(environmentId, worktreeId)
+}
+
 export function applyWebSessionTabsStorePatch(
   buildPatch: (state: AppState) => WebSessionTabsSyncState | Partial<WebSessionTabsSyncState>,
+  hostMirrorVerdict: HostSessionMirrorPatchVerdict,
   agentStatusSnapshots?: RuntimeMobileSessionTabsResult | readonly RuntimeMobileSessionTabsResult[],
   allowCompletionNotification = false
-): void {
+): HostSessionMirrorSettle {
   let mirroredAgentStatusChanged = false
+  // Why: zustand commits before notifying subscribers, so a producer that ran
+  // to completion has landed even when a subscriber throws afterwards.
+  let patchCommitted = false
   const acceptedNotificationStatuses: {
     paneKey: string
     worktreeId: string
@@ -3595,7 +3643,9 @@ export function applyWebSessionTabsStorePatch(
       localStateStartedAt?: number
     }
   }[] = []
-  useAppStore.setState((state) => {
+  const runStorePatch = (
+    state: AppState
+  ): WebSessionTabsSyncState | Partial<WebSessionTabsSyncState> => {
     const patch = buildPatch(state)
     mirroredAgentStatusChanged = patch !== state && Object.hasOwn(patch, 'agentStatusByPaneKey')
     if (agentStatusSnapshots) {
@@ -3704,32 +3754,34 @@ export function applyWebSessionTabsStorePatch(
         }
       }
     }
+    patchCommitted = true
     return patch
-  })
-  // Why: paired-web snapshots bypass setAgentStatus, so arm the stale-boundary timer explicitly like local hook events do.
-  if (mirroredAgentStatusChanged) {
-    useAppStore.getState().scheduleAgentStatusFreshness()
   }
-  for (const status of acceptedNotificationStatuses) {
-    observeAgentHookCompletionForNotification(status)
+  try {
+    useAppStore.setState(runStorePatch)
+  } catch (error) {
+    if (!patchCommitted) {
+      throw error
+    }
+    console.warn('[web-session-tabs-sync] a store subscriber failed after the patch landed:', error)
   }
-}
-
-/** Why: absence from a FULLY applied inventory is itself a verdict, but a
- *  partial one speaks only for the worktrees whose frames reached the store —
- *  the rest wait for the next clean inventory rather than read as retracted. */
-function settleHostSessionMirrorForAppliedInventory(
-  environmentId: string,
-  appliedWorktreeIds: readonly string[],
-  publishedSnapshotCount: number
-): void {
-  if (appliedWorktreeIds.length === publishedSnapshotCount) {
-    markHostSessionMirrorHydrated(environmentId)
-    return
+  // Why: the receipt exists exactly from the commit on, so no caller can settle
+  // evidence the store does not hold, and none can lose one it does.
+  const settleHostMirror = createHostSessionMirrorSettle(hostMirrorVerdict)
+  try {
+    // Why: paired-web snapshots bypass setAgentStatus, so arm the stale-boundary timer explicitly like local hook events do.
+    if (mirroredAgentStatusChanged) {
+      useAppStore.getState().scheduleAgentStatusFreshness()
+    }
+    for (const status of acceptedNotificationStatuses) {
+      observeAgentHookCompletionForNotification(status)
+    }
+  } catch (error) {
+    // Why: notification bookkeeping cannot un-land the patch, so it must not
+    // destroy the settle receipt of evidence already in the store.
+    console.warn('[web-session-tabs-sync] post-patch bookkeeping failed:', error)
   }
-  for (const worktreeId of appliedWorktreeIds) {
-    markHostSessionMirrorWorktreeHydrated(environmentId, worktreeId)
-  }
+  return settleHostMirror
 }
 
 function loadInitialWebSessionTabs(
@@ -3799,16 +3851,17 @@ function loadInitialWebSessionTabs(
               receivedFrames[index]!
             )
         )
-        applyWebSessionTabsStorePatch(
+        settleHydration = applyWebSessionTabsStorePatch(
           (state) => applyFreshWebSessionTabsSnapshots(state, applicable, environmentId),
+          {
+            settles: applicable.map((snapshot) => ({
+              environmentId,
+              worktreeId: snapshot.worktree
+            })),
+            fullInventory: { environmentId, publishedSnapshotCount: result.snapshots.length }
+          },
           applicable
         )
-        settleHydration = () =>
-          settleHostSessionMirrorForAppliedInventory(
-            environmentId,
-            applicable.map((snapshot) => snapshot.worktree),
-            result.snapshots.length
-          )
       } finally {
         for (const finishRecovery of finishRecoveries) {
           finishRecovery()
@@ -4125,10 +4178,20 @@ export function useWebSessionTabsSync(): void {
         batch.deferredRepairWorktrees.delete(worktreeId)
       }
       if (operations.length > 0) {
-        applyWebSessionTabsStorePatch(
+        const settleMirror = applyWebSessionTabsStorePatch(
           (state) => applyWebSessionTabsSnapshotOperations(state, operations),
+          {
+            settles: operations.map(({ environmentId, snapshot }) => ({
+              environmentId,
+              worktreeId: snapshot.worktree
+            }))
+          },
           operations.map(({ snapshot }) => snapshot)
         )
+        // Why: every operation is post-recovery or inventory-absence evidence
+        // with no finishRecovery of its own pending, so settle now — a deferred
+        // tombstone otherwise leaves its worktree parked on a healthy host.
+        settleMirror()
       }
       finishVisibilityResumeBatchIfIdle(batch)
     }
@@ -4436,21 +4499,23 @@ export function useWebSessionTabsSync(): void {
                             ? [snapshot]
                             : []
                         )
-                        if (freshSnapshots.length > 0) {
-                          applyWebSessionTabsStorePatch(
-                            (state) =>
-                              applyWebSessionTabsSnapshots(state, freshSnapshots, environmentId),
-                            freshSnapshots
-                          )
-                        }
-                        // Why: the evidence is complete here — a throw in the
-                        // bookkeeping below cannot un-land the patch above.
-                        settleHydration = () =>
-                          settleHostSessionMirrorForAppliedInventory(
-                            environmentId,
-                            applicable.map(({ snapshot }) => snapshot.worktree),
-                            event.snapshots.length
-                          )
+                        // Why: stale or unchanged members of `applicable` settle
+                        // too — their conclusions are the already-accepted view.
+                        settleHydration = applyWebSessionTabsStorePatch(
+                          (state) =>
+                            applyWebSessionTabsSnapshots(state, freshSnapshots, environmentId),
+                          {
+                            settles: applicable.map(({ snapshot }) => ({
+                              environmentId,
+                              worktreeId: snapshot.worktree
+                            })),
+                            fullInventory: {
+                              environmentId,
+                              publishedSnapshotCount: event.snapshots.length
+                            }
+                          },
+                          freshSnapshots
+                        )
                         const freshSnapshotSet = new Set(freshSnapshots)
                         for (const { index, snapshot } of applicable) {
                           if (unchangedVisibilityResumeSnapshots[index]) {
@@ -4505,7 +4570,7 @@ export function useWebSessionTabsSync(): void {
                   event.worktree,
                   receivedFrame
                 )
-                let frameReachedStore = false
+                let settleHydration: HostSessionMirrorSettle | null = null
                 void recoverWebSessionTerminalOrphansBeforeApply(
                   useAppStore.getState(),
                   event,
@@ -4522,17 +4587,22 @@ export function useWebSessionTabsSync(): void {
                       ) &&
                       shouldApplyVisibilityResumeSnapshot(environmentId, recovered, receivedFrame)
                     ) {
-                      frameReachedStore = true
                       if (replayed) {
                         acceptReplayedWebSessionTabsSnapshot(environmentId, recovered.worktree)
                       }
                       if (shouldApplyWebSessionTabsSnapshot(recovered, environmentId)) {
-                        applyWebSessionTabsStorePatch(
+                        settleHydration = applyWebSessionTabsStorePatch(
                           (state) => applyWebSessionTabsSnapshot(state, recovered, environmentId),
+                          { settles: [{ environmentId, worktreeId: recovered.worktree }] },
                           recovered,
                           event.type === 'updated' && !replayed
                         )
                         recordVisibilityResumeSnapshot(environmentId, recovered, receivedFrame)
+                      } else {
+                        settleHydration = hostSessionMirrorSettleForStaleFrame(
+                          environmentId,
+                          recovered.worktree
+                        )
                       }
                     }
                   })
@@ -4544,10 +4614,10 @@ export function useWebSessionTabsSync(): void {
                   .finally(() => {
                     finishRecovery()
                     // Why: this frame speaks for its own worktree only, and only
-                    // if it was applied — a discarded frame leaves the pane's PTY
-                    // as unaccounted for as before it arrived.
-                    if (isCurrent() && frameReachedStore) {
-                      markHostSessionMirrorWorktreeHydrated(environmentId, event.worktree)
+                    // through the receipt of what actually landed — a discarded
+                    // frame leaves the pane's PTY as unaccounted as before.
+                    if (isCurrent()) {
+                      settleHydration?.()
                     }
                   })
               },
@@ -4612,14 +4682,14 @@ export function useWebSessionTabsSync(): void {
 
     let requestedInitialTerminal = false
     let requestedRespawnAfterWake = false
-    /** Resolves true only when the frame reached the store, which is what the
-     *  caller is allowed to settle the mirror on. */
+    /** Resolves the settle receipt of the evidence this frame put (or already
+     *  had) in the store, or null when the frame was discarded undecided. */
     const applyActiveSnapshot = async (
       event: RuntimeMobileSessionTabsResult & { type: 'snapshot' | 'updated' },
       response: RuntimeRpcResponse<unknown>,
       isCurrent: () => boolean,
       receivedFrame: number
-    ): Promise<boolean> => {
+    ): Promise<HostSessionMirrorSettle | null> => {
       const recovered = await recoverWebSessionTerminalOrphansBeforeApply(
         useAppStore.getState(),
         event,
@@ -4631,7 +4701,7 @@ export function useWebSessionTabsSync(): void {
         !shouldApplyRecoveredWebSessionTabsSnapshot(environmentId, recovered, receivedFrame) ||
         !shouldApplyVisibilityResumeSnapshotRef.current(environmentId, recovered, receivedFrame)
       ) {
-        return false
+        return null
       }
       if (event.type === 'snapshot' || isRuntimeSubscriptionReplayResponse(response)) {
         // Why: the parallel global stream can consume an earlier replay allowance before this authoritative snapshot lands.
@@ -4662,16 +4732,18 @@ export function useWebSessionTabsSync(): void {
         skipWakeRespawn: shouldSkipWebRuntimeWakeTerminalRespawn(activeWorktreeId)
       })
       // Why: a stale frame is backed by an equal/newer store view already accepted.
-      let reachedStore = !fresh
+      let settleMirror: HostSessionMirrorSettle | null = fresh
+        ? null
+        : hostSessionMirrorSettleForStaleFrame(environmentId, recovered.worktree)
       try {
         if (fresh) {
           const replayed = isRuntimeSubscriptionReplayResponse(response)
-          applyWebSessionTabsStorePatch(
+          settleMirror = applyWebSessionTabsStorePatch(
             (state) => applyWebSessionTabsSnapshot(state, recovered, environmentId),
+            { settles: [{ environmentId, worktreeId: recovered.worktree }] },
             recovered,
             event.type === 'updated' && !replayed
           )
-          reachedStore = true
           recordVisibilityResumeSnapshotRef.current(environmentId, recovered, receivedFrame)
         }
         if (isCurrent() && shouldBootstrapInitialTerminal) {
@@ -4701,7 +4773,7 @@ export function useWebSessionTabsSync(): void {
           console.warn('[web-session-tabs-sync] snapshot follow-up failed:', error)
         }
       }
-      return reachedStore
+      return settleMirror
     }
     const disposeSubscription = installWindowVisibilitySubscriptionParking([
       {
@@ -4755,14 +4827,14 @@ export function useWebSessionTabsSync(): void {
                         error
                       )
                     }
-                    return false
+                    return null
                   })
-                  .then((reachedStore) => {
+                  .then((settleMirror) => {
                     finishRecovery()
                     // Why: the active-worktree mirror is authoritative for this
-                    // worktree alone, and only once its patch has been applied.
-                    if (isCurrent() && reachedStore) {
-                      markHostSessionMirrorWorktreeHydrated(environmentId, event.worktree)
+                    // worktree alone, and only through its landed receipt.
+                    if (isCurrent()) {
+                      settleMirror?.()
                     }
                   })
               },

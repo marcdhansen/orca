@@ -23,7 +23,7 @@ vi.mock('../store', () => ({
 vi.mock('./web-session-tabs-sync', () => ({
   acceptReplayedWebSessionTabsSnapshot: vi.fn(),
   applyFreshWebSessionTabsSnapshot: vi.fn(),
-  applyWebSessionTabsStorePatch: vi.fn(),
+  applyWebSessionTabsStorePatch: vi.fn(() => () => {}),
   resolveHostSessionTabIdForWebSessionTab: vi.fn()
 }))
 

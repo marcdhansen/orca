@@ -853,11 +853,18 @@ export async function refreshWebRuntimeSessionTabsSnapshot(
     if (getRuntimeEnvironmentRevision(environmentId) !== expectedEnvironmentPairingRevision) {
       return
     }
-    applyWebSessionTabsStorePatch((state) => {
-      // Why: eager refreshes can resolve after the user switched worktrees; update tabs without stealing focus.
-      const patch = applyFreshWebSessionTabsSnapshot(state, snapshot, environmentId)
-      return patch === state ? state : patch
-    }, snapshot)
+    const settleMirror = applyWebSessionTabsStorePatch(
+      (state) => {
+        // Why: eager refreshes can resolve after the user switched worktrees; update tabs without stealing focus.
+        const patch = applyFreshWebSessionTabsSnapshot(state, snapshot, environmentId)
+        return patch === state ? state : patch
+      },
+      { settles: [{ environmentId, worktreeId: snapshot.worktree }] },
+      snapshot
+    )
+    // Why: this list is the host answering for the worktree — a stale answer is
+    // already covered by the accepted view, so the receipt settles either way.
+    settleMirror()
   } catch (error) {
     if (options.errorMode === 'throw') {
       throw error
