@@ -1,11 +1,17 @@
-import { vi } from 'vitest'
+import { vi, type Mock } from 'vitest'
 import type { RuntimeMobileSessionTabsResult } from '../../../shared/runtime-types'
 import { toWebTerminalSurfaceTabId } from '../../../shared/terminal-surface-id'
 import type { AppState } from '@/store'
 
 /** Shared with the frame-ordering suites through their `vi.mock` factories, so
  *  this module must stay free of runtime imports that would form a cycle. */
-export const frameOrderingMocks = {
+export const frameOrderingMocks: Record<
+  | 'createTerminal'
+  | 'queueAcceptedSnapshot'
+  | 'recoverSnapshot'
+  | 'runtimeSessionMirrorEnvironmentKey',
+  Mock
+> = {
   createTerminal: vi.fn(),
   // Inert by default: nothing here subscribes to web session terminal handles.
   queueAcceptedSnapshot: vi.fn(),
