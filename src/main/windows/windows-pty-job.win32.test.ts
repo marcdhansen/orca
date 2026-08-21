@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { IPty } from 'node-pty'
 import {
   isPtyJobOwnershipAvailable,
@@ -128,6 +131,33 @@ describeOnWindows('ConPTY job ownership', () => {
     } catch {
       /* already gone */
     }
+  }, 60_000)
+
+  it('still lets a child break away from the job', async () => {
+    // A job with no limits denies CREATE_BREAKAWAY_FROM_JOB outright, and
+    // installers, msiexec and some updater paths spawn that way deliberately.
+    // They would fail ONLY inside an Orca terminal, which is the worst shape a
+    // bug report can take, so JOB_OBJECT_LIMIT_BREAKAWAY_OK is load-bearing.
+    const nodePty = await import('node-pty')
+    const marker = join(mkdtempSync(join(tmpdir(), 'orca-breakaway-')), 'marker.txt')
+    const proc = nodePty.spawn('cmd.exe', [], {
+      name: 'xterm-256color',
+      cols: 100,
+      rows: 30,
+      cwd: tmpdir(),
+      useConptyDll: true
+    })
+    spawned.push(proc)
+
+    let output = ''
+    proc.onData((chunk) => {
+      output += chunk
+    })
+    proc.write(`start /b cmd /c "echo ORCA_BREAKAWAY> ${marker}"\r`)
+
+    await vi.waitFor(() => expect(existsSync(marker)).toBe(true), { timeout: 15_000 })
+    expect(output).not.toMatch(/Access is denied/i)
+    rmSync(marker, { force: true })
   }, 60_000)
 
   it('stops answering once the tree is gone, rather than claiming it is empty', async () => {
