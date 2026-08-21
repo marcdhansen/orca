@@ -52,6 +52,16 @@ export type ProcessResult = {
 
 export const DEFAULT_PROCESS_TIMEOUT_MS = 30_000
 export const DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024
+/**
+ * Grace between the timeout kill and giving up on the child's exit.
+ *
+ * Why give up at all: `close` only fires once the child is actually gone, and a
+ * child that ignores the kill never emits it -- so the promise would outlive
+ * its own deadline forever. Callers that cache an in-flight probe (the pwsh
+ * availability cache, the process-table reader) would then hand every later
+ * caller the same dead promise.
+ */
+const PROCESS_EXIT_GRACE_MS = 2_000
 
 export type ResolvedSpawn = {
   file: string
@@ -160,6 +170,7 @@ export function runProcess(spec: ProcessSpec): Promise<ProcessResult> {
       }
       settled = true
       clearTimeout(timer)
+      clearTimeout(graceTimer)
       spec.signal?.removeEventListener('abort', onAbort)
       act()
     }
@@ -167,9 +178,25 @@ export function runProcess(spec: ProcessSpec): Promise<ProcessResult> {
     child.stdout?.on('data', (chunk: Buffer | string) => stdout.write(chunk))
     child.stderr?.on('data', (chunk: Buffer | string) => stderr.write(chunk))
 
+    let graceTimer: ReturnType<typeof setTimeout> | undefined
     const timer = setTimeout(() => {
       timedOut = true
       terminate(child)
+      // Escalate, then settle regardless: an unkillable child must not hold the
+      // caller past its deadline.
+      graceTimer = setTimeout(() => {
+        terminate(child, 'SIGKILL')
+        settle(() =>
+          resolve({
+            code: null,
+            signal: null,
+            stdout: stdout.text(),
+            stderr: stderr.text(),
+            timedOut: true
+          })
+        )
+      }, PROCESS_EXIT_GRACE_MS)
+      graceTimer.unref?.()
     }, spec.timeoutMs ?? DEFAULT_PROCESS_TIMEOUT_MS)
     timer.unref?.()
 
@@ -196,9 +223,9 @@ export function runProcess(spec: ProcessSpec): Promise<ProcessResult> {
  * Deliberately root-only: descendant reaping is the job-object owner's
  * responsibility, not every caller's.
  */
-function terminate(child: ChildProcess): void {
+function terminate(child: ChildProcess, signal?: NodeJS.Signals): void {
   try {
-    child.kill()
+    child.kill(signal)
   } catch {
     /* already gone */
   }

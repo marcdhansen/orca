@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveSpawn, runProcessSync } from './run-process'
+import { resolveSpawn, runProcess, runProcessSync } from './run-process'
 import { WINDOWS_ARGUMENT_CORPUS } from './__fixtures__/windows-argument-corpus'
 
 const SPEC = { program: 'C:\\bin\\agent.cmd', args: ['--prompt', 'hi'] }
@@ -94,4 +94,18 @@ describe('runProcessSync', () => {
     expect(result.stdout).toBe('hi')
     expect(result.code).toBe(3)
   })
+})
+
+describe('unkillable children', () => {
+  it('settles after the grace period rather than outliving its own deadline', async () => {
+    // `close` only fires once the child is gone, so a child that ignores the
+    // kill would otherwise hold the promise forever — and callers that cache an
+    // in-flight probe would hand every later caller the same dead promise.
+    const result = await runProcess({
+      program: process.execPath,
+      args: ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)'],
+      timeoutMs: 300
+    })
+    expect(result.timedOut).toBe(true)
+  }, 20_000)
 })
