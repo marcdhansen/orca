@@ -275,7 +275,8 @@ function acquireBrowserAutomationBootstrapLease(
   if (!targetWorktreeId) {
     return
   }
-  requestBackgroundTerminalWorktreeMount({ worktreeId: targetWorktreeId })
+  // Why tabIds: []: bootstrap needs only the surface; untargeted mounts fan restored PTY-less rows into host spawns.
+  requestBackgroundTerminalWorktreeMount({ worktreeId: targetWorktreeId, tabIds: [] })
   let targetBrowserPageId = browserPageId ?? null
   if (!targetBrowserPageId) {
     const browserTabs = store.browserTabsByWorktree[targetWorktreeId] ?? []

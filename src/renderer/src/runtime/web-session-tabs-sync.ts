@@ -2,6 +2,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import type { AppState } from '../store'
 import { useAppStore } from '../store'
+import { webSessionTabsConnectionIdentity } from './web-session-tabs-connection-identity'
 import type { RuntimeRpcResponse } from '../../../shared/runtime-rpc-envelope'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../shared/constants'
 import {
@@ -568,18 +569,6 @@ export type WebSessionTabsAnswerState = {
   answered: boolean
 }
 
-/** A reconnect or a new runtime process makes every earlier answer stale, so answers
- *  are stamped with this identity. */
-function webSessionTabsConnectionIdentity(environmentId: string): string {
-  if (!environmentId) {
-    return ''
-  }
-  // No status means no identity, so nothing counts as an answer — the fail-open side.
-  const status = useAppStore.getState?.()?.runtimeStatusByEnvironmentId?.get(environmentId)
-  const runtimeId = status?.status?.runtimeId
-  return runtimeId ? `${runtimeId}#${status?.connectionGeneration ?? 0}` : ''
-}
-
 // Stamped rather than a caller-baselined counter: evidence accepted before the caller
 // started watching still answers for this connection.
 export function getWebSessionTabsAnswerState(
@@ -599,20 +588,31 @@ export function getWebSessionTabsAnswerState(
   }
 }
 
-function recordAppliedWebSessionTabsWorktreeAnswer(environmentId: string, key: string): void {
-  appliedSessionTabsAnswerConnectionByWorktree.set(
-    key,
-    webSessionTabsConnectionIdentity(environmentId)
-  )
+// Evidence-time identity: recovery can outlast a reconnect, and record-time
+// identity would credit the new connection with the old one's answer. Stale
+// evidence writes nothing: it must neither credit nor clobber the connection
+// now in force.
+function recordAppliedWebSessionTabsWorktreeAnswer(
+  environmentId: string,
+  key: string,
+  connection = webSessionTabsConnectionIdentity(environmentId)
+): void {
+  if (connection !== webSessionTabsConnectionIdentity(environmentId)) {
+    return
+  }
+  appliedSessionTabsAnswerConnectionByWorktree.set(key, connection)
 }
 
 /** Call only when every frame the inventory carried is accounted for; a partial,
  *  failed or abandoned load must leave no answer. */
-export function recordAppliedWebSessionTabsInventory(environmentId: string): void {
-  appliedSessionTabsInventoryConnectionByEnvironment.set(
-    environmentId,
-    webSessionTabsConnectionIdentity(environmentId)
-  )
+export function recordAppliedWebSessionTabsInventory(
+  environmentId: string,
+  connection = webSessionTabsConnectionIdentity(environmentId)
+): void {
+  if (connection !== webSessionTabsConnectionIdentity(environmentId)) {
+    return
+  }
+  appliedSessionTabsInventoryConnectionByEnvironment.set(environmentId, connection)
 }
 
 // Why: a replay may repeat the current epoch/version; permit only that exact
@@ -630,14 +630,16 @@ export function acceptReplayedWebSessionTabsSnapshot(
 
 export function shouldApplyWebSessionTabsSnapshot(
   snapshot: RuntimeMobileSessionTabsResult,
-  environmentId: string
+  environmentId: string,
+  /** Connection the frame arrived on; omit only when applying synchronously with receipt. */
+  answerConnection?: string
 ): boolean {
   const key = sessionTabsFreshnessKey(environmentId, snapshot.worktree)
   if ((snapshot as { removed?: unknown }).removed === true) {
     // Why: removed worktrees can stop publishing, so clean up their tracking now instead of waiting for a replacement snapshot that may never arrive.
     clearWebSessionTabsTrackingForWorktree(environmentId, snapshot.worktree)
     // After the teardown, which clears every other key: a removal is an answer too.
-    recordAppliedWebSessionTabsWorktreeAnswer(environmentId, key)
+    recordAppliedWebSessionTabsWorktreeAnswer(environmentId, key, answerConnection)
     queueAcceptedWebSessionTerminalSnapshot(snapshot, environmentId)
     return true
   }
@@ -670,7 +672,7 @@ export function shouldApplyWebSessionTabsSnapshot(
     publicationEpoch: snapshot.publicationEpoch,
     snapshotVersion: snapshot.snapshotVersion
   })
-  recordAppliedWebSessionTabsWorktreeAnswer(environmentId, key)
+  recordAppliedWebSessionTabsWorktreeAnswer(environmentId, key, answerConnection)
   trackWebSessionTabsWorktree(environmentId, snapshot.worktree)
   recordAcceptedWebSessionTabsEnvironment(environmentId, snapshot)
   // Why: a mounted mirror that exhausted bounded polling needs fresh host evidence without subscribing to every store write.
@@ -3625,9 +3627,10 @@ export function applyFreshWebSessionTabsSnapshot(
   state: WebSessionTabsSyncState,
   snapshot: RuntimeMobileSessionTabsResult,
   environmentId: string,
-  now = Date.now()
+  now = Date.now(),
+  answerConnection?: string
 ): WebSessionTabsSyncState | Partial<WebSessionTabsSyncState> {
-  if (!shouldApplyWebSessionTabsSnapshot(snapshot, environmentId)) {
+  if (!shouldApplyWebSessionTabsSnapshot(snapshot, environmentId, answerConnection)) {
     return state
   }
   return applyWebSessionTabsSnapshot(state, snapshot, environmentId, now)
@@ -3650,6 +3653,7 @@ export function applyFreshWebSessionTabsSnapshots(
 type WebSessionTabsSnapshotOperation = {
   environmentId: string
   snapshot: RuntimeMobileSessionTabsResult
+  answerConnection: string
 }
 
 function applyWebSessionTabsSnapshotOperations(
@@ -3658,8 +3662,8 @@ function applyWebSessionTabsSnapshotOperations(
 ): WebSessionTabsSyncState | Partial<WebSessionTabsSyncState> {
   let nextState = state
   let mergedPatch: Partial<WebSessionTabsSyncState> = {}
-  for (const { environmentId, snapshot } of operations) {
-    if (!shouldApplyWebSessionTabsSnapshot(snapshot, environmentId)) {
+  for (const { environmentId, snapshot, answerConnection } of operations) {
+    if (!shouldApplyWebSessionTabsSnapshot(snapshot, environmentId, answerConnection)) {
       continue
     }
     const patch = applyWebSessionTabsSnapshot(nextState, snapshot, environmentId)
@@ -3812,6 +3816,9 @@ function loadInitialWebSessionTabs(
   expectedEnvironmentPairingRevision: number | undefined,
   isCurrent: () => boolean
 ): void {
+  // Request-time identity: the reply speaks for the connection that was asked,
+  // never for whichever is live when it lands.
+  const answerConnection = webSessionTabsConnectionIdentity(environmentId)
   void window.api.runtimeEnvironments
     .call({
       selector: environmentId,
@@ -3876,7 +3883,7 @@ function loadInitialWebSessionTabs(
         const accepted: RuntimeMobileSessionTabsResult[] = []
         let settledFrameCount = 0
         for (const snapshot of applicable) {
-          if (shouldApplyWebSessionTabsSnapshot(snapshot, environmentId)) {
+          if (shouldApplyWebSessionTabsSnapshot(snapshot, environmentId, answerConnection)) {
             accepted.push(snapshot)
             settledFrameCount += 1
           } else if (doesRejectedWebSessionTabsSnapshotSettleInventory(snapshot, environmentId)) {
@@ -3893,7 +3900,7 @@ function loadInitialWebSessionTabs(
         // A dropped frame is not an answer: the inventory speaks for omitted worktrees
         // only when every frame it carried is accounted for.
         if (settledFrameCount === result.snapshots.length) {
-          recordAppliedWebSessionTabsInventory(environmentId)
+          recordAppliedWebSessionTabsInventory(environmentId, answerConnection)
         }
       } finally {
         for (const finishRecovery of finishRecoveries) {
@@ -3913,7 +3920,12 @@ function loadInitialWebSessionTabs(
 
 export function useWebSessionTabsSync(): void {
   const recordVisibilityResumeSnapshotRef = useRef<
-    (environmentId: string, snapshot: RuntimeMobileSessionTabsResult, receivedFrame: number) => void
+    (
+      environmentId: string,
+      snapshot: RuntimeMobileSessionTabsResult,
+      receivedFrame: number,
+      answerConnection: string
+    ) => void
   >(() => {})
   const recordVisibilityResumeSnapshotReceiptRef = useRef<
     (environmentId: string, snapshot: RuntimeMobileSessionTabsResult, receivedFrame: number) => void
@@ -4036,6 +4048,7 @@ export function useWebSessionTabsSync(): void {
       inventoryReceivedFrame: number
       trackedWorktree: TrackedWebSessionTabsWorktree
       snapshot: RuntimeMobileSessionTabsRemovedResult
+      answerConnection: string
     }
     type VisibilityResumeBatch = {
       visibilityGeneration: number
@@ -4046,7 +4059,11 @@ export function useWebSessionTabsSync(): void {
       trackedWorktreeIds: ReadonlySet<string>
       reapplyableSnapshotsByKey: Map<
         string,
-        { snapshot: RuntimeMobileSessionTabsResult; receivedFrame: number }
+        {
+          snapshot: RuntimeMobileSessionTabsResult
+          receivedFrame: number
+          answerConnection: string
+        }
       >
     }
 
@@ -4111,7 +4128,11 @@ export function useWebSessionTabsSync(): void {
       batch: VisibilityResumeBatch,
       environmentId: string,
       worktreeId: string
-    ): RuntimeMobileSessionTabsResult | null => {
+    ): {
+      snapshot: RuntimeMobileSessionTabsResult
+      receivedFrame: number
+      answerConnection: string
+    } | null => {
       const key = sessionTabsFreshnessKey(environmentId, worktreeId)
       const entry = batch.reapplyableSnapshotsByKey.get(key)
       const freshness = latestSessionTabsSnapshotByWorktree.get(key)
@@ -4127,7 +4148,7 @@ export function useWebSessionTabsSync(): void {
       ) {
         return null
       }
-      return entry.snapshot
+      return entry
     }
 
     const finishVisibilityResumeBatchIfIdle = (batch: VisibilityResumeBatch): void => {
@@ -4169,29 +4190,38 @@ export function useWebSessionTabsSync(): void {
         const survivingSnapshots: {
           environmentId: string
           snapshot: RuntimeMobileSessionTabsResult
+          answerConnection: string
         }[] = []
         let canRepairSharedState = true
         for (const environmentId of sessionTabsEnvironmentsByWorktree.get(worktreeId) ?? []) {
           if (missingEnvironmentIds.has(environmentId)) {
             continue
           }
-          const snapshot = getVisibilityResumeSnapshot(batch, environmentId, worktreeId)
-          if (!snapshot) {
+          const entry = getVisibilityResumeSnapshot(batch, environmentId, worktreeId)
+          if (!entry) {
             canRepairSharedState = false
             break
           }
-          survivingSnapshots.push({ environmentId, snapshot })
+          survivingSnapshots.push({
+            environmentId,
+            snapshot: entry.snapshot,
+            answerConnection: entry.answerConnection
+          })
         }
         if (!canRepairSharedState) {
           batch.deferredRepairWorktrees.add(worktreeId)
           continue
         }
         for (const missing of pendingMissing.values()) {
-          operations.push({ environmentId: missing.environmentId, snapshot: missing.snapshot })
+          operations.push({
+            environmentId: missing.environmentId,
+            snapshot: missing.snapshot,
+            answerConnection: missing.answerConnection
+          })
         }
-        for (const { environmentId, snapshot } of survivingSnapshots) {
+        for (const { environmentId, snapshot, answerConnection } of survivingSnapshots) {
           acceptReplayedWebSessionTabsSnapshot(environmentId, worktreeId)
-          operations.push({ environmentId, snapshot })
+          operations.push({ environmentId, snapshot, answerConnection })
         }
         for (const environmentId of pendingMissing.keys()) {
           batch.environments.get(environmentId)?.pendingMissingWorktrees.delete(worktreeId)
@@ -4211,7 +4241,8 @@ export function useWebSessionTabsSync(): void {
     const recordVisibilityResumeSnapshot = (
       environmentId: string,
       snapshot: RuntimeMobileSessionTabsResult,
-      receivedFrame: number
+      receivedFrame: number,
+      answerConnection: string
     ): void => {
       const batch = visibilityResumeBatch
       if (!batch || !batch.trackedWorktreeIds.has(snapshot.worktree)) {
@@ -4235,7 +4266,7 @@ export function useWebSessionTabsSync(): void {
           batch.reapplyableSnapshotsByKey.delete(key)
         }
       } else {
-        batch.reapplyableSnapshotsByKey.set(key, { snapshot, receivedFrame })
+        batch.reapplyableSnapshotsByKey.set(key, { snapshot, receivedFrame, answerConnection })
       }
       if (batch.pendingMissingByWorktree.has(snapshot.worktree)) {
         reconcileVisibilityResumeWorktrees([snapshot.worktree])
@@ -4288,7 +4319,8 @@ export function useWebSessionTabsSync(): void {
       environmentId: string,
       visibilityGeneration: number,
       inventoryReceivedFrame: number,
-      snapshots: readonly RuntimeMobileSessionTabsResult[]
+      snapshots: readonly RuntimeMobileSessionTabsResult[],
+      answerConnection: string
     ): VisibilityResumeMissing[] => {
       for (const snapshot of snapshots) {
         visibilityResumeOmissionsByKey.delete(
@@ -4328,7 +4360,7 @@ export function useWebSessionTabsSync(): void {
           missing.snapshot.worktree,
           inventoryReceivedFrame
         )
-        return { environmentId, inventoryReceivedFrame, ...missing }
+        return { environmentId, inventoryReceivedFrame, answerConnection, ...missing }
       })
     }
 
@@ -4429,6 +4461,9 @@ export function useWebSessionTabsSync(): void {
                 }
                 const event = response.result as SessionTabsStreamEvent
                 const replayed = isRuntimeSubscriptionReplayResponse(response)
+                // Receipt-time identity: recovery below awaits, so a late apply must
+                // not credit whichever connection is live by then.
+                const answerConnection = webSessionTabsConnectionIdentity(environmentId)
                 if (event.type === 'snapshots') {
                   const skipUnchangedResumeWork = awaitingVisibilityResumeInventory && !replayed
                   awaitingVisibilityResumeInventory = false
@@ -4457,7 +4492,8 @@ export function useWebSessionTabsSync(): void {
                     environmentId,
                     visibilityGeneration,
                     inventoryReceivedFrame,
-                    event.snapshots
+                    event.snapshots,
+                    answerConnection
                   )
                   const finishRecoveries = event.snapshots.map((snapshot, index) =>
                     unchangedVisibilityResumeSnapshots[index]
@@ -4506,7 +4542,11 @@ export function useWebSessionTabsSync(): void {
                         }
                         const freshSnapshots = applicable.flatMap(({ index, snapshot }) =>
                           !unchangedVisibilityResumeSnapshots[index] &&
-                          shouldApplyWebSessionTabsSnapshot(snapshot, environmentId)
+                          shouldApplyWebSessionTabsSnapshot(
+                            snapshot,
+                            environmentId,
+                            answerConnection
+                          )
                             ? [snapshot]
                             : []
                         )
@@ -4531,7 +4571,8 @@ export function useWebSessionTabsSync(): void {
                             recordVisibilityResumeSnapshot(
                               environmentId,
                               snapshot,
-                              receivedFrames[index]!
+                              receivedFrames[index]!,
+                              answerConnection
                             )
                           }
                         }
@@ -4557,7 +4598,7 @@ export function useWebSessionTabsSync(): void {
                           }
                         }
                         if (settledFrameCount === event.snapshots.length) {
-                          recordAppliedWebSessionTabsInventory(environmentId)
+                          recordAppliedWebSessionTabsInventory(environmentId, answerConnection)
                         }
                       }
                     })
@@ -4602,13 +4643,24 @@ export function useWebSessionTabsSync(): void {
                       if (replayed) {
                         acceptReplayedWebSessionTabsSnapshot(environmentId, recovered.worktree)
                       }
-                      if (shouldApplyWebSessionTabsSnapshot(recovered, environmentId)) {
+                      if (
+                        shouldApplyWebSessionTabsSnapshot(
+                          recovered,
+                          environmentId,
+                          answerConnection
+                        )
+                      ) {
                         applyWebSessionTabsStorePatch(
                           (state) => applyWebSessionTabsSnapshot(state, recovered, environmentId),
                           recovered,
                           event.type === 'updated' && !replayed
                         )
-                        recordVisibilityResumeSnapshot(environmentId, recovered, receivedFrame)
+                        recordVisibilityResumeSnapshot(
+                          environmentId,
+                          recovered,
+                          receivedFrame,
+                          answerConnection
+                        )
                       }
                     }
                   })
@@ -4684,7 +4736,8 @@ export function useWebSessionTabsSync(): void {
       event: RuntimeMobileSessionTabsResult & { type: 'snapshot' | 'updated' },
       response: RuntimeRpcResponse<unknown>,
       isCurrent: () => boolean,
-      receivedFrame: number
+      receivedFrame: number,
+      answerConnection: string
     ): Promise<void> => {
       const recovered = await recoverWebSessionTerminalOrphansBeforeApply(
         useAppStore.getState(),
@@ -4704,7 +4757,7 @@ export function useWebSessionTabsSync(): void {
         acceptReplayedWebSessionTabsSnapshot(environmentId, recovered.worktree)
       }
       const recoveredEvent: SessionTabsStreamEvent = { ...recovered, type: event.type }
-      const fresh = shouldApplyWebSessionTabsSnapshot(recovered, environmentId)
+      const fresh = shouldApplyWebSessionTabsSnapshot(recovered, environmentId, answerConnection)
       const syncState = useAppStore.getState()
       const localWorktreeTabs = syncState.tabsByWorktree[activeWorktreeId] ?? []
       const localTerminalCount = localWorktreeTabs.length
@@ -4734,7 +4787,12 @@ export function useWebSessionTabsSync(): void {
           recovered,
           event.type === 'updated' && !replayed
         )
-        recordVisibilityResumeSnapshotRef.current(environmentId, recovered, receivedFrame)
+        recordVisibilityResumeSnapshotRef.current(
+          environmentId,
+          recovered,
+          receivedFrame,
+          answerConnection
+        )
       }
       if (isCurrent() && shouldBootstrapInitialTerminal) {
         requestedInitialTerminal = true
@@ -4799,7 +4857,16 @@ export function useWebSessionTabsSync(): void {
                   event.worktree,
                   receivedFrame
                 )
-                void applyActiveSnapshot(event, response, isCurrent, receivedFrame)
+                // Receipt-time identity: recovery below awaits, so a late apply must
+                // not credit whichever connection is live by then.
+                const answerConnection = webSessionTabsConnectionIdentity(environmentId)
+                void applyActiveSnapshot(
+                  event,
+                  response,
+                  isCurrent,
+                  receivedFrame,
+                  answerConnection
+                )
                   .catch((error) => {
                     if (isCurrent()) {
                       console.warn(

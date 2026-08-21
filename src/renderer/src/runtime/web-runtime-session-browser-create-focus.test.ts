@@ -141,7 +141,9 @@ describe('createWebRuntimeSessionBrowserTab', () => {
     expect(mocks.applyFreshWebSessionTabsSnapshot).toHaveBeenCalledWith(
       { state: 'before', activeWorktreeId: WORKTREE_ID },
       snapshot,
-      ENVIRONMENT_ID
+      ENVIRONMENT_ID,
+      expect.any(Number),
+      ''
     )
     expect(mocks.acceptReplayedWebSessionTabsSnapshot).toHaveBeenCalledWith(
       ENVIRONMENT_ID,
@@ -419,7 +421,9 @@ describe('createWebRuntimeSessionBrowserTab', () => {
     expect(mocks.applyFreshWebSessionTabsSnapshot).toHaveBeenCalledWith(
       { state: 'before-stage', activeWorktreeId: 'other-worktree' },
       snapshot,
-      ENVIRONMENT_ID
+      ENVIRONMENT_ID,
+      expect.any(Number),
+      ''
     )
     expect(setStateResults.at(-1)).toEqual({ state: 'after' })
   })

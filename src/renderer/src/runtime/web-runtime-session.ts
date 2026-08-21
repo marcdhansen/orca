@@ -67,6 +67,7 @@ import {
   listRemoteRuntimeSessionTabsDeduped
 } from './remote-runtime-session-tabs-inflight'
 import { runRemoteAgentSessionLaunch } from './remote-agent-session-launch'
+import { webSessionTabsConnectionIdentity } from './web-session-tabs-connection-identity'
 import { translate } from '../i18n/i18n'
 import { getRuntimeEnvironmentRevision } from './runtime-environment-revision'
 import { parsePaneKey } from '../../../shared/stable-pane-id'
@@ -815,6 +816,7 @@ export async function refreshWebRuntimeSessionTabsSnapshot(
       // re-accept its current version after the exact provisional handoff is known.
       acceptReplayedWebSessionTabsSnapshot(environmentId, worktreeId)
     }
+    let answerConnection = ''
     const listSessionTabs =
       options.confirmAgentSessionHandoff || options.afterCurrentInFlight
         ? listRemoteRuntimeSessionTabsAfterCurrentInFlight
@@ -826,6 +828,7 @@ export async function refreshWebRuntimeSessionTabsSnapshot(
       environmentId,
       worktreeId,
       load: async () => {
+        answerConnection = webSessionTabsConnectionIdentity(environmentId)
         const response = await callEnvironment({
           method: 'session.tabs.list',
           params: {
@@ -855,7 +858,13 @@ export async function refreshWebRuntimeSessionTabsSnapshot(
     }
     applyWebSessionTabsStorePatch((state) => {
       // Why: eager refreshes can resolve after the user switched worktrees; update tabs without stealing focus.
-      const patch = applyFreshWebSessionTabsSnapshot(state, snapshot, environmentId)
+      const patch = applyFreshWebSessionTabsSnapshot(
+        state,
+        snapshot,
+        environmentId,
+        Date.now(),
+        answerConnection
+      )
       return patch === state ? state : patch
     }, snapshot)
   } catch (error) {

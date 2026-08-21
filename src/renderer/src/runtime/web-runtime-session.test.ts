@@ -11,6 +11,7 @@ import {
   resetWebAgentSessionHandoffsForTests
 } from './web-agent-session-handoff'
 import { resetWebSessionCloseIntentForTests } from './web-session-close-intent'
+import type { AppState } from '@/store/types'
 import { ENVIRONMENT_ID, WORKTREE_ID, makeSnapshot } from './web-runtime-session-test-harness'
 
 const mocks = vi.hoisted(() => ({
@@ -30,7 +31,9 @@ const mocks = vi.hoisted(() => ({
   deliverLaunchPromptToAgentTab: vi.fn(),
   seedNativeChatLaunchDraftForAgentTab: vi.fn(),
   getRuntimeEnvironmentIdForWorktree: vi.fn(),
-  hasMaterializedWebRuntimeBrowserPage: vi.fn()
+  hasMaterializedWebRuntimeBrowserPage: vi.fn(),
+  listRemoteRuntimeSessionTabsDeduped: vi.fn(),
+  listRemoteRuntimeSessionTabsAfterCurrentInFlight: vi.fn()
 }))
 
 vi.mock('../store', () => ({
@@ -66,13 +69,149 @@ vi.mock('./web-runtime-browser-materialization', () => ({
   hasMaterializedWebRuntimeBrowserPage: mocks.hasMaterializedWebRuntimeBrowserPage
 }))
 
+vi.mock('./remote-runtime-session-tabs-inflight', () => ({
+  listRemoteRuntimeSessionTabsDeduped: mocks.listRemoteRuntimeSessionTabsDeduped,
+  listRemoteRuntimeSessionTabsAfterCurrentInFlight:
+    mocks.listRemoteRuntimeSessionTabsAfterCurrentInFlight
+}))
+
 afterEach(() => resetWebSessionCloseIntentForTests())
 
 describe('refreshWebRuntimeSessionTabsSnapshot', () => {
+  beforeEach(() => {
+    mocks.listRemoteRuntimeSessionTabsDeduped.mockImplementation(
+      (args: { load: () => Promise<unknown> }) => args.load()
+    )
+    mocks.listRemoteRuntimeSessionTabsAfterCurrentInFlight.mockImplementation(
+      (args: { load: () => Promise<unknown> }) => args.load()
+    )
+  })
+
   afterEach(() => {
     resetWebAgentSessionHandoffsForTests()
     vi.unstubAllGlobals()
     vi.clearAllMocks()
+  })
+
+  it('snaps connection identity at request time and ignores later mutations', async () => {
+    type SnapshotResponse = { id: string; ok: boolean; result: ReturnType<typeof makeSnapshot> }
+    let resolveSnapshot!: (value: SnapshotResponse) => void
+    const deferredSnapshot = new Promise<SnapshotResponse>((resolve) => {
+      resolveSnapshot = resolve
+    })
+    mocks.setState.mockImplementation((updater: (state: unknown) => unknown) =>
+      updater({ state: 'before' })
+    )
+    const runtimeCall = vi.fn().mockReturnValue(deferredSnapshot)
+    vi.stubGlobal('window', {
+      api: { runtimeEnvironments: { call: runtimeCall } }
+    })
+    mocks.listRemoteRuntimeSessionTabsDeduped.mockImplementation(
+      (args: { load: () => Promise<unknown> }) => args.load()
+    )
+    mocks.applyFreshWebSessionTabsSnapshot.mockImplementation((state) => state)
+    mocks.getState.mockReturnValue({
+      runtimeStatusByEnvironmentId: new Map([
+        [ENVIRONMENT_ID, { status: { runtimeId: 'runtime-a' }, connectionGeneration: 1 }]
+      ]) as AppState['runtimeStatusByEnvironmentId']
+    })
+
+    const refreshPromise = refreshWebRuntimeSessionTabsSnapshot(ENVIRONMENT_ID, WORKTREE_ID)
+
+    await vi.waitFor(() => expect(runtimeCall).toHaveBeenCalledOnce())
+
+    // Advance connection generation to 2 while the RPC is in-flight.
+    const runtimeStatus = new Map([
+      [ENVIRONMENT_ID, { status: { runtimeId: 'runtime-a' }, connectionGeneration: 1 }]
+    ]) as AppState['runtimeStatusByEnvironmentId']
+    runtimeStatus.get(ENVIRONMENT_ID)!.connectionGeneration = 2
+    mocks.getState.mockReturnValue({ runtimeStatusByEnvironmentId: runtimeStatus })
+
+    resolveSnapshot({ id: 'list', ok: true, result: makeSnapshot() })
+    await refreshPromise
+
+    expect(mocks.applyFreshWebSessionTabsSnapshot).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      ENVIRONMENT_ID,
+      expect.any(Number),
+      'runtime-a#1'
+    )
+  })
+
+  it('dedupes concurrent callers so joiner gets empty identity', async () => {
+    const snapshot = makeSnapshot()
+    mocks.setState.mockImplementation((updater: (state: unknown) => unknown) =>
+      updater({ state: 'before' })
+    )
+
+    let resolveRpc!: (value: unknown) => void
+    const deferredRpc = new Promise((resolve) => {
+      resolveRpc = resolve
+    })
+    const runtimeCall = vi.fn().mockReturnValue(deferredRpc)
+    vi.stubGlobal('window', {
+      api: { runtimeEnvironments: { call: runtimeCall } }
+    })
+
+    const gen1Status = new Map([
+      [ENVIRONMENT_ID, { status: { runtimeId: 'runtime-a' }, connectionGeneration: 1 }]
+    ]) as AppState['runtimeStatusByEnvironmentId']
+    mocks.getState.mockReturnValue({ runtimeStatusByEnvironmentId: gen1Status })
+
+    let resolveApplyDone!: () => void
+    const applyDone = new Promise<void>((resolve) => {
+      resolveApplyDone = resolve
+    })
+    let loadCount = 0
+    mocks.listRemoteRuntimeSessionTabsDeduped.mockImplementation(
+      (args: { load: () => Promise<unknown> }) => {
+        loadCount++
+        if (loadCount === 1) {
+          return args.load()
+        }
+        return applyDone.then(() => snapshot)
+      }
+    )
+    mocks.applyFreshWebSessionTabsSnapshot.mockImplementation((state) => {
+      if (mocks.applyFreshWebSessionTabsSnapshot.mock.calls.length === 1) {
+        resolveApplyDone()
+      }
+      return state
+    })
+
+    const caller1 = refreshWebRuntimeSessionTabsSnapshot(ENVIRONMENT_ID, WORKTREE_ID)
+    await vi.waitFor(() => expect(runtimeCall).toHaveBeenCalledOnce())
+
+    const gen2Status = new Map([
+      [ENVIRONMENT_ID, { status: { runtimeId: 'runtime-a' }, connectionGeneration: 2 }]
+    ]) as AppState['runtimeStatusByEnvironmentId']
+    mocks.getState.mockReturnValue({ runtimeStatusByEnvironmentId: gen2Status })
+
+    const caller2 = refreshWebRuntimeSessionTabsSnapshot(ENVIRONMENT_ID, WORKTREE_ID)
+    resolveRpc({ id: 'list', ok: true, result: snapshot })
+
+    await Promise.all([caller1, caller2])
+
+    expect(runtimeCall).toHaveBeenCalledOnce()
+    expect(mocks.listRemoteRuntimeSessionTabsDeduped).toHaveBeenCalledTimes(2)
+    expect(mocks.applyFreshWebSessionTabsSnapshot).toHaveBeenCalledTimes(2)
+    expect(mocks.applyFreshWebSessionTabsSnapshot).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.anything(),
+      ENVIRONMENT_ID,
+      expect.any(Number),
+      'runtime-a#1'
+    )
+    expect(mocks.applyFreshWebSessionTabsSnapshot).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.anything(),
+      ENVIRONMENT_ID,
+      expect.any(Number),
+      ''
+    )
   })
 
   it('confirms only the exact handoff after its post-create list completes', async () => {
@@ -146,7 +285,10 @@ describe('activateWebRuntimeSessionWorktree', () => {
     mocks.getState.mockReturnValue({
       settings: {
         activeRuntimeEnvironmentId: ENVIRONMENT_ID
-      }
+      },
+      runtimeStatusByEnvironmentId: new Map([
+        [ENVIRONMENT_ID, { status: { runtimeId: 'runtime-a' }, connectionGeneration: 1 }]
+      ]) as AppState['runtimeStatusByEnvironmentId']
     })
     mocks.setState.mockImplementation((updater: (state: unknown) => unknown) =>
       updater({ state: 'before' })
@@ -177,6 +319,9 @@ describe('activateWebRuntimeSessionWorktree', () => {
         }
       }
     })
+    mocks.listRemoteRuntimeSessionTabsDeduped.mockImplementation(
+      (args: { load: () => Promise<unknown> }) => args.load()
+    )
 
     await expect(
       activateWebRuntimeSessionWorktree({
@@ -203,7 +348,9 @@ describe('activateWebRuntimeSessionWorktree', () => {
     expect(mocks.applyFreshWebSessionTabsSnapshot).toHaveBeenCalledWith(
       { state: 'before' },
       snapshot,
-      ENVIRONMENT_ID
+      ENVIRONMENT_ID,
+      expect.any(Number),
+      'runtime-a#1'
     )
     expect(mocks.acceptReplayedWebSessionTabsSnapshot).toHaveBeenCalledWith(
       ENVIRONMENT_ID,

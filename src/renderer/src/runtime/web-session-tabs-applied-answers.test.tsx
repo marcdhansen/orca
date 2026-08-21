@@ -361,6 +361,92 @@ describe('applied session-tabs answers', () => {
     hook.unmount()
   })
 
+  it('does not let a reconnect-interrupted initial inventory answer the new connection', async () => {
+    const deferred = createDeferred()
+    mocks.recoverSnapshot.mockImplementation(
+      async (_state, frame: RuntimeMobileSessionTabsResult) =>
+        frame.worktree === WORKTREE ? deferred.promise : frame
+    )
+    listAllReturns({ id: 'list-all', ok: true, result: { snapshots: [snapshot()] } })
+    await mountSync()
+    // One act: the reconnect lands and the parked generation-1 recovery resolves
+    // before any effect cleanup can retire the old continuation.
+    await act(async () => {
+      advanceConnectionGeneration(2)
+      deferred.resolve(snapshot())
+      await settle()
+    })
+    // Evidence from the old connection cannot settle the new one's hold.
+    expect(answered()).toBe(false)
+    expect(inventoryAnswered()).toBe(false)
+  })
+
+  it('does not let a reconnect-interrupted streamed inventory answer the new connection', async () => {
+    const hook = await mountSync()
+    const deferred = createDeferred()
+    mocks.recoverSnapshot.mockImplementation(
+      async (_state, frame: RuntimeMobileSessionTabsResult) =>
+        frame.worktree === WORKTREE && frame.snapshotVersion === 1 ? deferred.promise : frame
+    )
+    await publish(inventorySubscription(), { type: 'snapshots', snapshots: [snapshot()] })
+    await act(async () => {
+      advanceConnectionGeneration(2)
+      deferred.resolve(snapshot())
+      await settle()
+    })
+    expect(answered()).toBe(false)
+    expect(inventoryAnswered()).toBe(false)
+    // The gate is not wedged: a frame from the new connection still answers.
+    await publish(worktreeSubscription(), { type: 'updated', ...snapshot(WORKTREE, 2) })
+    expect(answered()).toBe(true)
+    hook.unmount()
+  })
+
+  it('does not let a reconnect-interrupted active-stream frame answer the new connection', async () => {
+    const hook = await mountSync()
+    const deferred = createDeferred()
+    mocks.recoverSnapshot.mockImplementation(
+      async (_state, frame: RuntimeMobileSessionTabsResult) =>
+        frame.worktree === WORKTREE && frame.snapshotVersion === 1 ? deferred.promise : frame
+    )
+    await publish(worktreeSubscription(), { type: 'updated', ...snapshot() })
+    // Why: mutate gen in-place so isCurrent stays true but receipt-time
+    // identity (gen 1) mismatches record-time (gen 2) → answered false.
+    const { runtimeStatusByEnvironmentId } = useAppStore.getState() as AppState
+    runtimeStatusByEnvironmentId.get(ENV)!.connectionGeneration = 2
+    await act(async () => {
+      deferred.resolve(snapshot())
+      await settle()
+    })
+    expect(answered()).toBe(false)
+    // A real reconnect establishes a new subscription; a gen-2 frame answers.
+    advanceConnectionGeneration(2)
+    await publish(worktreeSubscription(), { type: 'updated', ...snapshot(WORKTREE, 2) })
+    expect(answered()).toBe(true)
+    hook.unmount()
+  })
+
+  it('keeps the new-connection answer when an older parked recovery lands afterwards', async () => {
+    // The parked generation-1 enumeration carries a version the store still has to
+    // take, so its late apply reaches the answer recorder: only the stale-stamp
+    // guard stops it from clobbering the generation-2 answer.
+    const deferred = createDeferred()
+    mocks.recoverSnapshot.mockImplementation(
+      async (_state, frame: RuntimeMobileSessionTabsResult) =>
+        frame.worktree === WORKTREE && frame.snapshotVersion === 3 ? deferred.promise : frame
+    )
+    listAllReturns({ id: 'list-all', ok: true, result: { snapshots: [snapshot(WORKTREE, 3)] } })
+    await mountSync()
+    advanceConnectionGeneration(2)
+    await publish(worktreeSubscription(), { type: 'updated', ...snapshot(WORKTREE, 2) })
+    expect(answered()).toBe(true)
+    await act(async () => {
+      deferred.resolve(snapshot(WORKTREE, 3))
+      await settle()
+    })
+    expect(answered()).toBe(true)
+  })
+
   it('records an initial inventory whose frame the store already superseded', async () => {
     act(() => {
       useAppStore.setState(

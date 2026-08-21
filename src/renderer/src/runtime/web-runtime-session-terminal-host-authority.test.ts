@@ -316,7 +316,9 @@ describe('createWebRuntimeSessionTerminal', () => {
     expect(mocks.applyFreshWebSessionTabsSnapshot).toHaveBeenCalledWith(
       { state: 'before', activeWorktreeId: WORKTREE_ID },
       snapshot,
-      ENVIRONMENT_ID
+      ENVIRONMENT_ID,
+      expect.any(Number),
+      ''
     )
   })
 

@@ -46,6 +46,7 @@ import { subscribeAcceptedWebSessionTerminalHandle } from './web-session-termina
 import {
   _getWebSessionTabsRecoveryTrackingCountsForTest,
   _getWebSessionTabsTrackingCountsForTest,
+  getWebSessionTabsAnswerState,
   resetWebSessionTabsSnapshotFreshnessForTests,
   useWebSessionTabsSync,
   WEB_SESSION_TABS_VISIBILITY_RESUME_STAGGER_MS
@@ -329,6 +330,39 @@ describe('useWebSessionTabsSync visibility collision recovery', () => {
     expect(state.activeTabIdByWorktree[WORKTREE]).toBe(tabId)
     expect(state.groupsByWorktree[WORKTREE]?.flatMap((group) => group.tabOrder)).toEqual([tabId])
     expect(state.agentStatusByPaneKey[paneKey]?.state).toBe('working')
+    hook.unmount()
+  })
+
+  it('stale visibility repair cannot answer a new connection', async () => {
+    const hook = renderHook(() => useWebSessionTabsSync())
+    await act(settle)
+    await publish(findGlobalSubscription(ENV_A), {
+      type: 'snapshots',
+      snapshots: [makeTerminalSnapshot('-a')]
+    })
+
+    act(() => {
+      setDocumentVisibility('hidden')
+      vi.advanceTimersByTime(WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS)
+      setDocumentVisibility('visible')
+    })
+    await settleGlobalMirrorResumeStarts()
+    await publish(findGlobalSubscription(ENV_B, 1), {
+      type: 'snapshots',
+      snapshots: [makeTerminalSnapshot('-b')]
+    })
+    useAppStore.setState((state) => ({
+      runtimeStatusByEnvironmentId: new Map([
+        [ENV_A, state.runtimeStatusByEnvironmentId.get(ENV_A)!],
+        [ENV_B, { ...state.runtimeStatusByEnvironmentId.get(ENV_B)!, connectionGeneration: 3 }]
+      ]) as AppState['runtimeStatusByEnvironmentId']
+    }))
+    expect(getWebSessionTabsAnswerState(ENV_B, WORKTREE).answered).toBe(false)
+    await publish(findGlobalSubscription(ENV_A, 1), {
+      type: 'snapshots',
+      snapshots: []
+    })
+    expect(getWebSessionTabsAnswerState(ENV_B, WORKTREE).answered).toBe(false)
     hook.unmount()
   })
 
