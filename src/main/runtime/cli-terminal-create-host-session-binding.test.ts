@@ -1,14 +1,6 @@
-/**
- * createTerminal is the host-initiated create path (CLI, mobile, paired
- * clients, orchestration) — the desktop renderer spawns its own tabs through
- * pty:spawn and never lands here. Such a pane has no renderer session writer,
- * so it must carry its own durable tab/leaf binding and runtime ownership.
- *
- * Aug-20 "windows 2" incident: that binding was gated on there being NO
- * attached window, so on a host running the full app a CLI-dispatched terminal
- * got neither — leaving graph sync unable to classify it and pruning the tab
- * out from under a live agent.
- */
+/** A host-initiated create has no renderer session writer, so only its own
+ *  durable binding and runtime ownership keep graph sync from pruning the tab
+ *  out from under a live agent — including when a window is attached. */
 import { describe, expect, it, vi } from 'vitest'
 import { OrcaRuntimeService } from './orca-runtime'
 
@@ -53,9 +45,7 @@ describe('host-initiated terminal creation under an attached window', () => {
 
     await runtime.createTerminal('id:repo-1::/tmp/wt-cli', {})
 
-    expect(spawn).toHaveBeenCalledWith(
-      expect.objectContaining({ persistHostSessionBinding: true })
-    )
+    expect(spawn).toHaveBeenCalledWith(expect.objectContaining({ persistHostSessionBinding: true }))
   })
 
   it('marks the spawned PTY runtime-session-owned', async () => {

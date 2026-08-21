@@ -28213,13 +28213,9 @@ export class OrcaRuntimeService {
             ...(adoptedBeforeLaunch ? { adoptedStablePane: adoptedBeforeLaunch } : {}),
             ...(launchOpts.sessionId ? { sessionId: launchOpts.sessionId } : {}),
             ...(!adoptedBeforeLaunch && launchOpts.isNewSession ? { isNewSession: true } : {}),
-            // Why: createTerminal is host-initiated by construction (CLI, mobile,
-            // paired clients, orchestration) — the renderer spawns its own tabs
-            // through pty:spawn. Such a pane has no renderer session writer, so
-            // it must carry its own durable tab/leaf binding. Gating this on an
-            // attached window left a live CLI terminal with neither a persisted
-            // tab nor runtime ownership, so graph sync could not classify it and
-            // pruned the tab out from under a running agent.
+            // Why: a host-initiated create has no renderer session writer, so
+            // without its own binding graph sync cannot classify the terminal
+            // and prunes the tab out from under a running agent.
             persistHostSessionBinding: true
           })
         } finally {

@@ -1,19 +1,10 @@
 /**
- * GUARD TESTS — deliberately NOT red-first for this diff. They pass with the
- * host-session-binding fix reverted, and that is the point: they pin the store
- * invariant that fix DEPENDS on. Do not delete them as vacuous.
- *
- * Seam under test: store.persistPtyBinding must not arm the repo's topology
- * fence. An armed fence makes rebaseWorkspaceSessionTerminalMembership treat a
- * later renderer close as a stale replay and restore the row, leaving the
- * durable de-persist to ride the PTY exit — asynchronous, and able to fail
- * outright. Safety is one guard away: advanceTopologyFence's
- * `currentRevision <= 0 && !establishesSplitAuthority` early return
- * (persistence/loading-store/store.ts:3284-3293).
- *
- * These drive the store directly, so they do NOT cover what createTerminal
- * passes it — cli-terminal-create-host-session-binding.test.ts and
- * graph-sync-live-daemon-pty-tab-preservation.test.ts own that path.
+ * Seam: store.persistPtyBinding must not arm the repo's topology fence. An
+ * armed fence makes rebaseWorkspaceSessionTerminalMembership treat a later
+ * renderer close as a stale replay and restore the row, leaving the durable
+ * de-persist to ride the PTY exit — asynchronous, and able to fail outright.
+ * Safety is one guard away: advanceTopologyFence's
+ * `currentRevision <= 0 && !establishesSplitAuthority` early return.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -115,16 +106,8 @@ describe('host-created terminal close durability', () => {
   })
 })
 
-/**
- * Census. The safety of a host-created terminal's persisted row rests on ONE
- * fact: creating it must not arm the repo's topology fence, because an armed
- * fence makes rebaseWorkspaceSessionTerminalMembership treat every later
- * renderer close as a stale replay and restore the row until an exit-driven
- * retirement advances the fence. If the kill never lands, that is permanent.
- *
- * These pin the seam itself rather than spot-checking callers, so adding a new
- * fence-advancing path (or arming it from the create path) fails here.
- */
+/** Pins the fence seam itself rather than spot-checking callers: a new
+ *  fence-advancing path, or arming the fence from the create path, fails here. */
 describe('topology fence census', () => {
   beforeEach(() => {
     testState.dir = mkdtempSync(join(tmpdir(), 'orca-fence-census-'))

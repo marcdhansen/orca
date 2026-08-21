@@ -1,17 +1,11 @@
 /**
- * Aug-20 "windows 2" incident: a CLI-created terminal on a host with an
- * attached window was left running with NO TAB, visible only via
- * `orca terminal list`.
+ * shouldPreserveHeadlessMobileSessionTab excludes the daemon ptyId form
+ * <worktreeId>@@<uuid> from its runtime-owned checks, so a host-created terminal
+ * survives renderer omission only through the binding createTerminal persists;
+ * a renderer de-persist (a user close) releases it again.
  *
- * Why it was unclassifiable: shouldPreserveHeadlessMobileSessionTab calls a
- * renderer-omitted terminal runtime-owned only via a headless-built publication
- * epoch, pty.runtimeSessionOwned, or a serve-/ssh-shaped ptyId — and the daemon
- * form <worktreeId>@@<uuid> is deliberately excluded. createTerminal is
- * host-initiated by construction, so it now always persists the binding and
- * takes ownership; a renderer de-persist (a user close) releases it again.
- *
- * Liveness vocabulary: these assert only on a PTY the runtime records as
- * connected (live) or exited. Never on "unverifiable".
+ * These assert only on a PTY the runtime records as connected or exited —
+ * never on "unverifiable".
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getDefaultWorkspaceSession } from '../../shared/constants'

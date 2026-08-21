@@ -1,22 +1,13 @@
 // @vitest-environment happy-dom
 
 /**
- * Order-faithful regression for the mirrored-pane resume deferral.
+ * Parked waiters drain synchronously, so a settle placed before its frame's
+ * patch reaches the store re-runs recovery while ptyIdsByTabId is still empty
+ * — the pane reads as dead and the duplicate `codex resume` fires anyway.
+ * These drive the real handlers because that ordering is the thing under test.
  *
- * The deferral is only worth anything if the latch settles AFTER the frame it
- * settles on has reached the store. Parked waiters drain synchronously, so a
- * settle placed at the top of a stream handler re-runs recovery while
- * ptyIdsByTabId is still empty — the pane reads as dead and the duplicate
- * `codex resume` fires anyway. These drive the REAL production handlers
- * (useWebSessionTabsSync -> window.api.runtimeEnvironments.subscribe ->
- * onResponse) rather than calling the latch directly, because the ordering
- * inside those handlers is the thing under test.
- *
- * The one-shot listAll is deliberately left PENDING so the stream frame is the
- * first hydration signal, which is exactly the race the fix has to survive.
- *
- * The second block pins the other half: a failure settles NOTHING. This latch
- * releases into replaying a resume, so `unverifiable` must not read as `exited`.
+ * The second block pins the other half: this latch releases into replaying a
+ * resume, so `unverifiable` must not read as `exited` and settle anything.
  */
 
 import { act, cleanup, renderHook } from '@testing-library/react'
