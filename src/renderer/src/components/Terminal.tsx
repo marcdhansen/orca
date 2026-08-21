@@ -100,6 +100,16 @@ import {
 } from './terminal/background-terminal-worktree-mount'
 import { hasRegisteredRuntimeTerminalTab } from '../runtime/sync-runtime-graph'
 import {
+  applyRestoredTerminalSpawnHold,
+  planRestoredTerminalSpawnHold,
+  RESTORED_TERMINAL_SPAWN_HOLD_MAX_TOTAL_MS,
+  RESTORED_TERMINAL_SPAWN_HOLD_TIMEOUT_MS,
+  willRestoredTabSpawnHostTerminal,
+  type RestoredSpawnHoldEntry
+} from './terminal/restored-terminal-spawn-hold'
+import { getWebSessionTabsAnswerState } from '../runtime/web-session-tabs-sync'
+import { getExplicitRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
+import {
   getEffectiveLayoutForWorktree as getEffectiveLayout,
   anyMountedWorktreeHasLayout as computeAnyMountedWorktreeHasLayout
 } from './terminal/split-group-mount'
@@ -322,6 +332,10 @@ function Terminal(): React.JSX.Element | null {
   const renderedActiveWorktreeId = activeWorktreeId
   const activeWorktreeDeferralHostId = useAppStore((s) =>
     getResolvedExecutionHostIdForWorktree(s, renderedActiveWorktreeId)
+  )
+  // Same resolver web-session-tabs-sync subscribes with; a hold on an environment nobody subscribed to could never be answered.
+  const spawnHoldEnvironmentId = useAppStore((s) =>
+    getExplicitRuntimeEnvironmentIdForWorktree(s, renderedActiveWorktreeId)
   )
   const activeView = useAppStore((s) => s.activeView)
   const tabsByWorktree = useAppStore((s) => s.tabsByWorktree)
@@ -834,6 +848,27 @@ function Terminal(): React.JSX.Element | null {
   const activationDeferredMountTabIdsByWorktreeRef = useRef(new Map<string, ReadonlySet<string>>())
   // Why: run the cold-activation deferral decision once per activation transition, not on every re-render.
   const lastActivationWorktreeIdRef = useRef<string | null>(null)
+  const restoredSpawnHoldByWorktreeRef = useRef(new Map<string, RestoredSpawnHoldEntry>())
+  const [, setRestoredSpawnHoldRevision] = useState(0)
+  // Fail open at the deadline: an unanswered hold must eventually mount, and the answer
+  // itself can land without a store patch (an accepted empty snapshot changes nothing).
+  useEffect(() => {
+    const entry = renderedActiveWorktreeId
+      ? restoredSpawnHoldByWorktreeRef.current.get(renderedActiveWorktreeId)
+      : undefined
+    if (!entry || entry.settled) {
+      return
+    }
+    const deadline = Math.min(
+      entry.windowStartedAtMs + RESTORED_TERMINAL_SPAWN_HOLD_TIMEOUT_MS,
+      entry.armedAtMs + RESTORED_TERMINAL_SPAWN_HOLD_MAX_TOTAL_MS
+    )
+    const timer = setTimeout(
+      () => setRestoredSpawnHoldRevision((revision) => revision + 1),
+      Math.max(0, deadline - Date.now())
+    )
+    return () => clearTimeout(timer)
+  })
   useEffect(() => {
     const timers = measurableBackgroundWorktreeTimersRef.current
     const closeDialogDebounceTimers = closeDialogDebounceTimersRef.current
@@ -1330,7 +1365,27 @@ function Terminal(): React.JSX.Element | null {
             pairedRuntimeParkingEnvironmentIds
           })
         : terminalProviderHasAuthoritativeSnapshot(ptyId)
-    if (lastActivationWorktreeIdRef.current !== renderedActiveWorktreeId) {
+    // Before the branch: it reads the pre-activation ref that the cold pass overwrites.
+    const isColdActivationPass = lastActivationWorktreeIdRef.current !== renderedActiveWorktreeId
+    const priorMountRestriction =
+      backgroundMountTabIdsByWorktreeRef.current.get(renderedActiveWorktreeId)
+    const worktreeWasMounted = mountedWorktreeIdsRef.current.has(renderedActiveWorktreeId)
+    const spawnHoldPlan = planRestoredTerminalSpawnHold({
+      holdByWorktreeId: restoredSpawnHoldByWorktreeRef.current,
+      worktreeId: renderedActiveWorktreeId,
+      environmentId: spawnHoldEnvironmentId,
+      answer: getWebSessionTabsAnswerState(spawnHoldEnvironmentId, renderedActiveWorktreeId),
+      isColdActivationPass,
+      nowMs: Date.now(),
+      allTabs: worktreeTabs,
+      wouldSpawnHostTerminal: (tab) =>
+        willRestoredTabSpawnHostTerminal(tab, useAppStore.getState()),
+      immediateTabIds,
+      isTabLive: hasRegisteredRuntimeTerminalTab,
+      // Same rule as applyBackgroundMountTabRestriction: never narrow out a tab an earlier pass mounted.
+      hasMountedTab: (tabId) => worktreeWasMounted && (priorMountRestriction?.has(tabId) ?? true)
+    })
+    if (isColdActivationPass) {
       lastActivationWorktreeIdRef.current = renderedActiveWorktreeId
       const tabById = new Map(worktreeTabs.map((tab) => [tab.id, tab]))
       planColdActivationTabDeferral({
@@ -1381,6 +1436,13 @@ function Terminal(): React.JSX.Element | null {
         immediateTabIds
       })
     }
+    applyRestoredTerminalSpawnHold({
+      restrictions: backgroundMountTabIdsByWorktreeRef.current,
+      deferredMountTabIdsByWorktree: activationDeferredMountTabIdsByWorktreeRef.current,
+      worktreeId: renderedActiveWorktreeId,
+      allTabIds: worktreeTabs.map((tab) => tab.id),
+      plan: spawnHoldPlan
+    })
     mountedWorktreeIdsRef.current.add(renderedActiveWorktreeId)
   } else {
     // Why: reset so the next ready activation re-runs the deferral decision even for the same worktree.
@@ -1399,6 +1461,7 @@ function Terminal(): React.JSX.Element | null {
       mountedWorktreeIdsRef.current.delete(id)
       backgroundMountTabIdsByWorktreeRef.current.delete(id)
       activationDeferredMountTabIdsByWorktreeRef.current.delete(id)
+      restoredSpawnHoldByWorktreeRef.current.delete(id)
     }
   }
   const anyMountedWorktreeHasLayout = computeAnyMountedWorktreeHasLayout(
