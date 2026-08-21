@@ -3380,7 +3380,7 @@
       "providers": ["local", "daemon", "ssh", "runtime"],
       "coveredPlatforms": ["macos"],
       "coveredProviders": ["local", "daemon", "ssh", "runtime"],
-      "coverageNotes": "Live macOS Electron tests prove exact local PTY disappearance after parked-tab close and detached-pgid descendant death after agent close. Deterministic tests cover final-pane CLI close durability, persisted-empty restart suppression, same-incarnation handle continuity, replacement and hard graph-loss stale fencing, preallocated-handle supersession, daemon and SSH routing, local/daemon pending-snapshot ownership across natural exit, stale-root descendant-signal suppression, graceful-to-immediate kill upgrades, duplicate-kill completion sharing, locale-stable bounded/fresh/coalesced process-table reads, deadline-safe successor scans, cycle-safe linear descendant traversal, target-only escalation indexing, 32-wide bulk teardown, source-scan timestamp identity, same-second PID ambiguity, ordinary runtime close ownership, unified-only hydration, split ownership, pane detach transfer, restart alias hydration, and late-hook suppression; live Linux, Windows, WSL, SSH, and remote-runtime process evidence remains pending.",
+      "coverageNotes": "Live macOS Electron tests prove exact local PTY disappearance after parked-tab close and detached-pgid descendant death after agent close. Deterministic tests cover final-pane CLI close durability, persisted-empty restart suppression, same-incarnation handle continuity, replacement and hard graph-loss stale fencing, preallocated-handle supersession, daemon and SSH routing, local/daemon pending-snapshot ownership across natural exit, stale-root descendant-signal suppression, graceful-to-immediate kill upgrades, duplicate-kill completion sharing, locale-stable bounded/fresh/coalesced process-table reads, deadline-safe successor scans, cycle-safe linear descendant traversal, target-only escalation indexing, 32-wide bulk teardown, source-scan timestamp identity, same-second PID ambiguity, ordinary runtime close ownership, unified-only hydration, split ownership, pane detach transfer, restart alias hydration, and late-hook suppression; live Linux, Windows, WSL, SSH, and remote-runtime process evidence remains pending. A paired macOS Electron journey (real attached-window desktop host plus a separate real paired desktop client, isolated profiles) covers the inverse authority direction for host-created terminals: a renderer graph sync driven straight after `orca terminal create` must not retire the tab. That claim is PARTIAL - the same oracle shows a later sync still prunes the oldest host-created tab (see knownGaps) - and it is macOS-local only. The reported incident occurred on a physical Windows host; we did not run against one. The claim that the mechanism is platform-independent rests on the authoritative-window gate and publication-epoch inheritance being OS-agnostic, not on Windows evidence, so no ConPTY, Windows window-lifecycle, update, or sleep behavior is covered here.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/pull/8628",
         "https://github.com/stablyai/orca/pull/8706",
@@ -3395,7 +3395,8 @@
         "pnpm exec vitest run --config config/vitest.config.ts src/main/pty-descendant-termination.test.ts src/main/daemon/session.test.ts src/main/daemon/terminal-host.test.ts src/main/providers/local-pty-provider-shutdown.test.ts src/main/runtime/worktree-teardown.test.ts",
         "pnpm run test:e2e -- tests/e2e/terminal-tab-close-restart-persistence.spec.ts --workers=1",
         "pnpm run test:e2e -- tests/e2e/terminal-parked-close-retirement.spec.ts --workers=1",
-        "pnpm run test:e2e -- tests/e2e/agent-descendant-process-kill.spec.ts --workers=1"
+        "pnpm run test:e2e -- tests/e2e/agent-descendant-process-kill.spec.ts --workers=1",
+        "pnpm run test:e2e -- tests/e2e/paired-cli-terminal-graph-sync-tab-retention.spec.ts --workers=1"
       ],
       "testFiles": [
         "src/main/runtime/orca-runtime-terminal-close-continuity.test.ts",
@@ -3422,7 +3423,8 @@
         "src/renderer/src/components/shared/kill-all-terminal-surfaces.test.ts",
         "tests/e2e/terminal-tab-close-restart-persistence.spec.ts",
         "tests/e2e/terminal-parked-close-retirement.spec.ts",
-        "tests/e2e/agent-descendant-process-kill.spec.ts"
+        "tests/e2e/agent-descendant-process-kill.spec.ts",
+        "tests/e2e/paired-cli-terminal-graph-sync-tab-retention.spec.ts"
       ],
       "assertionRefs": [
         {
@@ -3466,6 +3468,16 @@
           "assertions": [
             "a long-lived exact PTY remains alive after its terminal view is parked",
             "closing the parked tab removes the exact PTY from the provider inventory and the visible tab model"
+          ]
+        },
+        {
+          "file": "tests/e2e/paired-cli-terminal-graph-sync-tab-retention.spec.ts",
+          "assertions": [
+            "an attached-window desktop host publishes the CLI-created terminal under the renderer publication epoch it inherits, proving the vulnerable classification path was taken rather than a headless or serve/SSH-shaped one",
+            "a renderer graph sync driven immediately after `terminal.create` leaves the tab in the host session inventory still naming its original daemon PTY",
+            "the original fixture process answers a write through that handle with its own pid and a single READY line, so a respawned replacement cannot pass as a survivor",
+            "the paired client applied that same sync and kept the tab with no replacement or resume tab appended",
+            "an unrelated workspace keeps its own CLI terminal and PTY, and the client raises no direct local connection attempt or uncaught renderer error"
           ]
         },
         {
@@ -3607,9 +3619,11 @@
         "Daemon owner leases and durable retry inventory remain follow-up hardening.",
         "Windows ConPTY, SSH-hosted PTYs, app-quit killAll, and daemon dispose retain foreground-tree-only teardown.",
         "A process born in the capture second is SIGTERMed but not SIGKILLed because ps cannot prove its recycled-PID identity.",
-        "A descendant orphaned before or during root ownership loss requires the separate crash-orphan sweep and is not recovered from a stale kill-time snapshot."
+        "A descendant orphaned before or during root ownership loss requires the separate crash-orphan sweep and is not recovered from a stale kill-time snapshot.",
+        "Host-created (`orca terminal create`) tab retention is proven only for a renderer graph sync driven immediately after the dispatch. On the same oracle, four back-to-back creates followed by a 12s gap and one sync retained tabs 2-4 but still pruned tab 1, so the oldest host-created tab is still retired by something other than an explicit close. That is the shape of the reported incident and remains unprotected.",
+        "The host-created retention journey is macOS-local; the reported incident was on a physical Windows host, which we did not run against."
       ],
-      "demotionRule": "Keep experimental or demote to protection none if exact PTY disappearance flakes, a sibling/detached pane is retired, or late hooks can recreate closed authority."
+      "demotionRule": "Keep experimental or demote to protection none if exact PTY disappearance flakes, a sibling/detached pane is retired, late hooks can recreate closed authority, or a renderer graph sync retires a host-created tab that no explicit close retired."
     },
     {
       "id": "terminal-session.daemon-generation-reconnect-safety",

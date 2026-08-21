@@ -1,37 +1,39 @@
 /**
- * A terminal created by `orca terminal create` (runtime RPC `terminal.create` ->
- * OrcaRuntimeService.createTerminal) on a host whose desktop window IS attached
- * must survive the renderer graph syncs that every later CLI dispatch drives.
+ * TOPOLOGY (a): real Orca DESKTOP app as the remote server, isolated profile,
+ * window ATTACHED, paired to a separate real desktop client.
  *
- * The renderer never owns that pane, so it is absent from every renderer
- * publication; the daemon ptyId form `<worktreeId>@@<shortUuid>` is deliberately
- * excluded from id-shape classification; and the tab inherits the RENDERER's
- * publicationEpoch, so epoch alone cannot save it either. Only the host's own
- * persisted binding + runtimeSessionOwned keep graph sync from pruning it and
- * publishing a retraction that strands every paired client's tab strip.
+ * A terminal created by `orca terminal create` (RPC `terminal.create` ->
+ * OrcaRuntimeService.createTerminal) must survive the renderer graph syncs that
+ * every later CLI dispatch drives. The renderer never owns that pane, so it is
+ * absent from every renderer publication; the daemon ptyId form
+ * `<worktreeId>@@<shortUuid>` is excluded from id-shape classification; and the
+ * tab inherits the RENDERER's publicationEpoch, so epoch alone cannot save it.
  *
- * The renderer-first publication in step 2 is load-bearing: on a workspace that
- * only the host ever published, the snapshot carries a headless epoch which is
- * preserved unconditionally, and the defect does not reproduce.
+ * The window is causal: the old gate was `getAvailableAuthoritativeWindow() ===
+ * null`, so a windowless host does NOT reproduce this. The renderer-first
+ * publication is equally load-bearing — on a workspace only the host published,
+ * the snapshot carries a headless epoch, which is preserved unconditionally.
+ * Both preconditions are asserted, not assumed.
  *
- * Observed before the fix: the host's own snapshot loses the CLI tab on the
- * first renderer graph sync, and the paired client is left holding the frame
- * from before the prune — it never applies the renderer's next publication at
- * all, so its strip keeps a tab the host no longer serves while the renderer's
- * own new tab never arrives. Hence both halves are asserted: presence alone on
- * the client would pass against a frozen mirror.
+ * SCOPE, measured three ways on this identical oracle — one renderer graph
+ * sync after four back-to-back `terminal.create` calls plus a 12s gap:
+ *   main@6e25a90085           tabs 1-4 all pruned
+ *   branch, host fix removed  tabs 1-4 all pruned
+ *   branch                    tab 1 pruned, tabs 2-4 retained
+ * The host binding demonstrably improves retention, and something still retires
+ * the oldest host-created tab. This spec therefore pins only what the branch
+ * actually fixes: a dispatch whose sync follows it directly. The surviving
+ * defect is tracked separately, deliberately NOT encoded here as an
+ * expectation — a `test.fail` cannot tell a real prune from a setup error.
  *
  * Run:
  *   pnpm exec playwright test tests/e2e/paired-cli-terminal-graph-sync-tab-retention.spec.ts \
  *     --config tests/playwright.config.ts --project electron-headless --workers=1
  */
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { randomUUID } from 'node:crypto'
-import os from 'node:os'
+import { rmSync } from 'node:fs'
 import path from 'node:path'
 import type { Page } from '@stablyai/playwright-test'
 import {
-  HOST_TERMINAL_SURFACE_SEPARATOR,
   toWebTerminalSurfaceTabId,
   WEB_TERMINAL_SURFACE_TAB_PREFIX
 } from '../../src/shared/terminal-surface-id'
@@ -41,69 +43,39 @@ import {
   launchPairedElectronClient,
   type PairedElectronClient
 } from './helpers/paired-electron-client'
+import {
+  createHostCliTerminal,
+  createRetentionFixtureDirectory,
+  proveSameLivePty,
+  readHostTerminalInventory,
+  writeRetentionFixture,
+  type HostTerminalInventory,
+  type RuntimeRpcCall
+} from './helpers/host-created-terminal-retention-oracle'
 
-const scratch = mkdtempSync(path.join(os.tmpdir(), 'orca-cli-terminal-graph-sync-'))
-const fixturePath = path.join(scratch, 'cli-agent-terminal.mjs')
-
-// Stands in for the long-running agent a CLI dispatch spawns: it never exits,
-// so every prune this spec observes is about classification, not a dead PTY.
-writeFileSync(
-  fixturePath,
-  [
-    "process.stdout.write('READY\\r\\n')",
-    "process.stdin.setEncoding('utf8')",
-    'process.stdin.resume()'
-  ].join('\n')
-)
+const scratch = createRetentionFixtureDirectory()
+const fixturePath = writeRetentionFixture(scratch)
 
 test.afterAll(() => {
   rmSync(scratch, { recursive: true, force: true })
 })
 
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`
-}
-
-function fixtureCommand(): string {
-  const command = [process.execPath, fixturePath]
-  return process.platform === 'win32'
-    ? command.map((value) => `"${value.replaceAll('"', '""')}"`).join(' ')
-    : command.map(shellQuote).join(' ')
-}
-
-async function callEnvironment<TResult>(
-  page: Page,
-  environmentId: string,
-  method: string,
-  params: unknown
-): Promise<TResult> {
-  return page.evaluate(
-    async ({ environmentId, method, params }) => {
-      const response = await window.api.runtimeEnvironments.call({
-        selector: environmentId,
-        method,
-        params
-      })
-      if (!response.ok) {
-        throw new Error(`${response.error.code}: ${response.error.message}`)
-      }
-      return response.result
-    },
-    { environmentId, method, params }
-  ) as Promise<TResult>
-}
-
-/** Top-level tab ids in the host's own published session snapshot. */
-async function readHostSnapshotTabIds(
-  client: PairedElectronClient,
-  worktreeId: string
-): Promise<string[]> {
-  const snapshot = await callEnvironment<{
-    tabs: { id: string; type: string; parentTabId?: string }[]
-  }>(client.page, client.environmentId, 'session.tabs.list', { worktree: `id:${worktreeId}` })
-  return snapshot.tabs
-    .filter((tab) => tab.type === 'terminal')
-    .map((tab) => tab.parentTabId ?? tab.id.split(HOST_TERMINAL_SURFACE_SEPARATOR)[0])
+function createPairedRuntimeCall(page: Page, environmentId: string): RuntimeRpcCall {
+  return async <TResult>(method: string, params: unknown): Promise<TResult> =>
+    page.evaluate(
+      async ({ environmentId, method, params }) => {
+        const response = await window.api.runtimeEnvironments.call({
+          selector: environmentId,
+          method,
+          params
+        })
+        if (!response.ok) {
+          throw new Error(`${response.error.code}: ${response.error.message}`)
+        }
+        return response.result
+      },
+      { environmentId, method, params }
+    ) as Promise<TResult>
 }
 
 async function readClientTerminalStrip(page: Page, worktreeId: string): Promise<string[]> {
@@ -166,123 +138,187 @@ async function createHostRendererTerminalTab(page: Page, worktreeId: string): Pr
   return tabId
 }
 
-test('a host-created CLI terminal survives the renderer graph sync a later dispatch drives', async ({
+async function readHostInventoryWhenTabAppears(
+  call: RuntimeRpcCall,
+  worktreeId: string,
+  tabId: string,
+  message: string
+): Promise<HostTerminalInventory> {
+  let inventory: HostTerminalInventory | null = null
+  await expect
+    .poll(
+      async () => {
+        inventory = await readHostTerminalInventory(call, worktreeId)
+        return inventory.tabIds.includes(tabId)
+      },
+      { timeout: 60_000, message }
+    )
+    .toBe(true)
+  return inventory!
+}
+
+type RetentionFixture = {
+  call: RuntimeRpcCall
+  client: PairedElectronClient
+  rendererTabId: string
+  unrelatedWorktreeId: string
+  worktreeId: string
+}
+
+/** Everything both tests need in place BEFORE the dispatch under test, so no
+ *  setup work sits between that dispatch and the graph sync it races. */
+async function prepareRetentionFixture(
+  orcaPage: Page,
+  client: PairedElectronClient
+): Promise<RetentionFixture> {
+  const call = createPairedRuntimeCall(client.page, client.environmentId)
+  const { worktreeId, unrelatedWorktreeId } = await orcaPage.evaluate(() => {
+    const state = window.__store?.getState()
+    const active = state?.activeWorktreeId
+    if (!state || !active) {
+      throw new Error('Host has no active worktree')
+    }
+    const unrelated = state.allWorktrees().find((worktree) => worktree.id !== active)
+    if (!unrelated) {
+      throw new Error('Host fixture needs a second worktree for the unrelated-workspace control')
+    }
+    return { worktreeId: active, unrelatedWorktreeId: unrelated.id }
+  })
+  await expect
+    .poll(
+      () =>
+        client.page.evaluate(
+          (id) =>
+            window.__store
+              ?.getState()
+              .allWorktrees()
+              .some((worktree) => worktree.id === id) ?? false,
+          worktreeId
+        ),
+      { timeout: 60_000, message: 'Paired client never saw the host worktree' }
+    )
+    .toBe(true)
+
+  // PRECONDITION: the RENDERER owns this workspace's publication, so the CLI tab
+  // created later inherits the renderer epoch instead of a headless one.
+  const rendererTabId = await createHostRendererTerminalTab(orcaPage, worktreeId)
+  const rendererOwned = await readHostInventoryWhenTabAppears(
+    call,
+    worktreeId,
+    rendererTabId,
+    'Host never published the renderer terminal tab'
+  )
+  expect(
+    rendererOwned.publicationEpoch,
+    'the attached-window topology requires a renderer-owned publication; a headless epoch takes a different, already-correct path'
+  ).toMatch(/^renderer:/)
+  await readClientStripWhenTabAppears(
+    client.page,
+    worktreeId,
+    toWebTerminalSurfaceTabId(rendererTabId),
+    'Paired client never mirrored the host renderer terminal tab'
+  )
+  return { call, client, rendererTabId, unrelatedWorktreeId, worktreeId }
+}
+
+test('keeps a host-created CLI terminal when the next dispatch syncs immediately', async ({
   orcaPage
 }, testInfo) => {
-  test.setTimeout(360_000)
+  test.setTimeout(600_000)
   const client = await launchPairedElectronClient(
     await createRuntimeDesktopPairingOffer(orcaPage),
     testInfo,
     'cli-terminal-graph-sync'
   )
+  const hostPageErrors: string[] = []
+  const clientPageErrors: string[] = []
+  orcaPage.on('pageerror', (error) => hostPageErrors.push(String(error)))
+  client.page.on('pageerror', (error) => clientPageErrors.push(String(error)))
   const createdHandles: string[] = []
+  let call: RuntimeRpcCall | null = null
   try {
-    const worktreeId = await orcaPage.evaluate(() => {
-      const id = window.__store?.getState().activeWorktreeId
-      if (!id) {
-        throw new Error('Host has no active worktree')
-      }
-      return id
-    })
-    await expect
-      .poll(
-        () =>
-          client.page.evaluate(
-            (id) =>
-              window.__store
-                ?.getState()
-                .allWorktrees()
-                .some((worktree) => worktree.id === id) ?? false,
-            worktreeId
-          ),
-        { timeout: 60_000, message: 'Paired client never saw the host worktree' }
-      )
-      .toBe(true)
+    const fixture = await prepareRetentionFixture(orcaPage, client)
+    call = fixture.call
+    const { unrelatedWorktreeId, worktreeId } = fixture
 
-    // 2. The RENDERER publishes this workspace first, so the CLI tab created
-    //    below inherits the renderer publication epoch.
-    const rendererTabId = await createHostRendererTerminalTab(orcaPage, worktreeId)
-    const baselineStrip = await readClientStripWhenTabAppears(
-      client.page,
+    // Control in an unrelated workspace, created FIRST so it cannot lengthen the
+    // gap the test under measurement depends on.
+    const unrelated = await createHostCliTerminal(
+      fixture.call,
+      unrelatedWorktreeId,
+      fixturePath,
+      path.join(scratch, 'unrelated-agent.log')
+    )
+    createdHandles.push(unrelated.handle)
+    const baselineStrip = await readClientTerminalStrip(client.page, worktreeId)
+
+    // `orca terminal create`, then the graph sync a following dispatch drives.
+    const cli = await createHostCliTerminal(
+      fixture.call,
       worktreeId,
-      toWebTerminalSurfaceTabId(rendererTabId),
-      'Paired client never mirrored the host renderer terminal tab'
+      fixturePath,
+      path.join(scratch, 'cli-agent.log')
     )
-
-    // 3. `orca terminal create`: a background host-initiated create against a
-    //    host whose desktop window is attached.
-    const created = await callEnvironment<{ terminal: { handle: string; tabId?: string } }>(
-      client.page,
-      client.environmentId,
-      'terminal.create',
-      {
-        worktree: `id:${worktreeId}`,
-        clientMutationId: randomUUID(),
-        command: fixtureCommand(),
-        focus: false,
-        activate: false,
-        presentation: 'background'
-      }
-    )
-    createdHandles.push(created.terminal.handle)
-    const cliTabId = created.terminal.tabId
-    if (!cliTabId) {
-      throw new Error('Host did not report a tab id for the CLI-created terminal')
-    }
-    const cliWebTabId = toWebTerminalSurfaceTabId(cliTabId)
-    expect(
-      await readHostSnapshotTabIds(client, worktreeId),
-      'the host never published the CLI-created terminal'
-    ).toContain(cliTabId)
-    await readClientStripWhenTabAppears(
-      client.page,
-      worktreeId,
-      cliWebTabId,
-      'Paired client never mirrored the CLI-created terminal tab'
-    )
-
-    // 4. The next dispatch's renderer graph sync: the renderer republishes this
-    //    worktree from the panes IT owns, which never include the CLI terminal.
+    createdHandles.push(cli.handle)
     const secondRendererTabId = await createHostRendererTerminalTab(orcaPage, worktreeId)
-    const secondWebTabId = toWebTerminalSurfaceTabId(secondRendererTabId)
 
-    // 5. The republished frame that carries the new renderer tab is the same
-    //    frame that would drop the CLI tab, so judge on that single snapshot.
-    let hostTabIds: string[] = []
-    await expect
-      .poll(
-        async () => {
-          hostTabIds = await readHostSnapshotTabIds(client, worktreeId)
-          return hostTabIds.includes(secondRendererTabId)
-        },
-        { timeout: 60_000, message: 'Host never republished with the second renderer tab' }
-      )
-      .toBe(true)
+    // SIGNAL 1 — the frame carrying the new renderer tab is the same merge that
+    // would drop the CLI tab, so judge on that one inventory.
+    const afterSync = await readHostInventoryWhenTabAppears(
+      fixture.call,
+      worktreeId,
+      secondRendererTabId,
+      'Host never republished with the second renderer tab'
+    )
     expect(
-      hostTabIds,
-      'the renderer graph sync pruned the CLI-created terminal out of the host session snapshot'
-    ).toContain(cliTabId)
+      afterSync.tabIds,
+      'the renderer graph sync pruned the CLI-created terminal out of the host session inventory'
+    ).toContain(cli.tabId)
+    expect(
+      afterSync.ptyIdByTabId[cli.tabId],
+      'the surviving tab must still name the original PTY, not a replacement'
+    ).toBe(cli.ptyId)
 
-    // 6. And the paired client tracked that same sync — a strip that still shows
-    //    the CLI tab but never received the renderer's new one is a stranded
-    //    mirror, not a retained tab.
+    // SIGNAL 2 — independent of the inventory: the original process answers.
+    await proveSameLivePty(fixture.call, cli, 'after-sync')
+
+    // The paired client tracked that same sync. Presence alone would pass on a
+    // stranded mirror, which is exactly what the unfixed host produces.
     const strip = await readClientStripWhenTabAppears(
       client.page,
       worktreeId,
-      secondWebTabId,
+      toWebTerminalSurfaceTabId(secondRendererTabId),
       'Paired client never applied the renderer graph sync that followed the CLI create'
     )
+    expect(strip, 'the paired client dropped the CLI-created terminal from its strip').toContain(
+      toWebTerminalSurfaceTabId(cli.tabId)
+    )
+    // No replacement or resume tab was appended for it either.
+    expect([...strip].sort()).toEqual(
+      [
+        ...baselineStrip,
+        toWebTerminalSurfaceTabId(cli.tabId),
+        toWebTerminalSurfaceTabId(secondRendererTabId)
+      ].sort()
+    )
+
+    // NEGATIVE SAFETY: no fanout into an unrelated workspace, no local fallback.
+    const unrelatedInventory = await readHostTerminalInventory(fixture.call, unrelatedWorktreeId)
+    expect(unrelatedInventory.tabIds, 'an unrelated workspace lost its CLI terminal').toContain(
+      unrelated.tabId
+    )
+    expect(unrelatedInventory.ptyIdByTabId[unrelated.tabId]).toBe(unrelated.ptyId)
+    await proveSameLivePty(fixture.call, unrelated, 'unrelated-alive')
     expect(
-      strip,
-      'the paired client dropped the CLI-created terminal from its tab strip'
-    ).toContain(cliWebTabId)
-    // No replacement/resume tab was appended for it either.
-    expect([...strip].sort()).toEqual([...baselineStrip, cliWebTabId, secondWebTabId].sort())
+      await client.getDirectSshAttemptTargetIds(),
+      'the paired client must reach the host through the pairing, never a local connection'
+    ).toEqual([])
+
+    expect(hostPageErrors, 'host renderer raised an uncaught error').toEqual([])
+    expect(clientPageErrors, 'paired client renderer raised an uncaught error').toEqual([])
   } finally {
     for (const handle of createdHandles) {
-      await callEnvironment(client.page, client.environmentId, 'terminal.closeTab', {
-        terminal: handle
-      }).catch(() => undefined)
+      await call?.('terminal.closeTab', { terminal: handle }).catch(() => undefined)
     }
     await client.dispose()
   }
