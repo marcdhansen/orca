@@ -15,27 +15,22 @@
  * only the host published, the snapshot carries a headless epoch, which is
  * preserved unconditionally. Both preconditions are asserted, not assumed.
  *
- * SCOPE — retention on this branch is PARTIAL, and what decides it is not time.
- * Measured a variable at a time on this oracle, one renderer graph sync after a
- * `terminal.create`:
+ * WHAT THIS ORACLE CAN AND CANNOT SEE. It reads the host inventory after ONE
+ * renderer graph sync, and that made an earlier four-row matrix here read as if
+ * a preceding host terminal or a `clientMutationId` "protected" the tab. Both
+ * readings were false negatives. Main-process instrumentation showed the
+ * renderer's stale session write deleted the host tab from persistence in EVERY
+ * variant; the only difference was whether that delete landed before or after
+ * the sync being measured. The apparently-protected tabs were already gone from
+ * persistence — they would prune on the next sync and were lost across restart.
+ * Read a single-sync retained verdict as "not yet pruned", never as "safe".
  *
- *   preceding host terminal | clientMutationId | gap    | retained
- *   ------------------------------------------------------------
- *   no                      | no               | 0s     | NO
- *   no                      | no               | 12s    | NO
- *   yes                     | no               | 0s/12s | yes
- *   no                      | yes              | 0s     | yes
- *
- * Two things independently protect the tab: an earlier host-created terminal
- * existing (even in another workspace), or a `clientMutationId` on the create.
- * Elapsed time, and whether a paired client has mirrored the tab, are both
- * irrelevant. On merge-base and with the host fix removed every terminal is
- * pruned in every shape, so the binding is a real improvement.
- *
- * The real `orca terminal create` (src/cli/handlers/terminal.ts) sends no
- * clientMutationId, so a user's FIRST host-created terminal in a workspace has
- * neither protector — the reported incident. That is the `fixme` test below,
- * under separate root-cause investigation.
+ * The defect that produced those rows was in persistence, not in the graph-sync
+ * reconciler: persistPtyBinding refused to raise the repo's terminal topology
+ * fence for the first host-admitted tab, so the renderer's pre-create tab list
+ * replayed over it (fixed in `let a host-admitted tab establish membership
+ * authority`). Elapsed time never decided anything, and neither did whether a
+ * paired client had mirrored the tab.
  *
  * Run:
  *   pnpm exec playwright test tests/e2e/paired-cli-terminal-graph-sync-tab-retention.spec.ts \
@@ -234,10 +229,10 @@ async function prepareRetentionFixture(
  * One `orca terminal create` in the measured workspace, one renderer graph sync,
  * both signals plus the negative-safety checks.
  *
- * `precedingHostTerminal` is the ONLY difference between the two tests, and on
- * this branch it decides the verdict: the unrelated-workspace control terminal
- * is created either before the target (protected shape) or after it (the
- * incident shape, where the target is the first host-created terminal).
+ * `precedingHostTerminal` is the ONLY difference between the two tests: the
+ * unrelated-workspace control terminal is created either before the target or
+ * after it, so `false` makes the target the repo's first host-admitted tab —
+ * the incident shape, and the one the topology fence used to miss.
  */
 async function runCliTerminalRetentionJourney(
   orcaPage: Page,
@@ -355,17 +350,12 @@ test('keeps a host-created CLI terminal when an earlier host-created terminal ex
 })
 
 // The reported incident, and the shape the real CLI takes: `orca terminal
-// create` sends no clientMutationId, so a user's FIRST host-created terminal in
-// a workspace has neither protector, and the next renderer graph sync prunes it.
-// Confirmed red on this branch by running this exact body with the annotation
-// removed — SIGNAL 1 fires with the target absent from the host inventory.
-//
-// `fixme`, not `fail`: a `fail` test is satisfied by ANY failure, and this file
-// has twice aborted in fixture setup ("seeded e2e worktrees did not load"), so
-// `fail` would keep reporting success while measuring nothing. `fixme` records
-// the gap without pretending to assert it. Delete the annotation once the
-// residual defect under separate root-cause investigation is fixed.
-test.fixme('keeps a host-created CLI terminal that is the first one on the host', async ({
+// create` sends no clientMutationId, so this is a user's FIRST host-created
+// terminal in the repo — the one case that raised no topology fence and whose
+// tab the renderer's pre-create tab list therefore replayed out of persistence.
+// Reverting store.ts/pty.ts alone turns this red with SIGNAL 1: the target is
+// absent from the host inventory.
+test('keeps a host-created CLI terminal that is the first one on the host', async ({
   orcaPage
 }, testInfo) => {
   test.setTimeout(600_000)
