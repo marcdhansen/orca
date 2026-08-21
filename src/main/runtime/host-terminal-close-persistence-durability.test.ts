@@ -1,14 +1,22 @@
 /**
- * Persisting the host session binding for every host-initiated terminal also
- * pushes its repo into host-authoritative terminal membership (persistPtyBinding
- * -> advanceTopologyFence). From then on rebaseWorkspaceSessionTerminalMembership
- * restores any terminal row a renderer session write omits, unless that write
- * carries a higher topology revision.
+ * GUARD TESTS — deliberately NOT red-first for this diff. They pass with the
+ * host-session-binding fix reverted, and that is the point: they pin the
+ * invariant that fix DEPENDS on, not the fix itself. Do not delete them as
+ * vacuous.
  *
- * A renderer close IS such a write: it omits the row and cannot bump the
- * revision (terminalTopologyRevisionByRepoId is hostPrivate). The durable
- * de-persist instead rides the PTY exit (retireMobileSessionSurfacesForPty).
- * These pin what happens in the gap — kill lag, and a kill that never lands.
+ * The invariant: creating a host-initiated terminal must not arm its repo's
+ * topology fence. An armed fence makes rebaseWorkspaceSessionTerminalMembership
+ * treat every later renderer close as a stale replay and restore the row,
+ * leaving the durable de-persist to ride the PTY exit — which is asynchronous
+ * and can fail outright. A close whose kill never lands would then stay
+ * persisted forever: a session-level twin of the closed-tab resurrection
+ * STA-4593 fixed at the snapshot layer.
+ *
+ * Safety is one guard away — advanceTopologyFence's
+ * `currentRevision <= 0 && !establishesSplitAuthority` early return
+ * (persistence/loading-store/store.ts:3284-3293). If anyone arms the fence from
+ * the create path (passes expectedSourceBinding, or relaxes that guard), these
+ * fail immediately and that scenario becomes real.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
