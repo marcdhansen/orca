@@ -38,7 +38,12 @@ vi.mock('./web-runtime-session', async (importOriginal) => {
 
 import { useAppStore, type AppState } from '@/store'
 import type { PublicKnownRuntimeEnvironment } from '../../../shared/runtime-environments'
+import {
+  takeAllPendingBackgroundTerminalWorktreeMounts,
+  takePendingBackgroundTerminalWorktreeMount
+} from '@/components/terminal/background-terminal-worktree-mount'
 import { resumeSleepingAgentSessionsForWorktree } from '@/lib/resume-sleeping-agent-session'
+import { wakeSleepingAgentsForWorktreeInBackground } from '@/lib/wake-sleeping-agents-in-background'
 import { replaceRuntimeEnvironmentRevisions } from './runtime-environment-revision'
 import { resetHostSessionMirrorHydrationForTests } from './host-session-mirror-hydration'
 import {
@@ -139,6 +144,20 @@ function makeHostSnapshot(
         terminal: 'terminal-1'
       }
     ]
+  } as never
+}
+
+/** The host reports zero terminals: the same frame retracts the mirror tab and
+ *  asks the client to respawn one. */
+function makeEmptyHostSnapshot(worktree: string): RuntimeMobileSessionTabsResult {
+  return {
+    worktree,
+    publicationEpoch: 'epoch-1',
+    snapshotVersion: 1,
+    activeGroupId: null,
+    activeTabId: null,
+    activeTabType: null,
+    tabs: []
   } as never
 }
 
@@ -492,6 +511,43 @@ describe('mirror latch verdicts against real stream failures', () => {
     expect(Object.keys(state.automaticAgentResumeClaimsByTabId)).toHaveLength(0)
   })
 
+  it('a spawn that rejects after the patch still settles the frame that landed', async () => {
+    renderHook(() => useWebSessionTabsSync())
+    await act(settle)
+    const paneKey = seedSleepingRecord(MIRROR_TAB_ID, WT, 'codex-session-spawn-reject')
+    expect(resumeSleepingAgentSessionsForWorktree(WT)).toBe(0)
+
+    // The wake respawn this frame triggers fails, but the frame it failed after
+    // already reached the store — the host is healthy and has spoken.
+    mocks.createTerminal.mockRejectedValue(new Error('spawn failed'))
+    await publish(findSubscription('session.tabs.subscribe'), {
+      type: 'snapshot',
+      ...makeEmptyHostSnapshot(WT)
+    })
+
+    expect(mocks.createTerminal).toHaveBeenCalled()
+    expect(tabIds(WT)).not.toContain(MIRROR_TAB_ID)
+    expectReplayedResume(paneKey, WT, 'codex-session-spawn-reject')
+  })
+
+  it('a rejection before the patch settles nothing', async () => {
+    renderHook(() => useWebSessionTabsSync())
+    await act(settle)
+    const paneKey = seedSleepingRecord(MIRROR_TAB_ID, WT, 'codex-session-preapply-reject')
+    expect(resumeSleepingAgentSessionsForWorktree(WT)).toBe(0)
+
+    // Nothing of this frame reached the store, so it is no evidence at all.
+    mocks.recoverSnapshot.mockRejectedValue(new Error('orphan recovery failed'))
+    await publish(findSubscription('session.tabs.subscribe'), {
+      type: 'snapshot',
+      ...makeHostSnapshot(WT, OTHER_HOST_SURFACE_ID, OTHER_HOST_PARENT_TAB_ID)
+    })
+
+    expect(tabIds(WT)).toEqual([MIRROR_TAB_ID])
+    expect(useAppStore.getState().sleepingAgentSessionsByPaneKey[paneKey]).toBeDefined()
+    expect(Object.keys(useAppStore.getState().automaticAgentResumeClaimsByTabId)).toHaveLength(0)
+  })
+
   it('an inventory whose recovery drops a worktree settles only the applied ones', async () => {
     renderHook(() => useWebSessionTabsSync())
     await act(settle)
@@ -515,5 +571,56 @@ describe('mirror latch verdicts against real stream failures', () => {
     expect(useAppStore.getState().ptyIdsByTabId[MIRROR_TAB_ID]).toEqual([HOST_PTY_ID])
     expect(tabIds(BG_WT)).toEqual([BG_MIRROR_TAB_ID])
     expect(useAppStore.getState().sleepingAgentSessionsByPaneKey[backgroundPaneKey]).toBeDefined()
+  })
+})
+
+describe('a parked wake replay keeps the mount contract of its caller', () => {
+  beforeEach(() => {
+    subscriptions.length = 0
+    runtimeCall.mockClear().mockImplementation(() => new Promise(() => {}))
+    runtimeSubscribe.mockClear()
+    mocks.createTerminal.mockReset().mockResolvedValue(undefined)
+    mocks.recoverSnapshot.mockReset().mockImplementation(async (_state, snapshot) => snapshot)
+    mocks.runtimeSessionMirrorEnvironmentKey.mockReset().mockReturnValue(MIRROR_KEY)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { runtimeEnvironments: { call: runtimeCall, subscribe: runtimeSubscribe } }
+    })
+    takeAllPendingBackgroundTerminalWorktreeMounts()
+    resetWebSessionTabsSnapshotFreshnessForTests()
+    resetHostSessionMirrorHydrationForTests()
+    seedState()
+  })
+
+  afterEach(() => {
+    cleanup()
+    useAppStore.setState(initialState, true)
+    replaceRuntimeEnvironmentRevisions([])
+    takeAllPendingBackgroundTerminalWorktreeMounts()
+    resetWebSessionTabsSnapshotFreshnessForTests()
+    resetHostSessionMirrorHydrationForTests()
+  })
+
+  it('background-mounts the resume tab a parked sweep replayed', async () => {
+    renderHook(() => useWebSessionTabsSync())
+    await act(settle)
+    const paneKey = seedSleepingRecord(BG_MIRROR_TAB_ID, BG_WT, 'codex-session-parked-wake')
+
+    // A phone opens a workspace the desktop is not looking at, while the mirror
+    // for its pane is still unanswered — so the sweep parks instead of resuming.
+    wakeSleepingAgentsForWorktreeInBackground(BG_WT)
+    expect(takePendingBackgroundTerminalWorktreeMount(BG_WT)).toBeNull()
+
+    // The inventory retracts the background mirror tab, releasing the waiter.
+    await publish(findSubscription('session.tabs.subscribeAll'), {
+      type: 'snapshots',
+      snapshots: [makeHostSnapshot(WT, HOST_SURFACE_ID, HOST_PARENT_TAB_ID)]
+    })
+
+    expectReplayedResume(paneKey, BG_WT, 'codex-session-parked-wake')
+    const launchedTabId = Object.keys(useAppStore.getState().automaticAgentResumeClaimsByTabId)[0]!
+    // Why: the replayed tab is created activate:false, so nothing else mounts it
+    // and its queued `--resume` never reaches a PTY.
+    expect(takePendingBackgroundTerminalWorktreeMount(BG_WT)?.tabIds).toEqual([launchedTabId])
   })
 })
