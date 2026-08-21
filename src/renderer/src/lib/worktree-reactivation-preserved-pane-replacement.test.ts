@@ -4,6 +4,11 @@ import { useAppStore, type AppState } from '@/store'
 import { activateAndRevealWorktree } from './worktree-activation'
 import { makeCreatedAgentWorktree as makeWorktree } from '@/lib/worktree-activation-created-agent-test-state'
 import { makePaneKey } from '../../../shared/stable-pane-id'
+import { getRuntimeEnvironmentIdForWorktree } from './worktree-runtime-owner'
+import {
+  markHostSessionMirrorHydrated,
+  resetHostSessionMirrorHydrationForTests
+} from '@/runtime/host-session-mirror-hydration'
 
 // Pins the activation contract behind the run6-review-pr-11959 incident shape:
 // a persisted (husk) tab whose pane cannot resume in place gets ONE appended
@@ -14,6 +19,8 @@ const initialAppStoreState = useAppStore.getState()
 
 const LEAF_ID = '22222222-2222-4222-8222-222222222222'
 const HUSK_TAB_ID = 'husk-tab-1'
+const RUNTIME_ENV_ID = 'env-4f0a8c21'
+const RUNTIME_HOST_ID = `runtime:${encodeURIComponent(RUNTIME_ENV_ID)}`
 
 function baseState(worktree: ReturnType<typeof makeWorktree>): Partial<AppState> {
   return {
@@ -120,6 +127,7 @@ function seedSleepingRecord(worktreeId: string, sessionId: string): void {
 
 afterEach(() => {
   useAppStore.setState(initialAppStoreState, true)
+  resetHostSessionMirrorHydrationForTests()
 })
 
 describe('preserved-pane replacement contract on workspace activation', () => {
@@ -249,9 +257,11 @@ describe('preserved-pane replacement contract on workspace activation', () => {
   // the replacement it used to append relaunched `codex resume` against a
   // session the host still held (-32600 "already has an active writer"),
   // stranding a bare shell while the live agent lost its tab.
-  it('defers recovery for a still-published web-mirror tab instead of appending a replacement', () => {
+  it('parks the resume for a still-published web-mirror tab and replays it on the verdict', () => {
     const webTabId = 'web-terminal-host-tab'
-    const worktree = { ...makeWorktree(), createdWithAgent: undefined }
+    // The workspace is owned by a paired runtime — without that the deferral
+    // takes its no-execution-host early return and pins nothing.
+    const worktree = { ...makeWorktree(), createdWithAgent: undefined, hostId: RUNTIME_HOST_ID }
     const state = baseState(worktree)
     state.tabsByWorktree = {
       [worktree.id]: [{ id: webTabId, title: 'Codex', ptyId: null } as never]
@@ -305,6 +315,10 @@ describe('preserved-pane replacement contract on workspace activation', () => {
       }
     }))
 
+    expect(getRuntimeEnvironmentIdForWorktree(useAppStore.getState(), worktree.id)).toBe(
+      RUNTIME_ENV_ID
+    )
+
     activateAndRevealWorktree(worktree.id)
 
     const after = useAppStore.getState()
@@ -312,6 +326,20 @@ describe('preserved-pane replacement contract on workspace activation', () => {
     // The record is the only recovery evidence, so deferral must retain it.
     expect(after.sleepingAgentSessionsByPaneKey[paneKey]).toBeDefined()
     expect(Object.keys(after.automaticAgentResumeClaimsByTabId)).toHaveLength(0)
+
+    // The mirror answers and still publishes no PTY for the pane, so the parked
+    // sweep replays with evidence and the replacement is finally justified.
+    markHostSessionMirrorHydrated(RUNTIME_ENV_ID)
+
+    const replayed = useAppStore.getState()
+    const replacementIds = (replayed.tabsByWorktree[worktree.id] ?? [])
+      .map((tab) => tab.id)
+      .filter((id) => id !== webTabId)
+    expect(replacementIds).toHaveLength(1)
+    expect(replayed.automaticAgentResumeClaimsByTabId[replacementIds[0]!]).toMatchObject({
+      launchAgent: 'codex',
+      providerSession: { key: 'session_id', id: 'codex-session-E' }
+    })
   })
 
   // Why: retraction is the mirror's verdict that the host pane is gone, which
