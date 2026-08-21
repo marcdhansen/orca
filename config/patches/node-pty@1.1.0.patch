@@ -430,7 +430,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
  }
  #endif
 diff --git a/src/win/conpty.cc b/src/win/conpty.cc
-index 7b286d3d644c26141df516929703aa6e129df4b2..9ede3298f311bff35c97c4d62122faed059c3bc9 100644
+index 7b286d3d644c26141df516929703aa6e129df4b2..17c5eb23519ef7771a288ae4bc30a2be49f6c7bc 100644
 --- a/src/win/conpty.cc
 +++ b/src/win/conpty.cc
 @@ -18,6 +18,7 @@
@@ -502,7 +502,23 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..9ede3298f311bff35c97c4d62122faed
  
      auto status = tsfn.BlockingCall(exit_event, callback); // In main thread
      switch (status) {
-@@ -416,7 +453,10 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+@@ -409,6 +446,15 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+     throw errorWithCode(info, "UpdateProcThreadAttribute failed");
+   }
+ 
++  // Orca: resolve the DLL BEFORE creating anything. It throws when conpty.dll
++  // is missing -- a real state, and one this branch hit during development --
++  // and every throw between CreateProcessW and SetupExitCallback leaks the job,
++  // process and thread handles AND leaves an untracked shell tree running,
++  // once per attempt. Validating first means the only throw after creation is
++  // the resume failure, which cleans up after itself.
++  HANDLE hLibrary = LoadConptyDll(info, useConptyDll);
++  bool fLoadedDll = hLibrary != nullptr;
++
+   PROCESS_INFORMATION piClient{};
+   fSuccess = !!CreateProcessW(
+       nullptr,
+@@ -416,7 +462,10 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
        nullptr,                      // lpProcessAttributes
        nullptr,                      // lpThreadAttributes
        false,                        // bInheritHandles VERY IMPORTANT that this is false
@@ -514,10 +530,12 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..9ede3298f311bff35c97c4d62122faed
        envArg,                       // lpEnvironment
        mutableCwd.get(),             // lpCurrentDirectory
        &siEx.StartupInfo,            // lpStartupInfo
-@@ -426,6 +466,47 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+@@ -426,8 +475,47 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
      throw errorWithCode(info, "Cannot create process");
    }
  
+-  HANDLE hLibrary = LoadConptyDll(info, useConptyDll);
+-  bool fLoadedDll = hLibrary != nullptr;
 +  // Orca: own the tree with a handle instead of inferring it later from a
 +  // parent-pid walk. A pid walk cannot survive pid reuse and cannot see a
 +  // descendant that reparented, which is why detached agent children outlived
@@ -559,22 +577,19 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..9ede3298f311bff35c97c4d62122faed
 +    throw errorWithCode(info, "Cannot resume process");
 +  }
 +
-   HANDLE hLibrary = LoadConptyDll(info, useConptyDll);
-   bool fLoadedDll = hLibrary != nullptr;
    if (useConptyDll && fLoadedDll)
-@@ -440,6 +521,11 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+   {
+     PFNRELEASEPSEUDOCONSOLE const pfnReleasePseudoConsole = (PFNRELEASEPSEUDOCONSOLE)GetProcAddress(
+@@ -440,6 +528,8 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
  
    // Update handle
    handle->hShell = piClient.hProcess;
 +  handle->shellPid = piClient.dwProcessId;
-+  // Why here and not earlier: LoadConptyDll above can throw, and a baton that
-+  // carries a job but never reaches SetupExitCallback has nothing left to
-+  // close it.
 +  handle->hJob = hJob;
  
    // Close the thread handle to avoid resource leak
    CloseHandle(piClient.hThread);
-@@ -567,6 +653,94 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
+@@ -567,6 +657,94 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
    return env.Undefined();
  }
  
@@ -669,7 +684,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..9ede3298f311bff35c97c4d62122faed
  /**
  * Init
  */
-@@ -577,6 +751,8 @@ Napi::Object init(Napi::Env env, Napi::Object exports) {
+@@ -577,6 +755,8 @@ Napi::Object init(Napi::Env env, Napi::Object exports) {
    exports.Set("resize", Napi::Function::New(env, PtyResize));
    exports.Set("clear", Napi::Function::New(env, PtyClear));
    exports.Set("kill", Napi::Function::New(env, PtyKill));
