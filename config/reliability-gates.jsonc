@@ -3380,7 +3380,7 @@
       "providers": ["local", "daemon", "ssh", "runtime"],
       "coveredPlatforms": ["macos"],
       "coveredProviders": ["local", "daemon", "ssh", "runtime"],
-      "coverageNotes": "Live macOS Electron tests prove exact local PTY disappearance after parked-tab close and detached-pgid descendant death after agent close. Deterministic tests cover final-pane CLI close durability, persisted-empty restart suppression, same-incarnation handle continuity, replacement and hard graph-loss stale fencing, preallocated-handle supersession, daemon and SSH routing, local/daemon pending-snapshot ownership across natural exit, stale-root descendant-signal suppression, graceful-to-immediate kill upgrades, duplicate-kill completion sharing, locale-stable bounded/fresh/coalesced process-table reads, deadline-safe successor scans, cycle-safe linear descendant traversal, target-only escalation indexing, 32-wide bulk teardown, source-scan timestamp identity, same-second PID ambiguity, ordinary runtime close ownership, unified-only hydration, split ownership, pane detach transfer, restart alias hydration, and late-hook suppression; live Linux, Windows, WSL, SSH, and remote-runtime process evidence remains pending. A paired macOS Electron journey (real attached-window desktop host plus a separate real paired desktop client, isolated profiles) covers the inverse authority direction for host-created terminals: a renderer graph sync driven straight after `orca terminal create` must not retire the tab. That claim is PARTIAL - the same oracle shows a later sync still prunes the oldest host-created tab (see knownGaps) - and it is macOS-local only. The reported incident occurred on a physical Windows host; we did not run against one. The claim that the mechanism is platform-independent rests on the authoritative-window gate and publication-epoch inheritance being OS-agnostic, not on Windows evidence, so no ConPTY, Windows window-lifecycle, update, or sleep behavior is covered here.",
+      "coverageNotes": "Live macOS Electron tests prove exact local PTY disappearance after parked-tab close and detached-pgid descendant death after agent close. Deterministic tests cover final-pane CLI close durability, persisted-empty restart suppression, same-incarnation handle continuity, replacement and hard graph-loss stale fencing, preallocated-handle supersession, daemon and SSH routing, local/daemon pending-snapshot ownership across natural exit, stale-root descendant-signal suppression, graceful-to-immediate kill upgrades, duplicate-kill completion sharing, locale-stable bounded/fresh/coalesced process-table reads, deadline-safe successor scans, cycle-safe linear descendant traversal, target-only escalation indexing, 32-wide bulk teardown, source-scan timestamp identity, same-second PID ambiguity, ordinary runtime close ownership, unified-only hydration, split ownership, pane detach transfer, restart alias hydration, and late-hook suppression; live Linux, Windows, WSL, SSH, and remote-runtime process evidence remains pending. A paired macOS Electron journey (real attached-window desktop host plus a separate real paired desktop client, isolated profiles) covers the inverse authority direction for host-created terminals: a renderer graph sync driven straight after `orca terminal create` must not retire the tab. A windowless `orca serve` parity arm runs the identical oracle and passes on both the merge-base and the branch, confirming that topology does not exhibit the defect (the gate it turns on is window-conditioned) and that making the host binding unconditional did not regress it. That claim is PARTIAL - the same oracle shows a later sync still prunes the oldest host-created tab (see knownGaps) - and it is macOS-local only. The reported incident occurred on a physical Windows host; we did not run against one. The claim that the mechanism is platform-independent rests on the authoritative-window gate and publication-epoch inheritance being OS-agnostic, not on Windows evidence, so no ConPTY, Windows window-lifecycle, update, or sleep behavior is covered here.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/pull/8628",
         "https://github.com/stablyai/orca/pull/8706",
@@ -3396,7 +3396,8 @@
         "pnpm run test:e2e -- tests/e2e/terminal-tab-close-restart-persistence.spec.ts --workers=1",
         "pnpm run test:e2e -- tests/e2e/terminal-parked-close-retirement.spec.ts --workers=1",
         "pnpm run test:e2e -- tests/e2e/agent-descendant-process-kill.spec.ts --workers=1",
-        "pnpm run test:e2e -- tests/e2e/paired-cli-terminal-graph-sync-tab-retention.spec.ts --workers=1"
+        "pnpm run test:e2e -- tests/e2e/paired-cli-terminal-graph-sync-tab-retention.spec.ts --workers=1",
+        "pnpm run test:e2e -- tests/e2e/headless-serve-cli-terminal-retention-parity.spec.ts --workers=1"
       ],
       "testFiles": [
         "src/main/runtime/orca-runtime-terminal-close-continuity.test.ts",
@@ -3424,7 +3425,8 @@
         "tests/e2e/terminal-tab-close-restart-persistence.spec.ts",
         "tests/e2e/terminal-parked-close-retirement.spec.ts",
         "tests/e2e/agent-descendant-process-kill.spec.ts",
-        "tests/e2e/paired-cli-terminal-graph-sync-tab-retention.spec.ts"
+        "tests/e2e/paired-cli-terminal-graph-sync-tab-retention.spec.ts",
+        "tests/e2e/headless-serve-cli-terminal-retention-parity.spec.ts"
       ],
       "assertionRefs": [
         {
@@ -3478,6 +3480,15 @@
             "the original fixture process answers a write through that handle with its own pid and a single READY line, so a respawned replacement cannot pass as a survivor",
             "the paired client applied that same sync and kept the tab with no replacement or resume tab appended",
             "an unrelated workspace keeps its own CLI terminal and PTY, and the client raises no direct local connection attempt or uncaught renderer error"
+          ]
+        },
+        {
+          "file": "tests/e2e/headless-serve-cli-terminal-retention-parity.spec.ts",
+          "assertions": [
+            "a windowless serve host publishes host-created terminals under a headless epoch, never a renderer one, which is why it cannot reach the window-conditioned prune the desktop arm reproduces",
+            "a later CLI dispatch leaves the earlier host-created terminal in the serve-host inventory still bound to its original PTY",
+            "both original fixture processes answer writes through their own handles after the later dispatch",
+            "the paired client mirrors exactly those two tabs with no replacement or resume tab appended, no direct local connection attempt, and no uncaught renderer error"
           ]
         },
         {
