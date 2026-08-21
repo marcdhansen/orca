@@ -4,6 +4,7 @@ import { useAppStore, type AppState } from '@/store'
 import { activateAndRevealWorktree } from './worktree-activation'
 import { makeCreatedAgentWorktree as makeWorktree } from '@/lib/worktree-activation-created-agent-test-state'
 import { makePaneKey } from '../../../shared/stable-pane-id'
+import type { ExecutionHostId } from '../../../shared/execution-host'
 import { getRuntimeEnvironmentIdForWorktree } from './worktree-runtime-owner'
 import {
   markHostSessionMirrorHydrated,
@@ -20,7 +21,7 @@ const initialAppStoreState = useAppStore.getState()
 const LEAF_ID = '22222222-2222-4222-8222-222222222222'
 const HUSK_TAB_ID = 'husk-tab-1'
 const RUNTIME_ENV_ID = 'env-4f0a8c21'
-const RUNTIME_HOST_ID = `runtime:${encodeURIComponent(RUNTIME_ENV_ID)}`
+const RUNTIME_HOST_ID = `runtime:${encodeURIComponent(RUNTIME_ENV_ID)}` as ExecutionHostId
 
 function baseState(worktree: ReturnType<typeof makeWorktree>): Partial<AppState> {
   return {

@@ -81,7 +81,7 @@ type RuntimeSubscription = {
 
 const subscriptions: RuntimeSubscription[] = []
 // Why: a resolved listAll would settle the mirror on its own and hide the race.
-const runtimeCall = vi.fn(() => new Promise(() => {}))
+const runtimeCall = vi.fn((_request: { method: string }) => new Promise(() => {}))
 const runtimeSubscribe = vi.fn<RuntimeSubscribe>(async (request, callbacks) => {
   subscriptions.push({ request, callbacks })
   return { unsubscribe: vi.fn(), sendBinary: vi.fn() }
