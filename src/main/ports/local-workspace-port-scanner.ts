@@ -491,23 +491,15 @@ async function loadWindowsProcessMetadata(
     return result
   }
   try {
-    const pidFilter = Array.from(pids)
-      .filter(Number.isFinite)
-      .map((pid) => `ProcessId=${pid}`)
-      .join(' OR ')
-    const { stdout } = await runPortScanCommand('powershell.exe', [
-      '-NoProfile',
-      '-Command',
-      `Get-CimInstance Win32_Process -Filter "${pidFilter}" | Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress`
-    ])
-    const parsed = JSON.parse(stdout) as
-      | { ProcessId: number; Name?: string; CommandLine?: string }
-      | { ProcessId: number; Name?: string; CommandLine?: string }[]
-    for (const row of Array.isArray(parsed) ? parsed : [parsed]) {
-      if (pids.has(row.ProcessId)) {
-        result.set(row.ProcessId, {
-          processName: row.Name,
-          commandLine: row.CommandLine
+    // Why the native snapshot: attributing ports used to fork a powershell.exe
+    // per scan just to turn PIDs into names. That is a ~700ms cold start, a
+    // conhost window, and one more thing a Group Policy can block -- for data
+    // the panel treats as optional anyway.
+    for (const row of await readWindowsProcessTable()) {
+      if (pids.has(row.pid)) {
+        result.set(row.pid, {
+          processName: row.name,
+          commandLine: row.command || undefined
         })
       }
     }
