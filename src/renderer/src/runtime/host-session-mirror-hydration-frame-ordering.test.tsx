@@ -71,6 +71,11 @@ const HOST_PTY_ID = `remote:${ENV}@@terminal-1`
 
 const BG_MIRROR_TAB_ID = toWebTerminalSurfaceTabId('host-tab-2')
 
+// A host tab that is NOT the parked mirror: publishing it retracts MIRROR_TAB_ID,
+// which is the host answering "that pane is gone" rather than staying silent.
+const OTHER_HOST_PARENT_TAB_ID = 'host-tab-9'
+const OTHER_HOST_SURFACE_ID = `${OTHER_HOST_PARENT_TAB_ID}::${LEAF_ID}`
+
 const initialState = useAppStore.getInitialState()
 
 type RuntimeSubscribe = typeof window.api.runtimeEnvironments.subscribe
@@ -252,10 +257,26 @@ function tabIds(worktreeId: string): string[] {
   return (useAppStore.getState().tabsByWorktree[worktreeId] ?? []).map((tab) => tab.id)
 }
 
+/** A drained waiter has to land a claiming replacement tab; a replay that only
+ *  consumed the record launched nothing. */
+function expectReplayedResume(paneKey: string, worktreeId: string, sessionId: string): void {
+  const state = useAppStore.getState()
+  expect(state.sleepingAgentSessionsByPaneKey[paneKey]).toBeUndefined()
+  const claimedTabIds = Object.keys(state.automaticAgentResumeClaimsByTabId)
+  expect(claimedTabIds).toHaveLength(1)
+  const replacementTabId = claimedTabIds[0]!
+  expect(replacementTabId).not.toBe(MIRROR_TAB_ID)
+  expect(tabIds(worktreeId)).toContain(replacementTabId)
+  expect(state.automaticAgentResumeClaimsByTabId[replacementTabId]).toMatchObject({
+    launchAgent: 'codex',
+    providerSession: { key: 'session_id', id: sessionId }
+  })
+}
+
 describe('mirrored-pane resume deferral against real stream frames', () => {
   beforeEach(() => {
     subscriptions.length = 0
-    runtimeCall.mockClear()
+    runtimeCall.mockClear().mockImplementation(() => new Promise(() => {}))
     runtimeSubscribe.mockClear()
     mocks.createTerminal.mockReset().mockResolvedValue(undefined)
     mocks.recoverSnapshot.mockReset().mockImplementation(async (_state, snapshot) => snapshot)
@@ -339,12 +360,77 @@ describe('mirrored-pane resume deferral against real stream frames', () => {
       providerSession: { key: 'session_id', id: 'codex-session-bg-1' }
     })
   })
+
+  // The three tests below pin the remaining release sites one frame at a time:
+  // each delivers ONLY its own path's frame, so a release that stops happening
+  // there cannot be covered for by another handler.
+  it('the initial listAll releases the pane it parked', async () => {
+    let resolveListAll: (response: unknown) => void = () => {}
+    runtimeCall.mockImplementation((request: { method: string }) =>
+      request.method === 'session.tabs.listAll'
+        ? new Promise((resolve) => {
+            resolveListAll = resolve
+          })
+        : new Promise(() => {})
+    )
+    renderHook(() => useWebSessionTabsSync())
+    await act(settle)
+    const paneKey = seedSleepingRecord(MIRROR_TAB_ID, WT, 'codex-session-listall-release')
+    expect(resumeSleepingAgentSessionsForWorktree(WT)).toBe(0)
+
+    // The inventory retracts the mirror tab, so the host HAS spoken: this pane
+    // is gone and the resume it parked is finally justified.
+    await act(async () => {
+      resolveListAll({
+        id: 'listall',
+        ok: true as const,
+        result: {
+          snapshots: [makeHostSnapshot(WT, OTHER_HOST_SURFACE_ID, OTHER_HOST_PARENT_TAB_ID)]
+        },
+        _meta: { runtimeId: 'runtime-a' }
+      })
+      await settle()
+    })
+
+    expect(tabIds(WT)).not.toContain(MIRROR_TAB_ID)
+    expectReplayedResume(paneKey, WT, 'codex-session-listall-release')
+  })
+
+  it('a single frame on the global stream releases the pane it parked', async () => {
+    renderHook(() => useWebSessionTabsSync())
+    await act(settle)
+    const paneKey = seedSleepingRecord(MIRROR_TAB_ID, WT, 'codex-session-global-frame')
+    expect(resumeSleepingAgentSessionsForWorktree(WT)).toBe(0)
+
+    await publish(findSubscription('session.tabs.subscribeAll'), {
+      type: 'snapshot',
+      ...makeHostSnapshot(WT, OTHER_HOST_SURFACE_ID, OTHER_HOST_PARENT_TAB_ID)
+    })
+
+    expect(tabIds(WT)).not.toContain(MIRROR_TAB_ID)
+    expectReplayedResume(paneKey, WT, 'codex-session-global-frame')
+  })
+
+  it('the active-worktree scoped frame releases the pane it parked', async () => {
+    renderHook(() => useWebSessionTabsSync())
+    await act(settle)
+    const paneKey = seedSleepingRecord(MIRROR_TAB_ID, WT, 'codex-session-scoped-frame')
+    expect(resumeSleepingAgentSessionsForWorktree(WT)).toBe(0)
+
+    await publish(findSubscription('session.tabs.subscribe'), {
+      type: 'snapshot',
+      ...makeHostSnapshot(WT, OTHER_HOST_SURFACE_ID, OTHER_HOST_PARENT_TAB_ID)
+    })
+
+    expect(tabIds(WT)).not.toContain(MIRROR_TAB_ID)
+    expectReplayedResume(paneKey, WT, 'codex-session-scoped-frame')
+  })
 })
 
 describe('mirror latch verdicts against real stream failures', () => {
   beforeEach(() => {
     subscriptions.length = 0
-    runtimeCall.mockClear()
+    runtimeCall.mockClear().mockImplementation(() => new Promise(() => {}))
     runtimeSubscribe.mockClear()
     mocks.createTerminal.mockReset().mockResolvedValue(undefined)
     mocks.recoverSnapshot.mockReset().mockImplementation(async (_state, snapshot) => snapshot)
