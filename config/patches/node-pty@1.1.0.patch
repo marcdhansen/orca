@@ -430,7 +430,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..383df0c9c48355547c65e6c9bbba593d
  }
  #endif
 diff --git a/src/win/conpty.cc b/src/win/conpty.cc
-index 7b286d3d644c26141df516929703aa6e129df4b2..09883ec38fee8da8d750a52d9f6fddb26695682d 100644
+index 7b286d3d644c26141df516929703aa6e129df4b2..fdb413be4ec39091b60a8b8dc49ed9cb81731730 100644
 --- a/src/win/conpty.cc
 +++ b/src/win/conpty.cc
 @@ -18,6 +18,7 @@
@@ -594,9 +594,6 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..09883ec38fee8da8d750a52d9f6fddb2
 +  // Held across the lookup AND the Win32 call: the watcher thread can otherwise
 +  // close these handles and free the baton in between.
 +  std::lock_guard<std::mutex> guard(ptyJobMutex);
-+  // Held across the lookup AND the Win32 call: the watcher thread can otherwise
-+  // close these handles and free the baton in between.
-+  std::lock_guard<std::mutex> guard(ptyJobMutex);
 +  const pty_baton* handle = get_pty_baton(info[0].As<Napi::Number>().Int32Value());
 +  if (!ownsShell(handle, info[1].As<Napi::Number>().Uint32Value())) {
 +    return Napi::Boolean::New(env, false);
@@ -620,6 +617,9 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..09883ec38fee8da8d750a52d9f6fddb2
 +    throw Napi::Error::New(env, "Usage: pty.listJobProcessIds(id, shellPid)");
 +  }
 +
++  // Held across the lookup AND the Win32 call: the watcher thread can otherwise
++  // close these handles and free the baton in between.
++  std::lock_guard<std::mutex> guard(ptyJobMutex);
 +  const pty_baton* handle = get_pty_baton(info[0].As<Napi::Number>().Int32Value());
 +  if (!ownsShell(handle, info[1].As<Napi::Number>().Uint32Value())) {
 +    return env.Null();
