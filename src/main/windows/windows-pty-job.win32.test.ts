@@ -110,6 +110,26 @@ describeOnWindows('ConPTY job ownership', () => {
     expect(isAlive(grandchildPid)).toBe(false)
   }, 60_000)
 
+  it('leaves a backgrounded process alone when the shell exits cleanly', async () => {
+    // The job must make an EXPLICIT teardown exact without redefining what a
+    // clean exit means. Measured: with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE set,
+    // typing `exit` reaped a detached server that survived before the patch --
+    // a behaviour change nobody asked for. This pins the absence of that flag.
+    const { proc, grandchildPid } = await spawnShellWithDetachedGrandchild()
+
+    const exited = new Promise<void>((resolve) => proc.onExit(() => resolve()))
+    proc.write('exit\r')
+    await exited
+    await sleep(2_000)
+
+    expect(isAlive(grandchildPid)).toBe(true)
+    try {
+      process.kill(grandchildPid)
+    } catch {
+      /* already gone */
+    }
+  }, 60_000)
+
   it('stops answering once the tree is gone, rather than claiming it is empty', async () => {
     // Measured, not assumed: node-pty drops its handle record and closes the
     // job when the shell exits, so a dead tree is unverifiable here rather than
