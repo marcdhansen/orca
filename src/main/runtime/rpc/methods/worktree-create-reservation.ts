@@ -6,7 +6,7 @@ import { ResourceReservationConflictError } from '../../resource-reservation-con
 /** Returns the workspace an earlier create already bound to this key, or null when the key is
  *  unused. Throws on a reused key whose binding disagrees — a conflict is never a silent replay. */
 export async function replayReservedManagedWorktree(
-  runtime: Pick<OrcaRuntimeService, 'findManagedWorktreeReservation' | 'showManagedWorktree'>,
+  runtime: Pick<OrcaRuntimeService, 'findManagedWorktreeReservation' | 'showReservedManagedWorktree'>,
   request: ResourceReservationRequest
 ): Promise<RuntimeWorktreeCreateResult | null> {
   const lookup = runtime.findManagedWorktreeReservation(request)
@@ -19,7 +19,11 @@ export async function replayReservedManagedWorktree(
   if (lookup.outcome === 'unbound') {
     return null
   }
-  const worktree = await runtime.showManagedWorktree(`id:${lookup.worktreeId}`)
+  const worktree = await runtime.showReservedManagedWorktree(
+    lookup.worktreeId,
+    lookup.hostId,
+    lookup.instanceId
+  )
   return {
     worktree,
     lineage: worktree.lineage ?? null,

@@ -28,7 +28,7 @@ import type {
   WorktreeHeadIdentity
 } from '../../shared/worktree/types'
 import { getPRForBranch } from '../github/client'
-import { listWorktrees, addWorktree, addSparseWorktree } from '../git/worktree'
+import { listWorktrees, addWorktree, addSparseWorktree, removeWorktree } from '../git/worktree'
 import type { AddWorktreeOptions, AddWorktreeResult } from '../git/worktree'
 import { consumePreparedWorktreeCreate } from '../worktree-create-preparation'
 import {
@@ -139,6 +139,7 @@ import { formatWorktreeIncludeCopyWarning } from './worktree-include-copy-budget
 import { resolveWorktreeIncludePaths } from '../git/worktree-include-file'
 import { resolveWorktreeSharedDirectories } from '../git/worktree-shared-directories'
 import { normalizeSparseDirectories } from './sparse-checkout-directories'
+import { persistCreatedWorktreeOrRollback } from './worktree-reservation-persistence'
 import { joinWorktreeRelativePath } from '../runtime/runtime-relative-paths'
 import type { IFilesystemProvider } from '../providers/types'
 import {
@@ -2226,9 +2227,18 @@ export async function createRemoteWorktree(
       : {}),
     ...(args.workspaceStatus !== undefined ? { workspaceStatus: args.workspaceStatus } : {})
   }
-  const { worktree } = timing.timeSync('persist_metadata', () => {
-    const meta = store.setWorktreeMeta(worktreeId, metaUpdates)
-    return { worktree: mergeWorktree(repo.id, created, meta) }
+  const worktree = await persistCreatedWorktreeOrRollback({
+    resourcePath: created.path,
+    persist: () =>
+      timing.timeSync('persist_metadata', () => {
+      const meta = store.setWorktreeMeta(worktreeId, metaUpdates)
+      return mergeWorktree(repo.id, created, meta)
+      }),
+    rollback: () =>
+      provider.removeWorktree(created.path, true, {
+        deleteBranch: !checkoutExistingBranch,
+        forceBranchDelete: !checkoutExistingBranch
+      })
   })
   const { lineage: worktreeLineage, workspaceLineage } = recordWorkspaceLineageForCreatedWorktree(
     store,
@@ -2906,9 +2916,18 @@ export async function createLocalWorktree(
       : {}),
     ...(args.workspaceStatus !== undefined ? { workspaceStatus: args.workspaceStatus } : {})
   }
-  const { worktree } = timing.timeSync('persist_metadata', () => {
-    const meta = store.setWorktreeMeta(worktreeId, metaUpdates)
-    return { worktree: mergeWorktree(repo.id, created, meta) }
+  const worktree = await persistCreatedWorktreeOrRollback({
+    resourcePath: created.path,
+    persist: () =>
+      timing.timeSync('persist_metadata', () => {
+      const meta = store.setWorktreeMeta(worktreeId, metaUpdates)
+      return mergeWorktree(repo.id, created, meta)
+      }),
+    rollback: () =>
+      removeWorktree(repo.path, created.path, true, {
+        deleteBranch: !checkoutExistingBranch,
+        forceBranchDelete: !checkoutExistingBranch
+      })
   })
   const { lineage: worktreeLineage, workspaceLineage } = recordWorkspaceLineageForCreatedWorktree(
     store,

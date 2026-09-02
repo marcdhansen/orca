@@ -8,8 +8,8 @@ import type { WorktreeMeta } from '../../shared/worktree/meta-types'
 
 export type WorktreeReservationLookup =
   | { outcome: 'unbound' }
-  | { outcome: 'replay'; worktreeId: string; binding: ResourceReservationBinding }
-  | { outcome: 'conflict'; worktreeId: string; message: string }
+  | { outcome: 'replay'; worktreeId: string; hostId: string; instanceId: string; binding: ResourceReservationBinding }
+  | { outcome: 'conflict'; worktreeId: string; hostId?: string; instanceId?: string; message: string }
 
 /** Durable replay lookup: the binding lives in persisted workspace metadata, so a retry after a
  *  lost reply — or after a host restart — resolves to the same workspace instead of a duplicate. */
@@ -22,11 +22,13 @@ export function findWorktreeReservation(
     if (!binding || binding.key !== request.key) {
       continue
     }
-    return resourceReservationBindingMatchesRequest(binding, request)
-      ? { outcome: 'replay', worktreeId, binding }
+    return resourceReservationBindingMatchesRequest(binding, request) && meta.hostId && meta.instanceId
+      ? { outcome: 'replay', worktreeId, hostId: meta.hostId, instanceId: meta.instanceId, binding }
       : {
           outcome: 'conflict',
           worktreeId,
+          ...(meta.hostId ? { hostId: meta.hostId } : {}),
+          ...(meta.instanceId ? { instanceId: meta.instanceId } : {}),
           message: describeResourceReservationConflict(binding, request, worktreeId)
         }
   }

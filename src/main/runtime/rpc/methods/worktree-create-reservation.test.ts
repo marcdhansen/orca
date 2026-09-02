@@ -21,8 +21,11 @@ function runtimeWith(
 ) {
   return {
     findManagedWorktreeReservation: vi.fn(() => lookup),
-    showManagedWorktree: vi.fn(async () => worktree)
-  } as unknown as Pick<OrcaRuntimeService, 'findManagedWorktreeReservation' | 'showManagedWorktree'>
+    showReservedManagedWorktree: vi.fn(async () => worktree)
+  } as unknown as Pick<
+    OrcaRuntimeService,
+    'findManagedWorktreeReservation' | 'showReservedManagedWorktree'
+  >
 }
 
 describe('worktree.create reservation replay', () => {
@@ -30,19 +33,25 @@ describe('worktree.create reservation replay', () => {
     const runtime = runtimeWith({ outcome: 'unbound' })
 
     await expect(replayReservedManagedWorktree(runtime, REQUEST)).resolves.toBeNull()
-    expect(runtime.showManagedWorktree).not.toHaveBeenCalled()
+    expect(runtime.showReservedManagedWorktree).not.toHaveBeenCalled()
   })
 
   it('returns the already-bound workspace instead of creating a second one', async () => {
     const runtime = runtimeWith({
       outcome: 'replay',
       worktreeId: 'repo-1::/tmp/wt',
+      hostId: 'local',
+      instanceId: 'instance-1',
       binding: BINDING
     })
 
     const result = await replayReservedManagedWorktree(runtime, REQUEST)
 
-    expect(runtime.showManagedWorktree).toHaveBeenCalledWith('id:repo-1::/tmp/wt')
+    expect(runtime.showReservedManagedWorktree).toHaveBeenCalledWith(
+      'repo-1::/tmp/wt',
+      'local',
+      'instance-1'
+    )
     expect(result?.worktree.reservation).toEqual(BINDING)
     expect(result?.warnings).toEqual([])
   })
@@ -58,7 +67,7 @@ describe('worktree.create reservation replay', () => {
       code: 'reservation_conflict',
       data: { resourceKind: 'worktree', resourceId: 'repo-1::/tmp/wt' }
     })
-    expect(runtime.showManagedWorktree).not.toHaveBeenCalled()
+    expect(runtime.showReservedManagedWorktree).not.toHaveBeenCalled()
   })
 })
 

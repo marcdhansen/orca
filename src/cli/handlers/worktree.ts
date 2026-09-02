@@ -17,6 +17,7 @@ import {
   getOptionalPositiveIntegerFlag,
   getOptionalStringFlag
 } from '../flags'
+import { assertResourceReservationEcho } from '../resource-reservation-flags'
 import {
   getOptionalWorktreeSelector,
   getRequiredWorktreeSelector,
@@ -107,11 +108,8 @@ export const WORKTREE_HANDLERS: Record<string, CommandHandler> = {
     const result = await client.call<RuntimeWorktreeCreateResult>('worktree.create', params)
     // Why: an older host drops the unknown `reservation` param and answers with an ordinary
     // create, leaving the caller believing a binding it cannot see was persisted.
-    if (reservation && result.result.worktree.reservation === undefined) {
-      throw new RuntimeClientError(
-        'incompatible_runtime',
-        'This Orca host accepted the workspace create but returned no reservation binding, so the workspace cannot be attributed. Update Orca on the host.'
-      )
+    if (reservation) {
+      assertResourceReservationEcho(reservation, result.result.worktree.reservation, 'workspace')
     }
     printHookWarning(result.result, json)
     printLineageSummary(result.result, json)

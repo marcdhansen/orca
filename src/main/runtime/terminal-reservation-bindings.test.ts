@@ -1,3 +1,6 @@
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { buildResourceReservationBinding } from '../../shared/resource-reservation-binding'
 import type { ResourceReservationRequest } from '../../shared/resource-reservation-binding'
@@ -46,19 +49,17 @@ describe('terminal reservation bindings', () => {
     expect(registry.assertBindable('term_a', REQUEST)).toBeNull()
   })
 
-  it('drops the oldest entry rather than growing without bound', () => {
-    const registry = new TerminalReservationBindings(2)
-    registry.bind('term_a', buildResourceReservationBinding(REQUEST, { boundAt: 1 }))
-    registry.bind(
-      'term_b',
-      buildResourceReservationBinding({ ...REQUEST, key: 'key-2' }, { boundAt: 2 })
-    )
-    registry.bind(
-      'term_c',
-      buildResourceReservationBinding({ ...REQUEST, key: 'key-3' }, { boundAt: 3 })
-    )
+  it('reloads an immutable claim after runtime restart', () => {
+    const profile = mkdtempSync(join(tmpdir(), 'orca-terminal-reservations-'))
+    const first = new TerminalReservationBindings(profile)
+    const binding = buildResourceReservationBinding(REQUEST, { boundAt: 1 })
+    first.claim('term_a', binding)
 
-    expect(registry.get('term_a')).toBeUndefined()
-    expect(registry.get('term_c')).toBeDefined()
+    const restarted = new TerminalReservationBindings(profile)
+    expect(restarted.get('term_a')).toEqual(binding)
+    expect(restarted.claim('term_a', { ...binding, boundAt: 2 })).toEqual({
+      outcome: 'replay',
+      binding
+    })
   })
 })

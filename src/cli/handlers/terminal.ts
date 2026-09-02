@@ -38,6 +38,7 @@ import {
 } from '../omitted-host-scope-selectors'
 import { RuntimeClientError } from '../runtime-client'
 import {
+  assertResourceReservationEcho,
   assertResourceReservationSupported,
   getOptionalResourceReservation
 } from '../resource-reservation-flags'
@@ -234,11 +235,8 @@ export const TERMINAL_HANDLERS: Record<string, CommandHandler> = {
     })
     // Why: an older host drops the unknown `reservation` param and answers with an ordinary
     // create, which would leave the caller believing a binding it cannot see was persisted.
-    if (reservation && result.result.terminal.reservation === undefined) {
-      throw new RuntimeClientError(
-        'incompatible_runtime',
-        'This Orca host accepted the terminal create but returned no reservation binding, so the terminal cannot be attributed. Update Orca on the host.'
-      )
+    if (reservation) {
+      assertResourceReservationEcho(reservation, result.result.terminal.reservation, 'terminal')
     }
     printResult(result, json, formatTerminalCreate)
   },

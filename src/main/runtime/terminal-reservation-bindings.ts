@@ -1,3 +1,5 @@
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import {
   describeResourceReservationConflict,
   resourceReservationBindingMatchesRequest,
@@ -5,78 +7,126 @@ import {
   type ResourceReservationRequest
 } from '../../shared/resource-reservation-binding'
 
-const DEFAULT_MAX_TERMINAL_RESERVATIONS = 4_096
+const TERMINAL_RESERVATIONS_FILE = 'terminal-reservations.json'
 
 export type TerminalReservationBindResult =
   | { outcome: 'bound' }
   | { outcome: 'replay'; binding: ResourceReservationBinding }
   | { outcome: 'conflict'; message: string }
 
-/**
- * Handle → reservation binding for terminals. The handle a reserved create returns is derived
- * from the reservation key itself, so this registry is a projection cache, not the source of
- * identity: an evicted entry still re-derives to the same handle on retry.
- */
+/** Durable reservation authority. Claims are persisted before provider mutation. */
 export class TerminalReservationBindings {
   private readonly byHandle = new Map<string, ResourceReservationBinding>()
   private readonly handleByKey = new Map<string, string>()
+  private storagePath: string | null = null
 
-  constructor(private readonly maxEntries = DEFAULT_MAX_TERMINAL_RESERVATIONS) {}
-
-  /** Records the binding, or reports why this key cannot bind to this handle. */
-  bind(handle: string, binding: ResourceReservationBinding): TerminalReservationBindResult {
-    const existingHandle = this.handleByKey.get(binding.key)
-    const existing = existingHandle ? this.byHandle.get(existingHandle) : undefined
-    if (existing && existingHandle) {
-      if (
-        existingHandle !== handle ||
-        !resourceReservationBindingMatchesRequest(existing, binding)
-      ) {
-        return {
-          outcome: 'conflict',
-          message: describeResourceReservationConflict(existing, binding, existingHandle)
-        }
-      }
-      return { outcome: 'replay', binding: existing }
+  constructor(profileStorageDirectory?: string) {
+    if (profileStorageDirectory) {
+      this.configurePersistence(profileStorageDirectory)
     }
-    this.evictOldestIfFull()
+  }
+
+  configurePersistence(profileStorageDirectory: string): void {
+    this.storagePath = join(profileStorageDirectory, TERMINAL_RESERVATIONS_FILE)
+    this.hydrate()
+  }
+
+  /** Atomically claims a key before creation, or returns its immutable prior binding. */
+  claim(handle: string, binding: ResourceReservationBinding): TerminalReservationBindResult {
+    const existing = this.inspect(handle, binding)
+    if (existing) {
+      return existing
+    }
     this.byHandle.set(handle, binding)
     this.handleByKey.set(binding.key, handle)
+    try {
+      this.persist()
+    } catch (error) {
+      this.byHandle.delete(handle)
+      this.handleByKey.delete(binding.key)
+      throw error
+    }
     return { outcome: 'bound' }
   }
 
-  /** Refuses a request whose key is already bound elsewhere, before any resource is created. */
+  bind(handle: string, binding: ResourceReservationBinding): TerminalReservationBindResult {
+    return this.claim(handle, binding)
+  }
+
+  /** Releases only the exact claim owned by a failed create attempt. */
+  release(handle: string, binding: ResourceReservationBinding): void {
+    if (this.byHandle.get(handle) !== binding || this.handleByKey.get(binding.key) !== handle) {
+      return
+    }
+    this.byHandle.delete(handle)
+    this.handleByKey.delete(binding.key)
+    this.persist()
+  }
+
   assertBindable(handle: string, request: ResourceReservationRequest): string | null {
-    const existingHandle = this.handleByKey.get(request.key)
-    if (!existingHandle) {
-      return null
-    }
-    const existing = this.byHandle.get(existingHandle)
-    if (!existing) {
-      return null
-    }
-    if (existingHandle === handle && resourceReservationBindingMatchesRequest(existing, request)) {
-      return null
-    }
-    return describeResourceReservationConflict(existing, request, existingHandle)
+    const result = this.inspect(handle, request)
+    return result?.outcome === 'conflict' ? result.message : null
   }
 
   get(handle: string): ResourceReservationBinding | undefined {
     return this.byHandle.get(handle)
   }
 
-  private evictOldestIfFull(): void {
-    if (this.byHandle.size < this.maxEntries) {
+  private inspect(
+    handle: string,
+    request: ResourceReservationRequest
+  ): Exclude<TerminalReservationBindResult, { outcome: 'bound' }> | null {
+    const existingHandle = this.handleByKey.get(request.key)
+    const existing = existingHandle ? this.byHandle.get(existingHandle) : undefined
+    if (!existing || !existingHandle) {
+      return null
+    }
+    if (existingHandle !== handle || !resourceReservationBindingMatchesRequest(existing, request)) {
+      return {
+        outcome: 'conflict',
+        message: describeResourceReservationConflict(existing, request, existingHandle)
+      }
+    }
+    return { outcome: 'replay', binding: existing }
+  }
+
+  private hydrate(): void {
+    if (!this.storagePath) {
       return
     }
-    const oldest = this.byHandle.keys().next()
-    if (oldest.done) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(readFileSync(this.storagePath, 'utf8'))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return
+      }
+      throw error
+    }
+    if (!Array.isArray(parsed)) {
+      throw new Error(`Invalid terminal reservation store: ${this.storagePath}`)
+    }
+    for (const entry of parsed) {
+      const { handle, binding } = (entry ?? {}) as {
+        handle?: unknown
+        binding?: ResourceReservationBinding
+      }
+      if (typeof handle !== 'string' || !binding || typeof binding.key !== 'string') {
+        throw new Error(`Invalid terminal reservation entry: ${this.storagePath}`)
+      }
+      this.byHandle.set(handle, binding)
+      this.handleByKey.set(binding.key, handle)
+    }
+  }
+
+  private persist(): void {
+    if (!this.storagePath) {
       return
     }
-    const evicted = this.byHandle.get(oldest.value)
-    this.byHandle.delete(oldest.value)
-    if (evicted && this.handleByKey.get(evicted.key) === oldest.value) {
-      this.handleByKey.delete(evicted.key)
-    }
+    mkdirSync(dirname(this.storagePath), { recursive: true })
+    const temporaryPath = `${this.storagePath}.tmp`
+    const entries = [...this.byHandle].map(([handle, binding]) => ({ handle, binding }))
+    writeFileSync(temporaryPath, `${JSON.stringify(entries)}\n`, { mode: 0o600 })
+    renameSync(temporaryPath, this.storagePath)
   }
 }

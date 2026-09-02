@@ -138,6 +138,19 @@ describe('orca terminal create reservation binding', () => {
     expect(process.exitCode).toBe(1)
   })
 
+  it('refuses a create whose reply changes an immutable binding field', async () => {
+    queueFixtures(
+      callMock,
+      statusFixture([RESOURCE_RESERVATION_ATTRIBUTION_RUNTIME_CAPABILITY]),
+      createdTerminalFixture({ ...RESERVATION_PARAM, ownershipGeneration: 1, boundAt: 42 })
+    )
+    silenceOutput()
+
+    await main([...CREATE_ARGS, ...RESERVATION_ARGS, '--json'], '/tmp/elsewhere')
+
+    expect(process.exitCode).toBe(1)
+  })
+
   it('leaves an unreserved create untouched', async () => {
     queueFixtures(callMock, createdTerminalFixture(undefined))
     silenceOutput()
