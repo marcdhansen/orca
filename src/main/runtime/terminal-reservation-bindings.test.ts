@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -61,5 +61,35 @@ describe('terminal reservation bindings', () => {
       outcome: 'replay',
       binding
     })
+  })
+
+  it('retires an explicitly destroyed terminal claim durably', () => {
+    const profile = mkdtempSync(join(tmpdir(), 'orca-terminal-reservations-'))
+    const registry = new TerminalReservationBindings(profile)
+    const binding = buildResourceReservationBinding(REQUEST, { boundAt: 1 })
+    registry.claim('term_a', binding)
+
+    registry.retire('term_a')
+
+    expect(registry.get('term_a')).toBeUndefined()
+    expect(new TerminalReservationBindings(profile).get('term_a')).toBeUndefined()
+  })
+
+  it('keeps memory and disk unchanged when release persistence fails', () => {
+    const profile = mkdtempSync(join(tmpdir(), 'orca-terminal-reservations-'))
+    const registry = new TerminalReservationBindings(profile)
+    const binding = buildResourceReservationBinding(REQUEST, { boundAt: 1 })
+    registry.claim('term_a', binding)
+    const storagePath = join(profile, 'terminal-reservations.json')
+    const persisted = readFileSync(storagePath, 'utf8')
+    chmodSync(profile, 0o500)
+
+    try {
+      expect(() => registry.release('term_a', binding)).toThrow()
+      expect(registry.get('term_a')).toEqual(binding)
+      expect(readFileSync(storagePath, 'utf8')).toBe(persisted)
+    } finally {
+      chmodSync(profile, 0o700)
+    }
   })
 })
