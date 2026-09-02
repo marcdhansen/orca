@@ -85,6 +85,7 @@ export function mergeWorktree(
       ? { automationProvenance: meta.automationProvenance }
       : {}),
     ...(meta?.cliProvenance !== undefined ? { cliProvenance: meta.cliProvenance } : {}),
+    ...(meta?.reservation !== undefined ? { reservation: meta.reservation } : {}),
     ...(meta?.pendingFirstAgentMessageRename !== undefined
       ? { pendingFirstAgentMessageRename: meta.pendingFirstAgentMessageRename }
       : {}),
