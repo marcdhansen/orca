@@ -37,15 +37,10 @@ export class TerminalReservationBindings {
     if (existing) {
       return existing
     }
-    this.byHandle.set(handle, binding)
-    this.handleByKey.set(binding.key, handle)
-    try {
-      this.persist()
-    } catch (error) {
-      this.byHandle.delete(handle)
-      this.handleByKey.delete(binding.key)
-      throw error
-    }
+    const nextByHandle = new Map(this.byHandle).set(handle, binding)
+    const nextHandleByKey = new Map(this.handleByKey).set(binding.key, handle)
+    this.persist(nextByHandle)
+    this.replaceState(nextByHandle, nextHandleByKey)
     return { outcome: 'bound' }
   }
 
@@ -58,9 +53,15 @@ export class TerminalReservationBindings {
     if (this.byHandle.get(handle) !== binding || this.handleByKey.get(binding.key) !== handle) {
       return
     }
-    this.byHandle.delete(handle)
-    this.handleByKey.delete(binding.key)
-    this.persist()
+    this.remove(handle, binding.key)
+  }
+
+  /** Permanently retires the claim when its terminal is explicitly destroyed. */
+  retire(handle: string): void {
+    const binding = this.byHandle.get(handle)
+    if (binding) {
+      this.remove(handle, binding.key)
+    }
   }
 
   assertBindable(handle: string, request: ResourceReservationRequest): string | null {
@@ -119,13 +120,32 @@ export class TerminalReservationBindings {
     }
   }
 
-  private persist(): void {
+  private remove(handle: string, key: string): void {
+    const nextByHandle = new Map(this.byHandle)
+    const nextHandleByKey = new Map(this.handleByKey)
+    nextByHandle.delete(handle)
+    nextHandleByKey.delete(key)
+    this.persist(nextByHandle)
+    this.replaceState(nextByHandle, nextHandleByKey)
+  }
+
+  private replaceState(
+    byHandle: ReadonlyMap<string, ResourceReservationBinding>,
+    handleByKey: ReadonlyMap<string, string>
+  ): void {
+    this.byHandle.clear()
+    this.handleByKey.clear()
+    for (const [handle, binding] of byHandle) this.byHandle.set(handle, binding)
+    for (const [key, handle] of handleByKey) this.handleByKey.set(key, handle)
+  }
+
+  private persist(entriesByHandle: ReadonlyMap<string, ResourceReservationBinding>): void {
     if (!this.storagePath) {
       return
     }
     mkdirSync(dirname(this.storagePath), { recursive: true })
     const temporaryPath = `${this.storagePath}.tmp`
-    const entries = [...this.byHandle].map(([handle, binding]) => ({ handle, binding }))
+    const entries = [...entriesByHandle].map(([handle, binding]) => ({ handle, binding }))
     writeFileSync(temporaryPath, `${JSON.stringify(entries)}\n`, { mode: 0o600 })
     renameSync(temporaryPath, this.storagePath)
   }
