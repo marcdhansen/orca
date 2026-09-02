@@ -76,10 +76,6 @@ export class OrcaRuntimeWithStopExplicitlyClosedTabPtys extends OrcaRuntimeWithF
   }
 
   async closeTerminal(handle: string): Promise<RuntimeTerminalClose> {
-    const retire = (result: RuntimeTerminalClose): RuntimeTerminalClose => {
-      this.terminalReservations.retire(handle)
-      return result
-    }
     const pty = this.getLivePtyForHandle(handle)
     this.claudeAgentTeams.removeTeamForLeaderHandle(handle)
     if (pty) {
@@ -117,7 +113,7 @@ export class OrcaRuntimeWithStopExplicitlyClosedTabPtys extends OrcaRuntimeWithF
           this.notifier.closeTerminal?.(tabId)
         }
         const ptyKilled = await this.stopExplicitlyClosedTabPtys(ptyIdsToKill, pty.pty.ptyId)
-        return retire(this.describeTerminalClose(handle, tabId, pty.pty.ptyId, ptyKilled))
+        return this.describeTerminalClose(handle, tabId, pty.pty.ptyId, ptyKilled)
       }
       if (
         siblingCount <= 1 &&
@@ -137,16 +133,16 @@ export class OrcaRuntimeWithStopExplicitlyClosedTabPtys extends OrcaRuntimeWithF
           }
           const ptyKilled = await this.stopExplicitlyClosedTabPtys([pty.pty.ptyId], pty.pty.ptyId)
           this.notifier?.closeTerminal(tabId)
-          return retire(this.describeTerminalClose(handle, tabId, pty.pty.ptyId, ptyKilled))
+          return this.describeTerminalClose(handle, tabId, pty.pty.ptyId, ptyKilled)
         }
         const ptyKilled = await this.stopExplicitlyClosedTabPtys([pty.pty.ptyId], pty.pty.ptyId)
-        return retire(this.describeTerminalClose(handle, tabId, pty.pty.ptyId, ptyKilled))
+        return this.describeTerminalClose(handle, tabId, pty.pty.ptyId, ptyKilled)
       }
       if (siblingCount <= 1 && !surface && pty.pty.tabId && this.notifier?.closeTerminalTab) {
         const ptyIdsToKill = this.getPtyIdsForExplicitTabClose(pty.pty.worktreeId, tabId)
         await this.notifier.closeTerminalTab(tabId, { localPtyTeardownOwnedExternally: true })
         const ptyKilled = await this.stopExplicitlyClosedTabPtys(ptyIdsToKill, pty.pty.ptyId)
-        return retire(this.describeTerminalClose(handle, tabId, pty.pty.ptyId, ptyKilled))
+        return this.describeTerminalClose(handle, tabId, pty.pty.ptyId, ptyKilled)
       }
       const ptyKilled = await this.stopExplicitlyClosedTabPtys([pty.pty.ptyId], pty.pty.ptyId)
       if (!ptyKilled || siblingCount <= 1) {
@@ -166,7 +162,7 @@ export class OrcaRuntimeWithStopExplicitlyClosedTabPtys extends OrcaRuntimeWithF
           this.notifier?.closeTerminal(tabId)
         }
       }
-      return retire(this.describeTerminalClose(handle, tabId, pty.pty.ptyId, ptyKilled))
+      return this.describeTerminalClose(handle, tabId, pty.pty.ptyId, ptyKilled)
     }
     this.assertGraphReady()
     const { leaf } = this.getLiveLeafForHandle(handle)
@@ -187,14 +183,10 @@ export class OrcaRuntimeWithStopExplicitlyClosedTabPtys extends OrcaRuntimeWithF
     if (siblingCount > 1 ? !ptyKilled : !this.notifier?.closeTerminalTab) {
       this.notifier?.closeTerminal(leaf.tabId, leaf.paneRuntimeId)
     }
-    return retire(this.describeTerminalClose(handle, leaf.tabId, leaf.ptyId ?? null, ptyKilled))
+    return this.describeTerminalClose(handle, leaf.tabId, leaf.ptyId ?? null, ptyKilled)
   }
 
   async closeTerminalTab(handle: string): Promise<RuntimeTerminalClose> {
-    const retire = (result: RuntimeTerminalClose): RuntimeTerminalClose => {
-      this.terminalReservations.retire(handle)
-      return result
-    }
     const pty = this.getLivePtyForHandle(handle)
     if (pty) {
       const closeAuthority: RuntimePtyTabCloseAuthority = {
@@ -216,12 +208,12 @@ export class OrcaRuntimeWithStopExplicitlyClosedTabPtys extends OrcaRuntimeWithF
         expectedPtyCloseAuthority: closeAuthority
       })
       this.claudeAgentTeams.removeTeamForLeaderHandle(handle)
-      return retire({ handle, tabId, closeMode: 'tab', ptyKilled: false })
+      return { handle, tabId, closeMode: 'tab', ptyKilled: false }
     }
     this.assertGraphReady()
     const { leaf } = this.getLiveLeafForHandle(handle)
     await this.closeMobileSessionTab(`id:${leaf.worktreeId}`, leaf.tabId, { reason: 'user' })
     this.claudeAgentTeams.removeTeamForLeaderHandle(handle)
-    return retire({ handle, tabId: leaf.tabId, closeMode: 'tab', ptyKilled: false })
+    return { handle, tabId: leaf.tabId, closeMode: 'tab', ptyKilled: false }
   }
 }

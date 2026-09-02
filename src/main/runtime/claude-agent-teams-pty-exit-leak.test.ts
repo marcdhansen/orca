@@ -13,11 +13,14 @@
 import { describe, it, expect } from 'vitest'
 import { OrcaRuntimeService } from './orca-runtime'
 import type { ClaudeAgentTeamsService } from './claude-agent-teams-service'
+import { buildResourceReservationBinding } from '../../shared/resource-reservation-binding'
+import type { TerminalReservationBindings } from './terminal-reservation-bindings'
 
 type RuntimeInternals = {
   claudeAgentTeams: ClaudeAgentTeamsService
   handleByPtyId: Map<string, string>
   dropDisconnectedPtyRecord: (ptyId: string) => void
+  terminalReservations: TerminalReservationBindings
 }
 
 function internals(runtime: OrcaRuntimeService): RuntimeInternals {
@@ -45,6 +48,30 @@ describe('ClaudeAgentTeams eviction on natural PTY exit (leak regression)', () =
     runtime.onPtyExit('pty-leader', 0)
 
     expect(internals(runtime).claudeAgentTeams.getActiveTeamCount()).toBe(0)
+  })
+
+  it('retires the terminal reservation when its PTY exits naturally', () => {
+    const runtime = new OrcaRuntimeService()
+    const { handleByPtyId, terminalReservations } = internals(runtime)
+    const handle = 'handle-reserved'
+    handleByPtyId.set('pty-reserved', handle)
+    terminalReservations.claim(
+      handle,
+      buildResourceReservationBinding(
+        {
+          key: 'key-natural-exit',
+          reservationId: 'reservation-natural-exit',
+          sessionId: 'session-natural-exit',
+          resourceKind: 'terminal',
+          ownershipGeneration: 1
+        },
+        { boundAt: 1 }
+      )
+    )
+
+    runtime.onPtyExit('pty-reserved', 0)
+
+    expect(terminalReservations.get(handle)).toBeUndefined()
   })
 
   it('evicts the team when the disconnected PTY record is pruned', () => {
