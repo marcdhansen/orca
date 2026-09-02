@@ -38,6 +38,10 @@ import {
 } from '../omitted-host-scope-selectors'
 import { RuntimeClientError } from '../runtime-client'
 import {
+  assertResourceReservationSupported,
+  getOptionalResourceReservation
+} from '../resource-reservation-flags'
+import {
   getBrowserWorktreeSelector,
   getOptionalWorktreeSelector,
   getRequiredWorktreeSelector,
@@ -208,9 +212,18 @@ export const TERMINAL_HANDLERS: Record<string, CommandHandler> = {
     const useRendererBackedInteractiveTerminal =
       !client.isRemote && shouldUseRendererBackedInteractiveTerminal(command)
     const focus = flags.get('focus') === true
+    const reservation = getOptionalResourceReservation(flags, 'terminal')
+    if (reservation) {
+      await assertResourceReservationSupported(client)
+    }
     const result = await client.call<{ terminal: RuntimeTerminalCreate }>('terminal.create', {
       worktree: await getBrowserWorktreeSelector(flags, cwd, client),
       command,
+      ...(reservation
+        ? // Why reconcileExisting: a reserved retry must adopt the terminal the lost first attempt
+          // already spawned rather than spawn a second one at the same derived handle.
+          { reservation, reconcileExisting: true }
+        : {}),
       title: getOptionalStringFlag(flags, 'title'),
       // Why: interactive local agent TUIs need the renderer-backed terminal
       // path for browser-side features, but CLI creates must stay backgrounded
@@ -219,6 +232,14 @@ export const TERMINAL_HANDLERS: Record<string, CommandHandler> = {
       ...(focus ? { presentation: 'focused' } : {}),
       ...(useRendererBackedInteractiveTerminal ? { rendererBacked: true, activate: focus } : {})
     })
+    // Why: an older host drops the unknown `reservation` param and answers with an ordinary
+    // create, which would leave the caller believing a binding it cannot see was persisted.
+    if (reservation && result.result.terminal.reservation === undefined) {
+      throw new RuntimeClientError(
+        'incompatible_runtime',
+        'This Orca host accepted the terminal create but returned no reservation binding, so the terminal cannot be attributed. Update Orca on the host.'
+      )
+    }
     printResult(result, json, formatTerminalCreate)
   },
   // `focus` resolves to this canonical path via CommandSpec.aliases before dispatch.

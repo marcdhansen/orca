@@ -25,6 +25,7 @@ import { ClientHostedPageReconciliationWindow } from './client-hosted-page-recon
 import { ClientSessionTabSelectionStore } from './client-session-tab-selection'
 import { WorktreeTerminalMutationLock } from './worktree-terminal-mutation-lock'
 import { RemoteRuntimeTerminalCreateIdempotency } from './remote-runtime-terminal-create-idempotency'
+import { TerminalReservationBindings } from './terminal-reservation-bindings'
 import type { PtyIncarnationId } from '../../shared/pty-incarnation'
 import type { MobileSessionTabsNotifyCoalescer } from './mobile-session-tabs-notify-coalescer'
 import { createMobileSessionTabsNotifyCoalescer } from './mobile-session-tabs-notify-coalescer'
@@ -165,6 +166,7 @@ export class OrcaRuntimeWithRuntimeId {
   >()
 
   protected readonly terminalCreateIdempotency = new RemoteRuntimeTerminalCreateIdempotency()
+  protected readonly terminalReservations = new TerminalReservationBindings()
 
   // Why: concurrent clients sleeping one host workspace must share one physical teardown.
   protected terminalSleepByWorktreeId = new Map<

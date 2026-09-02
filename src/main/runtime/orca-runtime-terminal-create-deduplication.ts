@@ -10,6 +10,11 @@ import { getRegisteredSshState } from '../ssh/ssh-target-registry'
 import { LOCAL_EXECUTION_HOST_ID, toSshExecutionHostId } from '../../shared/execution-host'
 import { resolveWorktreeLaunchHost } from './worktree-launch-host-repo'
 import type { TuiAgent } from '../../shared/tui-agent'
+import {
+  buildResourceReservationBinding,
+  type ResourceReservationRequest
+} from '../../shared/resource-reservation-binding'
+import { ResourceReservationConflictError } from './resource-reservation-conflict'
 
 export class OrcaRuntimeWithTerminalCreateDeduplication extends OrcaRuntimeWithCreateAgentSession {
   async dedupeTerminalCreate(
@@ -20,11 +25,19 @@ export class OrcaRuntimeWithTerminalCreateDeduplication extends OrcaRuntimeWithC
     run: (
       canonicalWorktreeSelector: string | undefined,
       preAllocatedHandle: string | undefined
-    ) => Promise<RuntimeTerminalCreate>
+    ) => Promise<RuntimeTerminalCreate>,
+    reservation?: ResourceReservationRequest
   ): Promise<RuntimeTerminalCreate> {
-    if (!clientMutationId || !worktreeSelector) {
+    // Why the reservation key wins: it is the caller's durable single-use identity, so deriving
+    // the handle from it makes the returned handle itself the binding — a retry re-derives the
+    // same address even if the caller minted a fresh transport mutation id.
+    const identityKey = reservation?.key ?? clientMutationId
+    if (!identityKey || !worktreeSelector) {
       if (reconcileExisting) {
         throw new Error('runtime_unavailable')
+      }
+      if (reservation) {
+        throw new Error('invalid_argument')
       }
       return await run(worktreeSelector, undefined)
     }
@@ -33,12 +46,24 @@ export class OrcaRuntimeWithTerminalCreateDeduplication extends OrcaRuntimeWithC
     const preAllocatedHandle = deriveRemoteRuntimeTerminalCreateHandle(
       clientIdentity,
       workspace.id,
-      clientMutationId
+      identityKey
     )
-    return this.terminalCreateIdempotency.run(
+    const binding = reservation
+      ? buildResourceReservationBinding(reservation, { boundAt: Date.now() })
+      : null
+    if (binding) {
+      const conflict = this.terminalReservations.assertBindable(preAllocatedHandle, binding)
+      if (conflict) {
+        throw new ResourceReservationConflictError(conflict, {
+          resourceKind: 'terminal',
+          resourceId: preAllocatedHandle
+        })
+      }
+    }
+    const created = await this.terminalCreateIdempotency.run(
       clientIdentity,
       workspace.id,
-      clientMutationId,
+      identityKey,
       async () => {
         if (reconcileExisting) {
           const adopted = await this.reconcileRemoteTerminalCreate(
@@ -56,6 +81,22 @@ export class OrcaRuntimeWithTerminalCreateDeduplication extends OrcaRuntimeWithC
         return await run(canonicalWorktreeSelector, preAllocatedHandle)
       }
     )
+    if (!binding) {
+      return created
+    }
+    // Why bound after the create resolves: a failed create must leave the key unused so a genuine
+    // retry can start fresh, exactly as the automation provenance reservation does.
+    const bindResult = this.terminalReservations.bind(created.handle, binding)
+    if (bindResult.outcome === 'conflict') {
+      throw new ResourceReservationConflictError(bindResult.message, {
+        resourceKind: 'terminal',
+        resourceId: created.handle
+      })
+    }
+    return {
+      ...created,
+      reservation: bindResult.outcome === 'replay' ? bindResult.binding : binding
+    }
   }
 
   protected async reconcileRemoteTerminalCreate(

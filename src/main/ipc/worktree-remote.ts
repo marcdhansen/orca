@@ -70,6 +70,7 @@ import { getSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
 import type { SshGitProvider } from '../providers/ssh-git-provider'
 import { TUI_AGENT_CONFIG, isTuiAgent } from '../../shared/tui-agent-config'
 import { isWindowsAbsolutePathLike } from '../../shared/cross-platform-path'
+import type { ResourceReservationBinding } from '../../shared/resource-reservation-binding'
 import { runWorktreeChangeInvalidators } from './worktree-change-invalidators'
 import {
   registerOptionalSshWorktreeCreateRoots,
@@ -79,6 +80,7 @@ import {
 type CreateWorktreeArgsWithSystemProvenance = CreateWorktreeArgs & {
   automationProvenance?: AutomationWorkspaceProvenance
   cliProvenance?: CliWorkspaceProvenance
+  reservation?: ResourceReservationBinding
 }
 import {
   sanitizeWorktreeName,
@@ -2180,6 +2182,7 @@ export async function createRemoteWorktree(
     orcaCreationWorkspaceLayout: getWorktreeCreationLayout(repo, settings),
     ...(args.automationProvenance ? { automationProvenance: args.automationProvenance } : {}),
     ...(args.cliProvenance ? { cliProvenance: args.cliProvenance } : {}),
+    ...(args.reservation ? { reservation: args.reservation } : {}),
     baseRef: metadataBaseRef,
     ...(checkoutExistingBranch ? { preserveBranchOnDelete: true } : {}),
     ...(configuredPushTarget ? { pushTarget: configuredPushTarget } : {}),
@@ -2859,6 +2862,7 @@ export async function createLocalWorktree(
     orcaCreationWorkspaceLayout: getWorktreeCreationLayout(repo, settings),
     ...(args.automationProvenance ? { automationProvenance: args.automationProvenance } : {}),
     ...(args.cliProvenance ? { cliProvenance: args.cliProvenance } : {}),
+    ...(args.reservation ? { reservation: args.reservation } : {}),
     baseRef: metadataBaseRef,
     ...(checkoutExistingBranch ? { preserveBranchOnDelete: true } : {}),
     ...(configuredPushTarget ? { pushTarget: configuredPushTarget } : {}),

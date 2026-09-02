@@ -28,7 +28,7 @@ export function formatTerminalList(
   const body = result.terminals
     .map(
       (terminal) =>
-        `${terminal.handle}  ${terminal.title ?? '(untitled)'}  ${terminal.connected ? 'connected' : 'disconnected'}  host=${terminal.executionHostId ?? 'unverifiable'}  ${terminal.worktreePath}\n${terminal.preview ? `preview: ${terminal.preview}` : 'preview: <empty>'}`
+        `${terminal.handle}  ${terminal.title ?? '(untitled)'}  ${terminal.connected ? 'connected' : 'disconnected'}  host=${terminal.executionHostId ?? 'unverifiable'}  ${terminal.worktreePath}${terminal.reservation ? `\nreservation: ${JSON.stringify(terminal.reservation)}` : ''}\n${terminal.preview ? `preview: ${terminal.preview}` : 'preview: <empty>'}`
     )
     .join('\n\n')
   const visualLayout = formatTerminalVisualLayouts(result.visualLayouts)
@@ -107,6 +107,7 @@ export function formatTerminalShow(result: { terminal: RuntimeTerminalShow }): s
     // Why listed above the preview: the preview is where a reader would otherwise have to
     // spot the prompt by eye, which is the work this line exists to remove.
     `agentWait: ${formatAgentWait(terminal.agentWait)}`,
+    `reservation: ${terminal.reservation ? JSON.stringify(terminal.reservation) : 'none'}`,
     `preview: ${terminal.preview || '<empty>'}`
   ].join('\n')
 }
@@ -191,7 +192,10 @@ export function formatTerminalCreate(result: { terminal: RuntimeTerminalCreate }
   const titleNote = result.terminal.title ? ` (title: "${result.terminal.title}")` : ''
   const surfaceNote = result.terminal.surface ? ` [${result.terminal.surface}]` : ''
   const warningNote = result.terminal.warning ? `\nwarning: ${result.terminal.warning}` : ''
-  return `Created terminal ${result.terminal.handle}${titleNote}${surfaceNote}${warningNote}`
+  const reservationNote = result.terminal.reservation
+    ? `\nreservation: ${JSON.stringify(result.terminal.reservation)}`
+    : ''
+  return `Created terminal ${result.terminal.handle}${titleNote}${surfaceNote}${reservationNote}${warningNote}`
 }
 
 export function formatTerminalSplit(result: { split: RuntimeTerminalSplit }): string {
