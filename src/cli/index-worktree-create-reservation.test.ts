@@ -143,6 +143,19 @@ describe('orca worktree create reservation binding', () => {
     expect(process.exitCode).toBe(1)
   })
 
+  it('refuses a create whose reply changes an immutable binding field', async () => {
+    queueFixtures(
+      callMock,
+      statusFixture([RESOURCE_RESERVATION_ATTRIBUTION_RUNTIME_CAPABILITY]),
+      createdWorktreeFixture({ ...RESERVATION_PARAM, sessionId: 'wrong-session', boundAt: 42 })
+    )
+    silenceOutput()
+
+    await main([...CREATE_ARGS, ...RESERVATION_ARGS, '--json'], '/tmp/elsewhere')
+
+    expect(process.exitCode).toBe(1)
+  })
+
   it('sends no reservation and probes no capability without the flags', async () => {
     queueFixtures(callMock, createdWorktreeFixture(undefined))
     silenceOutput()
@@ -160,6 +173,18 @@ describe('orca worktree create reservation binding', () => {
     silenceOutput()
 
     await main([...CREATE_ARGS, '--idempotency-key', 'key-1', '--json'], '/tmp/elsewhere')
+
+    expect(callMock).not.toHaveBeenCalled()
+    expect(process.exitCode).toBe(1)
+  })
+
+  it('refuses an ownership generation that cannot round-trip as a safe integer', async () => {
+    silenceOutput()
+    const unsafe = RESERVATION_ARGS.map((value, index) =>
+      RESERVATION_ARGS[index - 1] === '--ownership-generation' ? '9007199254740993' : value
+    )
+
+    await main([...CREATE_ARGS, ...unsafe, '--json'], '/tmp/elsewhere')
 
     expect(callMock).not.toHaveBeenCalled()
     expect(process.exitCode).toBe(1)

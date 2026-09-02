@@ -129,6 +129,15 @@ export class OrcaRuntimeWithListManagedWorktrees extends OrcaRuntimeWithRestoreS
     return await this.resolveWorktreeSelector(worktreeSelector)
   }
 
+  /** Resolve a reservation replay to its exact persisted host and occupant identity. */
+  async showReservedManagedWorktree(worktreeId: string, hostId: string, instanceId: string) {
+    const worktree = await this.resolveExplicitWorktreeIdScoped(worktreeId, hostId)
+    if (!worktree || worktree.instanceId !== instanceId) {
+      throw new Error('reservation_resource_missing')
+    }
+    return worktree
+  }
+
   async showManagedTerminalWorkspace(worktreeSelector: string) {
     const target = await this.resolveTerminalWorkspaceLaunchTarget(worktreeSelector)
     if (!target.managedWorktree) {

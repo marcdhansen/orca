@@ -55,10 +55,34 @@ describe('terminal create reservation binding', () => {
     )
 
     expect(first.handle).toBe(
-      deriveRemoteRuntimeTerminalCreateHandle('device-a', 'worktree-1', 'key-1')
+      deriveRemoteRuntimeTerminalCreateHandle('reservation:openloop', 'worktree-1', 'key-1')
     )
     expect(first.reservation).toMatchObject(RESERVATION)
     expect(typeof first.reservation?.boundAt).toBe('number')
+  })
+
+  it('uses the same reservation address and one create across changed transports', async () => {
+    const runtime = createRuntimeForDedupe()
+    let releaseCreate!: () => void
+    const gate = new Promise<void>((resolve) => {
+      releaseCreate = resolve
+    })
+    const create = vi.fn<CreateRun>(async (_selector, handle) => {
+      await gate
+      return createdTerminal(handle ?? 'missing')
+    })
+
+    const first = runtime.dedupeTerminalCreate(
+      'device-a', 'id:worktree-1', 'mutation-1', false, create, RESERVATION
+    )
+    const reconnect = runtime.dedupeTerminalCreate(
+      'device-b', 'id:worktree-1', 'mutation-2', false, create, RESERVATION
+    )
+    releaseCreate()
+
+    const [created, replayed] = await Promise.all([first, reconnect])
+    expect(replayed.handle).toBe(created.handle)
+    expect(create).toHaveBeenCalledTimes(1)
   })
 
   it('ignores a fresh transport mutation id so a reserved retry is not a second terminal', async () => {

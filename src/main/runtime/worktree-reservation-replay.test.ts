@@ -39,11 +39,20 @@ describe('worktree reservation replay', () => {
     const binding = buildResourceReservationBinding(REQUEST, { boundAt: 5 })
 
     const lookup = findWorktreeReservation(
-      { 'repo::/a': meta(), 'repo::/b': meta({ reservation: binding }) },
+      {
+        'repo::/a': meta(),
+        'repo::/b': meta({ reservation: binding, hostId: 'local', instanceId: 'instance-1' })
+      },
       REQUEST
     )
 
-    expect(lookup).toEqual({ outcome: 'replay', worktreeId: 'repo::/b', binding })
+    expect(lookup).toEqual({
+      outcome: 'replay',
+      worktreeId: 'repo::/b',
+      hostId: 'local',
+      instanceId: 'instance-1',
+      binding
+    })
   })
 
   it('refuses a reused key whose ownership generation moved on', () => {

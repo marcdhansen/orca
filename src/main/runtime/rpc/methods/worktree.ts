@@ -85,7 +85,7 @@ export const WORKTREE_METHODS: RpcMethod[] = [
       // one in-flight create, not race past the durable replay lookup below and both create.
       context.runtime.dedupeWorktreeCreate(
         params.repo,
-        params.clientMutationId ?? params.reservation?.key,
+        params.reservation?.key ?? params.clientMutationId,
         async () => {
           const { runtime } = context
           const replay = params.reservation

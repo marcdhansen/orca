@@ -43,28 +43,29 @@ export class OrcaRuntimeWithTerminalCreateDeduplication extends OrcaRuntimeWithC
     }
     const workspace = await this.resolveTerminalWorkspaceLaunchScope(worktreeSelector)
     const canonicalWorktreeSelector = `id:${workspace.id}`
+    const reservationIdentity = reservation ? `reservation:${reservation.issuer ?? ''}` : clientIdentity
     const preAllocatedHandle = deriveRemoteRuntimeTerminalCreateHandle(
-      clientIdentity,
+      reservationIdentity,
       workspace.id,
       identityKey
     )
     const binding = reservation
       ? buildResourceReservationBinding(reservation, { boundAt: Date.now() })
       : null
-    if (binding) {
-      const conflict = this.terminalReservations.assertBindable(preAllocatedHandle, binding)
-      if (conflict) {
-        throw new ResourceReservationConflictError(conflict, {
+    const claim = binding ? this.terminalReservations.claim(preAllocatedHandle, binding) : null
+    if (claim?.outcome === 'conflict') {
+        throw new ResourceReservationConflictError(claim.message, {
           resourceKind: 'terminal',
           resourceId: preAllocatedHandle
         })
-      }
     }
-    const created = await this.terminalCreateIdempotency.run(
-      clientIdentity,
-      workspace.id,
-      identityKey,
-      async () => {
+    let created: RuntimeTerminalCreate
+    try {
+      created = await this.terminalCreateIdempotency.run(
+        reservationIdentity,
+        workspace.id,
+        identityKey,
+        async () => {
         if (reconcileExisting) {
           const adopted = await this.reconcileRemoteTerminalCreate(
             workspace.id,
@@ -79,23 +80,20 @@ export class OrcaRuntimeWithTerminalCreateDeduplication extends OrcaRuntimeWithC
           }
         }
         return await run(canonicalWorktreeSelector, preAllocatedHandle)
+        }
+      )
+    } catch (error) {
+      if (binding && claim?.outcome === 'bound') {
+        this.terminalReservations.release(preAllocatedHandle, binding)
       }
-    )
+      throw error
+    }
     if (!binding) {
       return created
     }
-    // Why bound after the create resolves: a failed create must leave the key unused so a genuine
-    // retry can start fresh, exactly as the automation provenance reservation does.
-    const bindResult = this.terminalReservations.bind(created.handle, binding)
-    if (bindResult.outcome === 'conflict') {
-      throw new ResourceReservationConflictError(bindResult.message, {
-        resourceKind: 'terminal',
-        resourceId: created.handle
-      })
-    }
     return {
       ...created,
-      reservation: bindResult.outcome === 'replay' ? bindResult.binding : binding
+      reservation: claim?.outcome === 'replay' ? claim.binding : binding
     }
   }
 

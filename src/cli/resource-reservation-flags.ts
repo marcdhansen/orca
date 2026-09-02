@@ -3,6 +3,7 @@ import {
   RESOURCE_RESERVATION_ATTRIBUTION_UPDATE_REQUIRED_MESSAGE
 } from '../shared/protocol-version'
 import type {
+  ResourceReservationBinding,
   ResourceReservationKind,
   ResourceReservationRequest
 } from '../shared/resource-reservation-binding'
@@ -51,14 +52,43 @@ export function getOptionalResourceReservation(
       '--ownership-generation must be a non-negative integer'
     )
   }
+  const ownershipGeneration = Number(generationText)
+  if (!Number.isSafeInteger(ownershipGeneration)) {
+    throw new RuntimeClientError(
+      'invalid_argument',
+      '--ownership-generation must be a safe non-negative integer'
+    )
+  }
   const issuer = flags.get('reservation-issuer')
   return {
     key: requireStringFlag(flags, 'idempotency-key'),
     reservationId: requireStringFlag(flags, 'reservation-id'),
     sessionId: requireStringFlag(flags, 'reservation-session'),
     resourceKind,
-    ownershipGeneration: Number.parseInt(generationText, 10),
+    ownershipGeneration,
     ...(issuer !== undefined ? { issuer: requireStringFlag(flags, 'reservation-issuer') } : {})
+  }
+}
+
+/** A create response is trustworthy only when the host echoes every immutable request field. */
+export function assertResourceReservationEcho(
+  requested: ResourceReservationRequest,
+  returned: ResourceReservationBinding | undefined,
+  resourceLabel: string
+): void {
+  const matches =
+    returned !== undefined &&
+    returned.key === requested.key &&
+    returned.reservationId === requested.reservationId &&
+    returned.sessionId === requested.sessionId &&
+    returned.resourceKind === requested.resourceKind &&
+    returned.ownershipGeneration === requested.ownershipGeneration &&
+    (returned.issuer ?? '') === (requested.issuer ?? '')
+  if (!matches) {
+    throw new RuntimeClientError(
+      'incompatible_runtime',
+      `This Orca host returned a mismatched ${resourceLabel} reservation binding, so the resource cannot be attributed. Update Orca on the host.`
+    )
   }
 }
 
