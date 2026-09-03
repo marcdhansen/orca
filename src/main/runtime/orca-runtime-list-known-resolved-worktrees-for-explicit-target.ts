@@ -13,6 +13,7 @@ import {
 import { getAgentLaunchPlatformForRepo } from './runtime-agent-launch-resolution'
 import { resolveRepoWorktreeRows, resolveScopedWorktreeIdRow } from './repo-worktree-row-resolution'
 import { projectResolvedWorktreeLineage } from '../../shared/resolved-worktree-lineage'
+import { worktreeWorkspaceKey } from '../../shared/workspace-scope'
 import type { RepoWorktreeRowDeps } from './repo-worktree-row-resolution'
 import { listRuntimeFolderWorkspaces } from './runtime-worktree-filesystem'
 import type { ExecutionHostId } from '../../shared/execution-host'
@@ -105,8 +106,18 @@ export class OrcaRuntimeWithListKnownResolvedWorktreesForExplicitTarget extends 
     )
     const lineageById = this.store?.getAllWorktreeLineage?.() ?? {}
     const workspaceLineageByChildKey = this.store?.getAllWorkspaceLineage?.() ?? {}
+    const fleetWorkspaceInstances = Object.fromEntries(
+      perRepoWorktrees.flatMap((rows) =>
+        rows.map((worktree) => [worktreeWorkspaceKey(worktree.id), worktree.instanceId])
+      )
+    )
     const worktrees = perRepoWorktrees.flatMap((rows) =>
-      projectResolvedWorktreeLineage(rows, lineageById, workspaceLineageByChildKey)
+      projectResolvedWorktreeLineage(
+        rows,
+        lineageById,
+        workspaceLineageByChildKey,
+        fleetWorkspaceInstances
+      )
     )
     return { worktrees, platformByRepoId }
   }
