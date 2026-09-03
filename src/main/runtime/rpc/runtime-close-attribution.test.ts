@@ -70,6 +70,7 @@ describe('runtime close attribution', () => {
       const close = vi.fn().mockResolvedValue({ handle: 'term-1', ptyKilled: true })
       const runtime = {
         getRuntimeId: () => 'test-runtime',
+        getTerminalCloseTarget: vi.fn().mockReturnValue(null),
         listTerminals: vi.fn().mockResolvedValue({
           terminals: [],
           hostScope: { hostIds: [], omittedHostIds: [] }
@@ -92,6 +93,7 @@ describe('runtime close attribution', () => {
 
       expect(JSON.parse(replies[0]!)).toMatchObject({ ok: true })
       expect(close).toHaveBeenCalledWith('term-1')
+      expect(runtime.listTerminals).not.toHaveBeenCalled()
       expect(sink.records).toEqual([
         expect.objectContaining({
           type: 'effect-span',
@@ -157,15 +159,16 @@ describe('runtime close attribution', () => {
     }
   )
 
-  it('reports a listed terminal as closed when retirement wins a tab_not_found race', async () => {
+  it('preserves closeTab result and telemetry when retirement wins a tab_not_found race', async () => {
     let terminals = [{ handle: 'term-race', tabId: 'tab-race' }]
     const runtime = {
       getRuntimeId: () => 'test-runtime',
+      getTerminalCloseTarget: vi.fn().mockReturnValue({ tabId: 'tab-race' }),
       listTerminals: vi.fn(async () => ({
         terminals,
         hostScope: { hostIds: ['local'], omittedHostIds: [] }
       })),
-      closeTerminal: vi.fn(async () => {
+      closeTerminalTab: vi.fn(async () => {
         terminals = []
         throw new Error('tab_not_found')
       })
@@ -174,7 +177,7 @@ describe('runtime close attribution', () => {
     const replies: string[] = []
 
     await dispatcher.dispatchStreaming(
-      request('terminal.close', { terminal: 'term-race' }),
+      request('terminal.closeTab', { terminal: 'term-race' }),
       (reply) => replies.push(reply)
     )
 
@@ -185,17 +188,30 @@ describe('runtime close attribution', () => {
           handle: 'term-race',
           tabId: 'tab-race',
           outcome: 'closed',
+          closeMode: 'tab',
           ptyKilled: false
         }
       }
     })
-    expect((await runtime.listTerminals()).terminals).toEqual([])
+    expect(runtime.listTerminals).toHaveBeenCalledTimes(1)
+    expect(sink.records).toEqual([
+      expect.objectContaining({
+        name: 'terminal.closeTab',
+        attributes: expect.objectContaining({
+          outcome: 'succeeded-after-retirement',
+          tabId: 'tab-race',
+          closeMode: 'tab',
+          ptyKilled: false
+        })
+      })
+    ])
   })
 
   it('does not reinterpret tab_not_found without an attested state transition', async () => {
     const listed = [{ handle: 'term-live', tabId: 'tab-live' }]
     const runtime = {
       getRuntimeId: () => 'test-runtime',
+      getTerminalCloseTarget: vi.fn().mockReturnValue({ tabId: 'tab-live' }),
       listTerminals: vi.fn(async () => ({
         terminals: listed,
         hostScope: { hostIds: ['local'], omittedHostIds: [] }
@@ -211,12 +227,13 @@ describe('runtime close attribution', () => {
     )
 
     expect(JSON.parse(replies[0]!)).toMatchObject({ ok: false })
-    expect((await runtime.listTerminals()).terminals).toEqual(listed)
+    expect(runtime.listTerminals).toHaveBeenCalledTimes(1)
   })
 
-  it('reports already_absent only when both inventories attest absence', async () => {
+  it('reports already_absent only when targeted state and complete inventory attest absence', async () => {
     const runtime = {
       getRuntimeId: () => 'test-runtime',
+      getTerminalCloseTarget: vi.fn().mockReturnValue(null),
       listTerminals: vi.fn(async () => ({
         terminals: [],
         hostScope: { hostIds: ['local'], omittedHostIds: [] }
@@ -235,12 +252,13 @@ describe('runtime close attribution', () => {
       ok: true,
       result: { close: { handle: 'term-absent', outcome: 'already_absent' } }
     })
-    expect(runtime.listTerminals).toHaveBeenCalledTimes(2)
+    expect(runtime.listTerminals).toHaveBeenCalledTimes(1)
   })
 
   it('preserves tab_not_found when inventory cannot attest absence', async () => {
     const runtime = {
       getRuntimeId: () => 'test-runtime',
+      getTerminalCloseTarget: vi.fn().mockReturnValue(null),
       listTerminals: vi.fn(async () => ({
         terminals: [],
         hostScope: { hostIds: [], omittedHostIds: ['ssh:offline'] }

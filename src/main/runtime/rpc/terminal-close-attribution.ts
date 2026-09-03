@@ -10,6 +10,8 @@ type TerminalPresence =
   | { state: 'absent' }
   | { state: 'unknown' }
 
+type TerminalCloseTarget = { tabId: string } | null
+
 /**
  * Resolves exact-handle terminal presence from the authoritative runtime inventory.
  */
@@ -39,6 +41,23 @@ function isTabNotFound(error: unknown): boolean {
   return error instanceof Error && error.message === 'tab_not_found'
 }
 
+/** Records result fields shared by ordinary and reconciled terminal closes. */
+function recordCloseResult(
+  span: { setAttribute(key: string, value: string | number | boolean): void },
+  result: RuntimeTerminalClose,
+  outcome: string
+): RuntimeTerminalClose {
+  span.setAttribute('outcome', outcome)
+  if (result.tabId) {
+    span.setAttribute('tabId', result.tabId)
+  }
+  span.setAttribute('ptyKilled', result.ptyKilled)
+  if (result.closeMode) {
+    span.setAttribute('closeMode', result.closeMode)
+  }
+  return result
+}
+
 /**
  * Wraps terminal close RPCs with attribution and reconciles tab_not_found races against inventory.
  */
@@ -56,35 +75,29 @@ export function withTerminalCloseAttribution(
     method,
     async (span) => {
       span.setAttribute('decision', 'allowed')
-      const before = await attestTerminalPresence(context, terminal)
+      const before: TerminalCloseTarget = context.runtime.getTerminalCloseTarget(terminal)
       try {
         const result = await close()
-        span.setAttribute('outcome', 'succeeded')
-        span.setAttribute('tabId', result.tabId)
-        span.setAttribute('ptyKilled', result.ptyKilled)
-        if (result.closeMode) {
-          span.setAttribute('closeMode', result.closeMode)
-        }
-        return { ...result, outcome: 'closed' }
+        return recordCloseResult(span, { ...result, outcome: 'closed' }, 'succeeded')
       } catch (error) {
         if (isTabNotFound(error)) {
           const after = await attestTerminalPresence(context, terminal)
-          if (before.state === 'present' && after.state === 'absent') {
-            span.setAttribute('outcome', 'succeeded-after-retirement')
-            return {
+          if (before && after.state === 'absent') {
+            const result: RuntimeTerminalClose = {
               handle: terminal,
               tabId: before.tabId,
               outcome: 'closed',
+              ...(method === 'terminal.closeTab' ? { closeMode: 'tab' as const } : {}),
               ptyKilled: false
             }
+            return recordCloseResult(span, result, 'succeeded-after-retirement')
           }
-          if (before.state === 'absent' && after.state === 'absent') {
-            span.setAttribute('outcome', 'already-absent')
-            return {
-              handle: terminal,
-              outcome: 'already_absent',
-              ptyKilled: false
-            }
+          if (!before && after.state === 'absent') {
+            return recordCloseResult(
+              span,
+              { handle: terminal, outcome: 'already_absent', ptyKilled: false },
+              'already-absent'
+            )
           }
         }
         span.setAttribute('outcome', 'failed')
