@@ -10,7 +10,7 @@
  * `team-${randomUUID()}`, so when a leader shell exits on its own (agent finishes,
  * process dies, renderer reload) the team + nested panes Map leaked permanently.
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { OrcaRuntimeService } from './orca-runtime'
 import type { ClaudeAgentTeamsService } from './claude-agent-teams-service'
 import { buildResourceReservationBinding } from '../../shared/resource-reservation-binding'
@@ -21,6 +21,7 @@ type RuntimeInternals = {
   handleByPtyId: Map<string, string>
   dropDisconnectedPtyRecord: (ptyId: string) => void
   terminalReservations: TerminalReservationBindings
+  ptysById: Map<string, unknown>
 }
 
 function internals(runtime: OrcaRuntimeService): RuntimeInternals {
@@ -72,6 +73,23 @@ describe('ClaudeAgentTeams eviction on natural PTY exit (leak regression)', () =
     runtime.onPtyExit('pty-reserved', 0)
 
     expect(terminalReservations.get(handle)).toBeUndefined()
+  })
+
+  it('finishes PTY death cleanup before surfacing reservation persistence failure', () => {
+    const runtime = new OrcaRuntimeService()
+    const { handleByPtyId, terminalReservations, ptysById } = internals(runtime)
+    const handle = 'handle-retire-failure'
+    runtime.registerPty('pty-retire-failure', 'worktree-1', null)
+    handleByPtyId.set('pty-retire-failure', handle)
+    const retirementError = new Error('reservation_retirement_persist_failed')
+    const retire = vi.spyOn(terminalReservations, 'retire').mockImplementation(() => {
+      throw retirementError
+    })
+
+    expect(() => runtime.onPtyExit('pty-retire-failure', 0)).toThrow(retirementError)
+
+    expect(retire).toHaveBeenCalledWith(handle)
+    expect(ptysById.get('pty-retire-failure')).toMatchObject({ connected: false })
   })
 
   it('evicts the team when the disconnected PTY record is pruned', () => {
