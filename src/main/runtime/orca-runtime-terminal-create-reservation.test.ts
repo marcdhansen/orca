@@ -73,10 +73,20 @@ describe('terminal create reservation binding', () => {
     })
 
     const first = runtime.dedupeTerminalCreate(
-      'device-a', 'id:worktree-1', 'mutation-1', false, create, RESERVATION
+      'device-a',
+      'id:worktree-1',
+      'mutation-1',
+      false,
+      create,
+      RESERVATION
     )
     const reconnect = runtime.dedupeTerminalCreate(
-      'device-b', 'id:worktree-1', 'mutation-2', false, create, RESERVATION
+      'device-b',
+      'id:worktree-1',
+      'mutation-2',
+      false,
+      create,
+      RESERVATION
     )
     releaseCreate()
 
@@ -191,6 +201,32 @@ describe('terminal create reservation binding', () => {
     )
 
     expect(retry.reservation).toMatchObject(RESERVATION)
+  })
+
+  it('preserves both the create and reservation-release errors when cleanup also fails', async () => {
+    const runtime = createRuntimeForDedupe()
+    const createError = new Error('spawn_failed')
+    const releaseError = new Error('reservation_release_persist_failed')
+    const failing = vi.fn<CreateRun>(async () => {
+      throw createError
+    })
+    const release = vi
+      .spyOn(
+        (runtime as unknown as { terminalReservations: TerminalReservationBindings })
+          .terminalReservations,
+        'release'
+      )
+      .mockImplementation(() => {
+        throw releaseError
+      })
+
+    const rejected = await runtime
+      .dedupeTerminalCreate('device-a', 'id:worktree-1', undefined, false, failing, RESERVATION)
+      .catch((error: unknown) => error)
+
+    expect(release).toHaveBeenCalledOnce()
+    expect(rejected).toBeInstanceOf(AggregateError)
+    expect((rejected as AggregateError).errors).toEqual([createError, releaseError])
   })
 
   it('refuses a reserved create with no workspace rather than creating an unbound terminal', async () => {

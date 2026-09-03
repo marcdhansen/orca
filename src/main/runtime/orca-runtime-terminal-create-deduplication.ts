@@ -88,7 +88,14 @@ export class OrcaRuntimeWithTerminalCreateDeduplication extends OrcaRuntimeWithC
       )
     } catch (error) {
       if (binding && claim?.outcome === 'bound') {
-        this.terminalReservations.release(preAllocatedHandle, binding)
+        try {
+          this.terminalReservations.release(preAllocatedHandle, binding)
+        } catch (releaseError) {
+          throw new AggregateError(
+            [error, releaseError],
+            'Terminal creation failed and its reservation claim could not be released.'
+          )
+        }
       }
       throw error
     }
