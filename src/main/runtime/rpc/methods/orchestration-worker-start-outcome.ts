@@ -11,5 +11,7 @@ export function isUnknownWorkerStartOutcome(error: unknown, stage: string): bool
     return false
   }
   const message = error instanceof Error ? error.message : String(error)
-  return /connection|disconnect|timed?\s*out|runtime changed|outcome unknown/i.test(message)
+  return /connection|disconnect|\btimeout\b|timed?\s*out|runtime changed|outcome unknown/i.test(
+    message
+  )
 }

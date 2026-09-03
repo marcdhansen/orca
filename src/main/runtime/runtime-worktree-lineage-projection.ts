@@ -45,7 +45,11 @@ export async function scanCurrentReferencedParentWorktrees(args: {
   const scanned = await Promise.all(
     parents.map(async (repo) => {
       args.invalidateRepoScan?.(repo.id)
-      return { repo, scan: await args.scanRepo(repo) }
+      try {
+        return { repo, scan: await args.scanRepo(repo) }
+      } catch {
+        return { repo, scan: { ok: false as const, worktrees: [] } }
+      }
     })
   )
   return scanned.flatMap(({ repo, scan }) =>

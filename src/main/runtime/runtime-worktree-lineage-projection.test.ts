@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { projectCurrentHostWorktreeLineage } from './runtime-worktree-lineage-projection'
+import {
+  projectCurrentHostWorktreeLineage,
+  projectWithCurrentReferencedParents
+} from './runtime-worktree-lineage-projection'
 import type { WorkspaceLineage } from '../../shared/worktree/lineage-types'
 import type { Worktree } from '../../shared/worktree/types'
 
@@ -67,5 +70,20 @@ describe('current-host worktree lineage projection', () => {
     })
 
     expect(projected.workspaceLineage).toEqual(ancestry)
+  })
+
+  it('keeps the child usable and removes stale lineage when the parent scan rejects', async () => {
+    const [projected] = await projectWithCurrentReferencedParents({
+      worktrees: [child],
+      childRepoId: child.repoId,
+      executionHostId: 'local',
+      store: store() as never,
+      scanRepo: async () => {
+        throw new Error('parent host unavailable')
+      }
+    })
+
+    expect(projected.id).toBe(child.id)
+    expect(projected.workspaceLineage).toBeNull()
   })
 })

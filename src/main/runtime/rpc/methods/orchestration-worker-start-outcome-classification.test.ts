@@ -14,6 +14,7 @@ describe('worker start outcome classification', () => {
     expect(isUnknownWorkerStartOutcome(new Error('request timed out'), 'worktree_create')).toBe(
       true
     )
+    expect(isUnknownWorkerStartOutcome(new Error('timeout'), 'worktree_create')).toBe(true)
   })
 
   it('keeps a definite failure definite', () => {
