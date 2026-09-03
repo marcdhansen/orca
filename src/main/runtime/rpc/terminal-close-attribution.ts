@@ -10,6 +10,9 @@ type TerminalPresence =
   | { state: 'absent' }
   | { state: 'unknown' }
 
+/**
+ * Resolves exact-handle terminal presence from the authoritative runtime inventory.
+ */
 async function attestTerminalPresence(
   context: Pick<RpcContext, 'runtime'>,
   terminal: string
@@ -29,10 +32,16 @@ async function attestTerminalPresence(
   }
 }
 
+/**
+ * Identifies the runtime close race where the terminal surface has already retired.
+ */
 function isTabNotFound(error: unknown): boolean {
   return error instanceof Error && error.message === 'tab_not_found'
 }
 
+/**
+ * Wraps terminal close RPCs with attribution and reconciles tab_not_found races against inventory.
+ */
 export function withTerminalCloseAttribution(
   method: TerminalCloseMethod,
   context: Pick<
