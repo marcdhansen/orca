@@ -11,6 +11,7 @@ import {
 } from '../persistence/host-qualified-worktree-meta'
 import { isFolderRepo } from '../../shared/repo-kind'
 import { projectResolvedWorktreeLineage } from '../../shared/resolved-worktree-lineage'
+import { worktreeWorkspaceKey } from '../../shared/workspace-scope'
 import { withTimeout } from '../../shared/promise-timeout-fallback'
 import type { GitWorktreeInfo, Worktree } from '../../shared/worktree/types'
 import type { WorktreeLineage } from '../../shared/worktree/lineage-types'
@@ -211,7 +212,13 @@ export async function resolveScopedWorktreeIdRow(
   const projected = projectResolvedWorktreeLineage(
     rows,
     store.getAllWorktreeLineage?.() ?? {},
-    store.getAllWorkspaceLineage?.() ?? {}
+    store.getAllWorkspaceLineage?.() ?? {},
+    Object.fromEntries(
+      Object.entries(store.getAllWorktreeMeta() ?? {}).map(([id, meta]) => [
+        worktreeWorkspaceKey(id),
+        meta.instanceId
+      ])
+    )
   )
   const exact = projected.find((worktree) => worktree.id === worktreeId)
   if (exact) {

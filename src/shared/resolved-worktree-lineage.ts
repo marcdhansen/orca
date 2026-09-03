@@ -82,9 +82,16 @@ export function getCyclicWorktreeLineageChildIds(
 export function projectResolvedWorktreeLineage<T extends Worktree>(
   worktrees: readonly T[],
   lineageById: Readonly<Record<string, WorktreeLineage>>,
-  workspaceLineageByChildKey: Readonly<Record<WorkspaceKey, WorkspaceLineage>> = {}
+  workspaceLineageByChildKey: Readonly<Record<WorkspaceKey, WorkspaceLineage>> = {},
+  externalWorkspaceInstances: Readonly<Record<WorkspaceKey, string | undefined>> = {}
 ): WorktreeWithResolvedLineage<T>[] {
   const worktreeById = new Map(worktrees.map((worktree) => [worktree.id, worktree]))
+  const workspaceInstances = new Map<WorkspaceKey, string | undefined>(
+    Object.entries(externalWorkspaceInstances) as [WorkspaceKey, string | undefined][]
+  )
+  for (const worktree of worktrees) {
+    workspaceInstances.set(worktreeWorkspaceKey(worktree.id), worktree.instanceId)
+  }
   const validLineageByChildId = new Map<string, WorktreeLineage>()
   const childIdsByParentId = new Map<string, string[]>()
 
@@ -118,7 +125,10 @@ export function projectResolvedWorktreeLineage<T extends Worktree>(
     const validWorkspaceLineage =
       workspaceLineage &&
       (workspaceLineage.childInstanceId == null ||
-        workspaceLineage.childInstanceId === worktree.instanceId)
+        workspaceLineage.childInstanceId === worktree.instanceId) &&
+      (workspaceLineage.parentInstanceId == null ||
+        workspaceInstances.get(workspaceLineage.parentWorkspaceKey) ===
+          workspaceLineage.parentInstanceId)
         ? workspaceLineage
         : null
     return {

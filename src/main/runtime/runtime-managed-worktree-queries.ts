@@ -13,6 +13,7 @@ import {
   toDetectedWorktree
 } from '../../shared/worktree/ownership'
 import { projectResolvedWorktreeLineage } from '../../shared/resolved-worktree-lineage'
+import { worktreeWorkspaceKey } from '../../shared/workspace-scope'
 import {
   createWorktreeVisibilitySourceMatcher,
   resolveCustomWorktreeVisibilitySources,
@@ -158,7 +159,13 @@ export class RuntimeManagedWorktreeQueries {
         worktrees: projectResolvedWorktreeLineage(
           detected,
           store.getAllWorktreeLineage?.() ?? {},
-          store.getAllWorkspaceLineage?.() ?? {}
+          store.getAllWorkspaceLineage?.() ?? {},
+          Object.fromEntries(
+            Object.entries(metaById).map(([id, meta]) => [
+              worktreeWorkspaceKey(id),
+              meta.instanceId
+            ])
+          )
         )
       }
     }
@@ -220,7 +227,10 @@ export class RuntimeManagedWorktreeQueries {
       worktrees: projectResolvedWorktreeLineage(
         detected,
         store.getAllWorktreeLineage?.() ?? {},
-        store.getAllWorkspaceLineage?.() ?? {}
+        store.getAllWorkspaceLineage?.() ?? {},
+        Object.fromEntries(
+          Object.entries(metaById).map(([id, meta]) => [worktreeWorkspaceKey(id), meta.instanceId])
+        )
       )
     }
   }
