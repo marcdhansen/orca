@@ -106,11 +106,13 @@ export class OrcaRuntimeWithListKnownResolvedWorktreesForExplicitTarget extends 
     )
     const lineageById = this.store?.getAllWorktreeLineage?.() ?? {}
     const workspaceLineageByChildKey = this.store?.getAllWorkspaceLineage?.() ?? {}
-    const fleetWorkspaceInstances = Object.fromEntries(
-      perRepoWorktrees.flatMap((rows) =>
-        rows.map((worktree) => [worktreeWorkspaceKey(worktree.id), worktree.instanceId])
-      )
-    )
+    const fleetWorkspaceInstances = perRepoWorktrees
+      .flat()
+      .reduce<Record<string, (string | undefined)[]>>((instances, worktree) => {
+        const key = worktreeWorkspaceKey(worktree.id)
+        ;(instances[key] ??= []).push(worktree.instanceId)
+        return instances
+      }, {})
     const worktrees = perRepoWorktrees.flatMap((rows) =>
       projectResolvedWorktreeLineage(
         rows,

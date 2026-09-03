@@ -83,14 +83,26 @@ export function projectResolvedWorktreeLineage<T extends Worktree>(
   worktrees: readonly T[],
   lineageById: Readonly<Record<string, WorktreeLineage>>,
   workspaceLineageByChildKey: Readonly<Record<WorkspaceKey, WorkspaceLineage>> = {},
-  externalWorkspaceInstances: Readonly<Record<WorkspaceKey, string | undefined>> = {}
+  externalWorkspaceInstances: Readonly<
+    Record<WorkspaceKey, string | readonly (string | undefined)[] | undefined>
+  > = {}
 ): WorktreeWithResolvedLineage<T>[] {
   const worktreeById = new Map(worktrees.map((worktree) => [worktree.id, worktree]))
-  const workspaceInstances = new Map<WorkspaceKey, string | undefined>(
-    Object.entries(externalWorkspaceInstances) as [WorkspaceKey, string | undefined][]
-  )
+  const workspaceInstances = new Map<WorkspaceKey, Set<string>>()
+  for (const [workspaceKey, values] of Object.entries(externalWorkspaceInstances)) {
+    const instances = Array.isArray(values) ? values : [values]
+    workspaceInstances.set(
+      workspaceKey as WorkspaceKey,
+      new Set(instances.filter((instance): instance is string => Boolean(instance)))
+    )
+  }
   for (const worktree of worktrees) {
-    workspaceInstances.set(worktreeWorkspaceKey(worktree.id), worktree.instanceId)
+    if (worktree.instanceId) {
+      const key = worktreeWorkspaceKey(worktree.id)
+      const instances = workspaceInstances.get(key) ?? new Set<string>()
+      instances.add(worktree.instanceId)
+      workspaceInstances.set(key, instances)
+    }
   }
   const validLineageByChildId = new Map<string, WorktreeLineage>()
   const childIdsByParentId = new Map<string, string[]>()
@@ -127,8 +139,9 @@ export function projectResolvedWorktreeLineage<T extends Worktree>(
       (workspaceLineage.childInstanceId == null ||
         workspaceLineage.childInstanceId === worktree.instanceId) &&
       (workspaceLineage.parentInstanceId == null ||
-        workspaceInstances.get(workspaceLineage.parentWorkspaceKey) ===
-          workspaceLineage.parentInstanceId)
+        workspaceInstances
+          .get(workspaceLineage.parentWorkspaceKey)
+          ?.has(workspaceLineage.parentInstanceId) === true)
         ? workspaceLineage
         : null
     return {
