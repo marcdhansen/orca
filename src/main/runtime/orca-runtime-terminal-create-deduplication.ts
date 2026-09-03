@@ -12,6 +12,8 @@ import { resolveWorktreeLaunchHost } from './worktree-launch-host-repo'
 import type { TuiAgent } from '../../shared/tui-agent'
 import {
   buildResourceReservationBinding,
+  describeResourceReservationConflict,
+  resourceReservationBindingMatchesRequest,
   type ResourceReservationRequest
 } from '../../shared/resource-reservation-binding'
 import { ResourceReservationConflictError } from './resource-reservation-conflict'
@@ -43,7 +45,9 @@ export class OrcaRuntimeWithTerminalCreateDeduplication extends OrcaRuntimeWithC
     }
     const workspace = await this.resolveTerminalWorkspaceLaunchScope(worktreeSelector)
     const canonicalWorktreeSelector = `id:${workspace.id}`
-    const reservationIdentity = reservation ? `reservation:${reservation.issuer ?? ''}` : clientIdentity
+    const reservationIdentity = reservation
+      ? `reservation:${reservation.issuer ?? ''}`
+      : clientIdentity
     const preAllocatedHandle = deriveRemoteRuntimeTerminalCreateHandle(
       reservationIdentity,
       workspace.id,
@@ -54,10 +58,10 @@ export class OrcaRuntimeWithTerminalCreateDeduplication extends OrcaRuntimeWithC
       : null
     const claim = binding ? this.terminalReservations.claim(preAllocatedHandle, binding) : null
     if (claim?.outcome === 'conflict') {
-        throw new ResourceReservationConflictError(claim.message, {
-          resourceKind: 'terminal',
-          resourceId: preAllocatedHandle
-        })
+      throw new ResourceReservationConflictError(claim.message, {
+        resourceKind: 'terminal',
+        resourceId: preAllocatedHandle
+      })
     }
     let created: RuntimeTerminalCreate
     try {
@@ -66,20 +70,20 @@ export class OrcaRuntimeWithTerminalCreateDeduplication extends OrcaRuntimeWithC
         workspace.id,
         identityKey,
         async () => {
-        if (reconcileExisting) {
-          const adopted = await this.reconcileRemoteTerminalCreate(
-            workspace.id,
-            preAllocatedHandle,
-            // Why: an unreachable SSH host vanishes from the aggregate listing, which would read
-            // as absence and respawn over live remote work. Local/folder workspaces have no
-            // connection and keep the aggregate listing.
-            workspace.connectionId ?? null
-          )
-          if (adopted) {
-            return adopted
+          if (reconcileExisting) {
+            const adopted = await this.reconcileRemoteTerminalCreate(
+              workspace.id,
+              preAllocatedHandle,
+              // Why: an unreachable SSH host vanishes from the aggregate listing, which would read
+              // as absence and respawn over live remote work. Local/folder workspaces have no
+              // connection and keep the aggregate listing.
+              workspace.connectionId ?? null
+            )
+            if (adopted) {
+              return adopted
+            }
           }
-        }
-        return await run(canonicalWorktreeSelector, preAllocatedHandle)
+          return await run(canonicalWorktreeSelector, preAllocatedHandle)
         }
       )
     } catch (error) {
@@ -219,20 +223,35 @@ export class OrcaRuntimeWithTerminalCreateDeduplication extends OrcaRuntimeWithC
   dedupeWorktreeCreate<T>(
     repoSelector: string,
     clientMutationId: string | undefined,
-    run: () => Promise<T>
+    run: () => Promise<T>,
+    reservation?: ResourceReservationRequest
   ): Promise<T> {
     if (!clientMutationId) {
       return run()
     }
-    const key = `${repoSelector}\0${clientMutationId}`
+    // Reservation keys and transport mutation ids are separate namespaces. A caller-chosen
+    // mutation id must never intercept a durable reservation retry that happens to share text.
+    const key = `${repoSelector}\0${reservation ? 'reservation' : 'mutation'}\0${clientMutationId}`
     const inflight = this.worktreeCreateByMutationId.get(key)
     if (inflight) {
-      return inflight as Promise<T>
+      if (reservation && inflight.reservation) {
+        const prior = buildResourceReservationBinding(inflight.reservation, { boundAt: 0 })
+        if (!resourceReservationBindingMatchesRequest(prior, reservation)) {
+          return Promise.reject(
+            new ResourceReservationConflictError(
+              describeResourceReservationConflict(prior, reservation, 'pending-worktree-create'),
+              { resourceKind: 'worktree', resourceId: 'pending-worktree-create' }
+            )
+          )
+        }
+      }
+      return inflight.promise as Promise<T>
     }
     const created = run()
-    this.worktreeCreateByMutationId.set(key, created)
+    const entry = { promise: created as Promise<unknown>, ...(reservation ? { reservation } : {}) }
+    this.worktreeCreateByMutationId.set(key, entry)
     const drop = (): void => {
-      if (this.worktreeCreateByMutationId.get(key) === created) {
+      if (this.worktreeCreateByMutationId.get(key) === entry) {
         this.worktreeCreateByMutationId.delete(key)
       }
     }
