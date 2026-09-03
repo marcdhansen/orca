@@ -70,6 +70,10 @@ describe('runtime close attribution', () => {
       const close = vi.fn().mockResolvedValue({ handle: 'term-1', ptyKilled: true })
       const runtime = {
         getRuntimeId: () => 'test-runtime',
+        listTerminals: vi.fn().mockResolvedValue({
+          terminals: [],
+          hostScope: { hostIds: [], omittedHostIds: [] }
+        }),
         [call]: close
       } as unknown as OrcaRuntimeService
       const dispatcher = new RpcDispatcher({ runtime, methods: TERMINAL_METHODS })
@@ -152,4 +156,105 @@ describe('runtime close attribution', () => {
       expect(JSON.stringify(sink.records)).not.toContain(BEARER_CLIENT_ID)
     }
   )
+
+  it('reports a listed terminal as closed when retirement wins a tab_not_found race', async () => {
+    let terminals = [{ handle: 'term-race', tabId: 'tab-race' }]
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      listTerminals: vi.fn(async () => ({
+        terminals,
+        hostScope: { hostIds: ['local'], omittedHostIds: [] }
+      })),
+      closeTerminal: vi.fn(async () => {
+        terminals = []
+        throw new Error('tab_not_found')
+      })
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: TERMINAL_METHODS })
+    const replies: string[] = []
+
+    await dispatcher.dispatchStreaming(
+      request('terminal.close', { terminal: 'term-race' }),
+      (reply) => replies.push(reply)
+    )
+
+    expect(JSON.parse(replies[0]!)).toMatchObject({
+      ok: true,
+      result: {
+        close: {
+          handle: 'term-race',
+          tabId: 'tab-race',
+          outcome: 'closed',
+          ptyKilled: false
+        }
+      }
+    })
+    expect((await runtime.listTerminals()).terminals).toEqual([])
+  })
+
+  it('does not reinterpret tab_not_found without an attested state transition', async () => {
+    const listed = [{ handle: 'term-live', tabId: 'tab-live' }]
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      listTerminals: vi.fn(async () => ({
+        terminals: listed,
+        hostScope: { hostIds: ['local'], omittedHostIds: [] }
+      })),
+      closeTerminal: vi.fn().mockRejectedValue(new Error('tab_not_found'))
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: TERMINAL_METHODS })
+    const replies: string[] = []
+
+    await dispatcher.dispatchStreaming(
+      request('terminal.close', { terminal: 'term-live' }),
+      (reply) => replies.push(reply)
+    )
+
+    expect(JSON.parse(replies[0]!)).toMatchObject({ ok: false })
+    expect((await runtime.listTerminals()).terminals).toEqual(listed)
+  })
+
+  it('reports already_absent only when both inventories attest absence', async () => {
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      listTerminals: vi.fn(async () => ({
+        terminals: [],
+        hostScope: { hostIds: ['local'], omittedHostIds: [] }
+      })),
+      closeTerminal: vi.fn().mockRejectedValue(new Error('tab_not_found'))
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: TERMINAL_METHODS })
+    const replies: string[] = []
+
+    await dispatcher.dispatchStreaming(
+      request('terminal.close', { terminal: 'term-absent' }),
+      (reply) => replies.push(reply)
+    )
+
+    expect(JSON.parse(replies[0]!)).toMatchObject({
+      ok: true,
+      result: { close: { handle: 'term-absent', outcome: 'already_absent' } }
+    })
+    expect(runtime.listTerminals).toHaveBeenCalledTimes(2)
+  })
+
+  it('preserves tab_not_found when inventory cannot attest absence', async () => {
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      listTerminals: vi.fn(async () => ({
+        terminals: [],
+        hostScope: { hostIds: [], omittedHostIds: ['ssh:offline'] }
+      })),
+      closeTerminal: vi.fn().mockRejectedValue(new Error('tab_not_found'))
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: TERMINAL_METHODS })
+    const replies: string[] = []
+
+    await dispatcher.dispatchStreaming(
+      request('terminal.close', { terminal: 'term-unverifiable' }),
+      (reply) => replies.push(reply)
+    )
+
+    expect(JSON.parse(replies[0]!)).toMatchObject({ ok: false })
+  })
 })
