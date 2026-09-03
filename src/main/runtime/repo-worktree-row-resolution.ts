@@ -208,7 +208,11 @@ export async function resolveScopedWorktreeIdRow(
     store.getAllWorktreeMeta() ?? {},
     resolveLocalProjectRuntimesForRepos(store, [repo])
   )
-  const projected = projectResolvedWorktreeLineage(rows, store.getAllWorktreeLineage?.() ?? {})
+  const projected = projectResolvedWorktreeLineage(
+    rows,
+    store.getAllWorktreeLineage?.() ?? {},
+    store.getAllWorkspaceLineage?.() ?? {}
+  )
   const exact = projected.find((worktree) => worktree.id === worktreeId)
   if (exact) {
     return exact

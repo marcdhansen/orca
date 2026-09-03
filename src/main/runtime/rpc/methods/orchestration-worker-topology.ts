@@ -2,6 +2,8 @@ import type { AgentLaunchPreferences } from '../../../../shared/agent-session-ho
 import type { TuiAgent } from '../../../../shared/tui-agent'
 import type { OrcaRuntimeService } from '../../orca-runtime'
 import type { OrchestrationDb } from '../../orchestration/db'
+import { worktreeWorkspaceKey } from '../../../../shared/workspace-scope'
+import { OrchestrationError } from '../../orchestration/orchestration-error'
 
 export type WorkerEffect = {
   kind: 'worktree' | 'terminal' | 'setup' | 'dispatch_input'
@@ -108,6 +110,8 @@ export async function createWorkerWorktree(args: {
   runtime: OrcaRuntimeService
   db: OrchestrationDb
   dispatchId: string
+  runId: string
+  taskId: string
   requestedWorktree: string
   coordinatorWorktree: Awaited<ReturnType<OrcaRuntimeService['showManagedWorktree']>>
   params: {
@@ -147,12 +151,53 @@ export async function createWorkerWorktree(args: {
     ...(args.launchPreferences ? { startupLaunchPreferences: args.launchPreferences } : {}),
     activate: false,
     lineage: {
-      parentWorktree: requestedWorktree === 'new-child' ? coordinatorWorktree.id : undefined,
+      parentWorktree: undefined,
+      orchestrationContext:
+        requestedWorktree === 'new-child'
+          ? {
+              parentWorktreeId: coordinatorWorktree.id,
+              orchestrationRunId: args.runId,
+              taskId: args.taskId,
+              coordinatorHandle: params.from
+            }
+          : undefined,
       noParent: requestedWorktree === 'new-top-level',
       callerTerminalHandle: params.from
     }
   })
   const terminalHandle = created.startupTerminal?.handle
+  const authoritative =
+    requestedWorktree === 'new-child'
+      ? await runtime.showManagedWorktree(`id:${created.worktree.id}`)
+      : (created.worktree as Awaited<ReturnType<OrcaRuntimeService['showManagedWorktree']>>)
+  if (requestedWorktree === 'new-child') {
+    const ancestry = authoritative.workspaceLineage
+    if (
+      ancestry?.origin !== 'orchestration' ||
+      ancestry.childWorkspaceKey !== worktreeWorkspaceKey(created.worktree.id) ||
+      ancestry.parentWorkspaceKey !== worktreeWorkspaceKey(coordinatorWorktree.id) ||
+      ancestry.taskId !== args.taskId ||
+      ancestry.orchestrationRunId !== args.runId ||
+      ancestry.coordinatorHandle !== params.from
+    ) {
+      effects.push({
+        kind: 'worktree',
+        action: 'created_unlinked_child',
+        id: created.worktree.id
+      })
+      db.recordWorkerStage({
+        dispatchId,
+        stage: 'worktree_created',
+        worktreeId: created.worktree.id,
+        effects,
+        residualResources: effects
+      })
+      throw new OrchestrationError(
+        'created_unlinked_child',
+        'Created child worktree is missing authoritative orchestration ancestry.'
+      )
+    }
+  }
   effects.push({
     kind: 'worktree',
     action: requestedWorktree === 'new-child' ? 'created_child' : 'created_top_level',
@@ -210,7 +255,7 @@ export async function createWorkerWorktree(args: {
     terminalId: setupTerminalHandle ?? setupTerminal?.id
   })
   return {
-    worktree: created.worktree as Awaited<ReturnType<OrcaRuntimeService['showManagedWorktree']>>,
+    worktree: authoritative,
     terminalHandle,
     setupReceipt
   }
@@ -281,3 +326,4 @@ export function isUnknownWorkerStartOutcome(error: unknown, stage: string): bool
   const message = error instanceof Error ? error.message : String(error)
   return /connection|disconnect|timed?\s*out|runtime changed|outcome unknown/i.test(message)
 }
+/* eslint-disable max-lines -- Why: worker worktree, setup-terminal, and ancestry validation form one auditable resource-creation transaction. */

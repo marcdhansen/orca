@@ -26,6 +26,7 @@ import {
   isWorkerStartTimeoutWithinTimerLimit,
   resolveWorkerStartReadinessTimeoutMs
 } from '../../../../shared/orchestration-timing-budgets'
+import { isAgentPromptStalledError } from '../../agent-prompt-submission-verification'
 
 export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
   defineMethod({
@@ -148,6 +149,8 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
       }
       let terminalHandle = params.terminal
       let terminalRevealWarning: string | undefined
+      let workerProcessIncarnation: string | undefined
+      let dispatchInputSubmittedAt: number | undefined
       let failedStage = 'terminal_create'
       let setupReceipt: WorkerSetupReceipt = {
         requested: 'not_applicable',
@@ -164,6 +167,8 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
             runtime,
             db,
             dispatchId: started.dispatch.id,
+            runId: run.id,
+            taskId: task.id,
             requestedWorktree,
             coordinatorWorktree: creationWorktree,
             params,
@@ -233,6 +238,7 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
           )
         }
         const terminalAuthority = requireWorkerAuthority(runtime, terminalHandle)
+        workerProcessIncarnation = terminalAuthority.processIncarnation
         const capability = db.prepareStartingWorkerAuthority({
           dispatchId: started.dispatch.id,
           handle: terminalHandle,
@@ -255,6 +261,7 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
           devMode: params.devMode,
           cliCommand: runtime.getTerminalOrchestrationCliCommand(terminalHandle)
         })
+        dispatchInputSubmittedAt = Date.now()
         await runtime.sendTerminalAgentPrompt(terminalHandle, preamble)
         effects.push({
           kind: 'dispatch_input',
@@ -285,6 +292,39 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
           ...(terminalRevealWarning ? { warning: terminalRevealWarning } : {})
         }
       } catch (error) {
+        if (isAgentPromptStalledError(error) && terminalHandle) {
+          const evidence =
+            workerProcessIncarnation && dispatchInputSubmittedAt
+              ? runtime.getOrchestrationPromptDeliveryEvidence({
+                  terminalHandle,
+                  taskId: task.id,
+                  dispatchId: started.dispatch.id,
+                  processIncarnation: workerProcessIncarnation,
+                  submittedAt: dispatchInputSubmittedAt
+                })
+              : null
+          if (evidence) {
+            effects.push({
+              kind: 'dispatch_input',
+              role: 'agent',
+              id: terminalHandle,
+              state: evidence
+            })
+            const worker = db.markWorkerDispatchReady(started.dispatch.id, effects, evidence)
+            return {
+              runId: run.id,
+              taskId: task.id,
+              dispatchId: started.dispatch.id,
+              state: worker.state,
+              stage: worker.stage,
+              setup: setupReceipt,
+              launch: launch.receipt,
+              timeoutMs: readinessTimeoutMs,
+              effects,
+              residualResources: []
+            }
+          }
+        }
         return failWorkerStartWithReceipt({
           db,
           runId: run.id,
@@ -299,3 +339,4 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
     }
   })
 ]
+/* eslint-disable max-lines -- Why: worker-start receipt transitions and correlated prompt recovery must remain auditable in one transaction handler. */

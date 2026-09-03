@@ -42,10 +42,24 @@ describe('orchestration new-worktree workers', () => {
       worktreeId: 'repo::parent',
       status: 'running'
     } as never)
-    vi.spyOn(runtime, 'showManagedWorktree').mockResolvedValue({
-      id: 'repo::parent',
-      repoId: 'repo'
-    } as never)
+    vi.spyOn(runtime, 'showManagedWorktree').mockImplementation(async (selector) => {
+      if (selector !== 'id:repo::created') {
+        return { id: 'repo::parent', repoId: 'repo' } as never
+      }
+      const task = db.listTasks().at(-1)
+      return {
+        id: 'repo::created',
+        repoId: 'repo',
+        workspaceLineage: {
+          childWorkspaceKey: 'worktree:repo::created',
+          parentWorkspaceKey: 'worktree:repo::parent',
+          origin: 'orchestration',
+          taskId: task?.id,
+          orchestrationRunId: runId,
+          coordinatorHandle: 'term_coord'
+        }
+      } as never
+    })
     vi.spyOn(runtime, 'showRepo').mockResolvedValue({
       id: 'repo',
       kind: 'git'
@@ -123,6 +137,29 @@ describe('orchestration new-worktree workers', () => {
           options?.terminals?.find((terminal) => terminal.title === 'Setup')?.handle
       }
     } as never)
+    vi.mocked(runtime.showManagedWorktree).mockImplementation(async (selector) => {
+      if (selector !== 'id:repo::created') {
+        return { id: 'repo::parent', repoId: 'repo' } as never
+      }
+      const task = db.listTasks().at(-1)
+      return {
+        id: 'repo::created',
+        repoId: 'repo',
+        workspaceLineage: {
+          childWorkspaceKey: 'worktree:repo::created',
+          childInstanceId: 'child-instance',
+          parentWorkspaceKey: 'worktree:repo::parent',
+          parentInstanceId: 'parent-instance',
+          origin: 'orchestration',
+          capture: { source: 'orchestration-context', confidence: 'inferred' },
+          taskId: task?.id,
+          orchestrationRunId: runId,
+          coordinatorHandle: 'term_coord',
+          createdByTerminalHandle: 'term_coord',
+          createdAt: 1
+        }
+      } as never
+    })
     if (options?.terminals) {
       vi.mocked(runtime.listTerminals).mockResolvedValue({
         terminals: options.terminals,
@@ -163,6 +200,78 @@ describe('orchestration new-worktree workers', () => {
       ])
     )
     expect(runtime.createTerminal).not.toHaveBeenCalled()
+  })
+
+  it('accepts a cross-repo child only after authoritative spawn ancestry is visible', async () => {
+    mockCreatedWorktree()
+    vi.mocked(runtime.createManagedWorktree).mockResolvedValue({
+      worktree: { id: 'target::created', repoId: 'target' },
+      startupTerminal: { spawned: true, handle: 'term_worker' }
+    } as never)
+    vi.mocked(runtime.showManagedWorktree).mockImplementation(async (selector) => {
+      if (selector === 'id:target::created') {
+        const task = db.listTasks().at(-1)!
+        return {
+          id: 'target::created',
+          repoId: 'target',
+          parentWorktreeId: null,
+          lineage: null,
+          workspaceLineage: {
+            childWorkspaceKey: 'worktree:target::created',
+            parentWorkspaceKey: 'worktree:repo::parent',
+            origin: 'orchestration',
+            taskId: task.id,
+            orchestrationRunId: runId,
+            coordinatorHandle: 'term_coord'
+          }
+        } as never
+      }
+      return { id: 'repo::parent', repoId: 'repo' } as never
+    })
+
+    const { result } = await startWorker({ repo: 'target' })
+
+    expect(result).toMatchObject({
+      state: 'ready',
+      effects: expect.arrayContaining([
+        expect.objectContaining({ action: 'created_child', id: 'target::created' })
+      ])
+    })
+    expect(runtime.createManagedWorktree).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lineage: expect.objectContaining({
+          parentWorktree: undefined,
+          orchestrationContext: expect.objectContaining({
+            parentWorktreeId: 'repo::parent',
+            orchestrationRunId: runId
+          })
+        })
+      })
+    )
+  })
+
+  it('rejects a child whose authoritative spawn ancestry is absent and retains the resource', async () => {
+    mockCreatedWorktree()
+    vi.mocked(runtime.showManagedWorktree).mockResolvedValue({
+      id: 'repo::created',
+      repoId: 'repo',
+      workspaceLineage: null
+    } as never)
+
+    const { result } = await startWorker()
+
+    expect(result).toMatchObject({
+      state: 'failed',
+      failedStage: 'worktree_create',
+      errorCode: 'created_unlinked_child',
+      residualResources: [
+        expect.objectContaining({ action: 'created_unlinked_child', id: 'repo::created' })
+      ]
+    })
+    expect(result).not.toHaveProperty(
+      'effects',
+      expect.arrayContaining([expect.objectContaining({ action: 'created_child' })])
+    )
   })
 
   it('passes launch preferences into agent-first worktree creation', async () => {
@@ -678,6 +787,30 @@ describe('orchestration new-worktree workers', () => {
     expect(reinjectPrompt).not.toHaveBeenCalled()
   })
 
+  it('reconciles a stalled prompt from exact correlated worker activity', async () => {
+    mockCreatedWorktree({ hookFound: false })
+    vi.mocked(runtime.sendTerminalAgentPrompt).mockRejectedValueOnce(
+      new Error('agent_prompt_stalled')
+    )
+    vi.spyOn(runtime, 'getOrchestrationPromptDeliveryEvidence').mockReturnValue('worker_running')
+
+    const { result, task } = await startWorker()
+
+    expect(result).toMatchObject({
+      state: 'ready',
+      stage: 'worker_running',
+      effects: expect.arrayContaining([
+        expect.objectContaining({ kind: 'dispatch_input', state: 'worker_running' })
+      ])
+    })
+    const dispatch = db.getDispatchContext(task.id)!
+    expect(dispatch).toMatchObject({ status: 'dispatched', capability_revoked_at: null })
+    expect(db.getWorkerDispatch(dispatch.id)).toMatchObject({
+      state: 'ready',
+      stage: 'worker_running'
+    })
+  })
+
   it('persists pre-effect, post-effect, and post-input stages in order', async () => {
     mockCreatedWorktree({ hookFound: false })
     let finishWait:
@@ -739,3 +872,4 @@ describe('orchestration new-worktree workers', () => {
     })
   })
 })
+/* eslint-disable max-lines -- Why: this single worker-start contract matrix shares stateful runtime and database fixtures across topology and prompt-delivery cases. */

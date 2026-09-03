@@ -155,7 +155,11 @@ export class RuntimeManagedWorktreeQueries {
         repoId: repo.id,
         authoritative: true,
         source: 'git',
-        worktrees: projectResolvedWorktreeLineage(detected, store.getAllWorktreeLineage?.() ?? {})
+        worktrees: projectResolvedWorktreeLineage(
+          detected,
+          store.getAllWorktreeLineage?.() ?? {},
+          store.getAllWorkspaceLineage?.() ?? {}
+        )
       }
     }
     // Why capture before the scan: listing can mutate metadata synchronously before its first
@@ -213,7 +217,11 @@ export class RuntimeManagedWorktreeQueries {
       repoId: repo.id,
       authoritative: scan.ok,
       source: scan.ok ? 'git' : 'metadata-fallback',
-      worktrees: projectResolvedWorktreeLineage(detected, store.getAllWorktreeLineage?.() ?? {})
+      worktrees: projectResolvedWorktreeLineage(
+        detected,
+        store.getAllWorktreeLineage?.() ?? {},
+        store.getAllWorkspaceLineage?.() ?? {}
+      )
     }
   }
 
@@ -321,3 +329,4 @@ export class RuntimeManagedWorktreeQueries {
     return sourceDefaultsSupported || !defaults ? defaults : { external: defaults.external }
   }
 }
+/* eslint-disable max-lines -- Why: the authoritative and fallback managed-worktree query paths must share one projection boundary; splitting them would risk lineage drift. */

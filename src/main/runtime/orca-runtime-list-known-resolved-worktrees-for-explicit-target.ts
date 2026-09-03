@@ -104,8 +104,9 @@ export class OrcaRuntimeWithListKnownResolvedWorktreesForExplicitTarget extends 
       )
     )
     const lineageById = this.store?.getAllWorktreeLineage?.() ?? {}
+    const workspaceLineageByChildKey = this.store?.getAllWorkspaceLineage?.() ?? {}
     const worktrees = perRepoWorktrees.flatMap((rows) =>
-      projectResolvedWorktreeLineage(rows, lineageById)
+      projectResolvedWorktreeLineage(rows, lineageById, workspaceLineageByChildKey)
     )
     return { worktrees, platformByRepoId }
   }

@@ -1,10 +1,13 @@
-import type { WorktreeLineage } from './worktree/lineage-types'
+import type { WorkspaceKey } from './folder-workspace-types'
+import type { WorkspaceLineage, WorktreeLineage } from './worktree/lineage-types'
+import { worktreeWorkspaceKey } from './workspace-scope'
 import type { Worktree } from './worktree/types'
 
 export type WorktreeWithResolvedLineage<T extends Worktree = Worktree> = T & {
   parentWorktreeId: string | null
   childWorktreeIds: string[]
   lineage: WorktreeLineage | null
+  workspaceLineage?: WorkspaceLineage | null
 }
 
 /** The fields a lineage edge is scoped by. Split out so create-time callers — which have a
@@ -78,7 +81,8 @@ export function getCyclicWorktreeLineageChildIds(
 
 export function projectResolvedWorktreeLineage<T extends Worktree>(
   worktrees: readonly T[],
-  lineageById: Readonly<Record<string, WorktreeLineage>>
+  lineageById: Readonly<Record<string, WorktreeLineage>>,
+  workspaceLineageByChildKey: Readonly<Record<WorkspaceKey, WorkspaceLineage>> = {}
 ): WorktreeWithResolvedLineage<T>[] {
   const worktreeById = new Map(worktrees.map((worktree) => [worktree.id, worktree]))
   const validLineageByChildId = new Map<string, WorktreeLineage>()
@@ -110,11 +114,19 @@ export function projectResolvedWorktreeLineage<T extends Worktree>(
 
   return worktrees.map((worktree) => {
     const lineage = validLineageByChildId.get(worktree.id) ?? null
+    const workspaceLineage = workspaceLineageByChildKey[worktreeWorkspaceKey(worktree.id)]
+    const validWorkspaceLineage =
+      workspaceLineage &&
+      (workspaceLineage.childInstanceId == null ||
+        workspaceLineage.childInstanceId === worktree.instanceId)
+        ? workspaceLineage
+        : null
     return {
       ...worktree,
       parentWorktreeId: lineage?.parentWorktreeId ?? null,
       childWorktreeIds: childIdsByParentId.get(worktree.id) ?? [],
-      lineage
+      lineage,
+      workspaceLineage: validWorkspaceLineage
     }
   })
 }

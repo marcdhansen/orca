@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { join } from 'node:path'
 import type { WorktreeLineage } from './worktree/lineage-types'
+import { worktreeWorkspaceKey } from './workspace-scope'
 import type { Worktree } from './worktree/types'
 import type { WorktreeLineageBoundary } from './resolved-worktree-lineage'
 import {
@@ -91,6 +92,32 @@ describe('projectResolvedWorktreeLineage', () => {
       { id: 'child', parentWorktreeId: 'parent', childWorktreeIds: [], lineage: lineage() },
       { id: 'parent', parentWorktreeId: null, childWorktreeIds: ['child'], lineage: null }
     ])
+  })
+
+  it('projects cross-repo orchestration ancestry without creating ordinary nesting', () => {
+    const crossRepoChild = worktree('target::child', 'child-instance', { repoId: 'target' })
+    const spawnLineage = {
+      childWorkspaceKey: worktreeWorkspaceKey(crossRepoChild.id),
+      childInstanceId: crossRepoChild.instanceId,
+      parentWorkspaceKey: worktreeWorkspaceKey('source::parent'),
+      parentInstanceId: 'parent-instance',
+      origin: 'orchestration' as const,
+      capture: { source: 'orchestration-context' as const, confidence: 'inferred' as const },
+      taskId: 'task_1',
+      createdAt: 1
+    }
+
+    const [projected] = projectResolvedWorktreeLineage(
+      [crossRepoChild],
+      {},
+      { [spawnLineage.childWorkspaceKey]: spawnLineage }
+    )
+
+    expect(projected).toMatchObject({
+      parentWorktreeId: null,
+      lineage: null,
+      workspaceLineage: spawnLineage
+    })
   })
 
   it.each([
