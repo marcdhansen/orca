@@ -41,6 +41,7 @@ vi.mock('child_process', async () => {
 })
 
 import { main } from './index'
+import { RuntimeRpcFailureError } from './runtime-client'
 import { RESOURCE_RESERVATION_ATTRIBUTION_RUNTIME_CAPABILITY } from '../shared/protocol-version'
 import { buildWorktree, okFixture, queueFixtures } from './test-fixtures'
 import { useWorktreeAwarenessEnvironment } from './index-test-harness'
@@ -153,6 +154,40 @@ describe('orca worktree create reservation binding', () => {
 
     await main([...CREATE_ARGS, ...RESERVATION_ARGS, '--json'], '/tmp/elsewhere')
 
+    expect(JSON.parse(String(vi.mocked(console.log).mock.calls.at(-1)?.[0]))).toMatchObject({
+      ok: false,
+      error: { code: 'incompatible_runtime' }
+    })
+    expect(process.exitCode).toBe(1)
+  })
+
+  it('preserves a provider reservation conflict through the public JSON contract', async () => {
+    callMock.mockResolvedValueOnce(
+      statusFixture([RESOURCE_RESERVATION_ATTRIBUTION_RUNTIME_CAPABILITY])
+    )
+    callMock.mockRejectedValueOnce(
+      new RuntimeRpcFailureError({
+        id: 'req_create',
+        ok: false,
+        error: {
+          code: 'reservation_conflict',
+          message: 'Reservation keys are single-use.',
+          data: { resourceKind: 'worktree', resourceId: 'worktree-1' }
+        },
+        _meta: { runtimeId: 'runtime-1' }
+      })
+    )
+    silenceOutput()
+
+    await main([...CREATE_ARGS, ...RESERVATION_ARGS, '--json'], '/tmp/elsewhere')
+
+    expect(JSON.parse(String(vi.mocked(console.log).mock.calls.at(-1)?.[0]))).toMatchObject({
+      ok: false,
+      error: {
+        code: 'reservation_conflict',
+        data: { resourceKind: 'worktree', resourceId: 'worktree-1' }
+      }
+    })
     expect(process.exitCode).toBe(1)
   })
 

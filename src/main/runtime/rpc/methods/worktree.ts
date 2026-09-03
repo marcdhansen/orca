@@ -135,7 +135,8 @@ export const WORKTREE_METHODS: RpcMethod[] = [
             releaseAutomationWorkspaceProvenanceRequest(params.automationProvenanceRequest)
             throw error
           }
-        }
+        },
+        params.reservation
       )
   }),
   defineMethod({
