@@ -28,6 +28,7 @@ import {
   TRAFFIC_LIGHT_X
 } from './main-window-visual-lifecycle'
 import { installMainWindowWebviewSecurity } from './main-window-webview-security'
+import { registerMainWindowCloseDisposer } from './main-window-close-disposers'
 import { rectHasVisibleAreaOnAnyDisplay } from './window-bounds-validation'
 import { installWindowsPathRegistryChangeListener } from '../pty/windows-path-registry-change'
 
@@ -185,7 +186,7 @@ export function createMainWindow(
     store
   })
 
-  mainWindow.on('closed', () => {
+  registerMainWindowCloseDisposer(mainWindow, () => {
     closeDashboardPopout()
     state.clearInitialRevealFallbackTimer()
     closeLifecycle.dispose()
