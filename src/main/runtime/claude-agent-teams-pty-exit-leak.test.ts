@@ -22,6 +22,8 @@ type RuntimeInternals = {
   dropDisconnectedPtyRecord: (ptyId: string) => void
   terminalReservations: TerminalReservationBindings
   ptysById: Map<string, unknown>
+  retireMobileSessionSurfacesForPty: (...args: unknown[]) => void
+  pruneDisconnectedPtyRecords: () => void
 }
 
 function internals(runtime: OrcaRuntimeService): RuntimeInternals {
@@ -85,10 +87,14 @@ describe('ClaudeAgentTeams eviction on natural PTY exit (leak regression)', () =
     const retire = vi.spyOn(terminalReservations, 'retire').mockImplementation(() => {
       throw retirementError
     })
+    const retireSurfaces = vi.spyOn(internals(runtime), 'retireMobileSessionSurfacesForPty')
+    const pruneDisconnected = vi.spyOn(internals(runtime), 'pruneDisconnectedPtyRecords')
 
     expect(() => runtime.onPtyExit('pty-retire-failure', 0)).toThrow(retirementError)
 
     expect(retire).toHaveBeenCalledWith(handle)
+    expect(retireSurfaces).toHaveBeenCalled()
+    expect(pruneDisconnected).toHaveBeenCalledOnce()
     expect(ptysById.get('pty-retire-failure')).toMatchObject({ connected: false })
   })
 
