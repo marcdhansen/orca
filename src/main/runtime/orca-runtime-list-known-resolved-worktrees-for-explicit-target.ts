@@ -12,8 +12,7 @@ import {
 } from '../project-runtime-git-options'
 import { getAgentLaunchPlatformForRepo } from './runtime-agent-launch-resolution'
 import { resolveRepoWorktreeRows, resolveScopedWorktreeIdRow } from './repo-worktree-row-resolution'
-import { projectResolvedWorktreeLineage } from '../../shared/resolved-worktree-lineage'
-import { worktreeWorkspaceKey } from '../../shared/workspace-scope'
+import { projectCurrentHostWorktreeLineage } from './runtime-worktree-lineage-projection'
 import type { RepoWorktreeRowDeps } from './repo-worktree-row-resolution'
 import { listRuntimeFolderWorkspaces } from './runtime-worktree-filesystem'
 import type { ExecutionHostId } from '../../shared/execution-host'
@@ -104,22 +103,14 @@ export class OrcaRuntimeWithListKnownResolvedWorktreesForExplicitTarget extends 
         async (repo) => await resolveRepoWorktreeRows(deps, repo, metaById, projectRuntimeByRepoId)
       )
     )
-    const lineageById = this.store?.getAllWorktreeLineage?.() ?? {}
-    const workspaceLineageByChildKey = this.store?.getAllWorkspaceLineage?.() ?? {}
-    const fleetWorkspaceInstances = perRepoWorktrees
-      .flat()
-      .reduce<Record<string, (string | undefined)[]>>((instances, worktree) => {
-        const key = worktreeWorkspaceKey(worktree.id)
-        ;(instances[key] ??= []).push(worktree.instanceId)
-        return instances
-      }, {})
-    const worktrees = perRepoWorktrees.flatMap((rows) =>
-      projectResolvedWorktreeLineage(
-        rows,
-        lineageById,
-        workspaceLineageByChildKey,
-        fleetWorkspaceInstances
-      )
+    const currentFleet = perRepoWorktrees.flat()
+    const worktrees = perRepoWorktrees.flatMap((rows, index) =>
+      projectCurrentHostWorktreeLineage({
+        worktrees: rows,
+        currentFleet,
+        store: this.store!,
+        executionHostId: getRepoExecutionHostId(repos[index])
+      })
     )
     return { worktrees, platformByRepoId }
   }

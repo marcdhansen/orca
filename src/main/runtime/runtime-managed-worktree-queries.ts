@@ -12,8 +12,7 @@ import {
   isLegacyRepoForExternalWorktreeVisibility,
   toDetectedWorktree
 } from '../../shared/worktree/ownership'
-import { projectResolvedWorktreeLineage } from '../../shared/resolved-worktree-lineage'
-import { worktreeWorkspaceKey } from '../../shared/workspace-scope'
+import { projectCurrentHostWorktreeLineage } from './runtime-worktree-lineage-projection'
 import {
   createWorktreeVisibilitySourceMatcher,
   resolveCustomWorktreeVisibilitySources,
@@ -31,7 +30,11 @@ import type { RuntimeWorktreeScanResult } from './repo-worktree-resolution-scan'
 import { listRuntimeFolderWorkspaces } from './runtime-worktree-filesystem'
 import type { ResolvedWorktree } from './runtime-worktree-path-identity'
 import { resolveConfiguredWorktreeBasePaths } from '../../shared/worktree/configured-worktree-base-path'
-import { getRetiredNameRegistryForRepo } from '../worktree-name-retirement'
+import {
+  listRuntimeRetiredWorktreeNames,
+  buildRuntimeVisibilityMatchers,
+  resolveRuntimeVisibilityDefaults
+} from './runtime-retired-worktree-name-query'
 
 type Dependencies = {
   getStore(): RuntimeStore | null
@@ -134,6 +137,7 @@ export class RuntimeManagedWorktreeQueries {
     const visibilityDefaults = this.visibilityDefaults(sourceDefaultsSupported)
     const visibilitySettings = { ...settings, worktreeVisibilityDefaults: visibilityDefaults }
     if (isFolderRepo(repo)) {
+      const currentFleet = await this.deps.listResolved()
       const worktrees = listRuntimeFolderWorkspaces(store, repo)
       const metaById = store.getAllWorktreeMeta()
       const repoOwnerCount = store.getRepos().filter((candidate) => candidate.id === repo.id).length
@@ -156,17 +160,12 @@ export class RuntimeManagedWorktreeQueries {
         repoId: repo.id,
         authoritative: true,
         source: 'git',
-        worktrees: projectResolvedWorktreeLineage(
-          detected,
-          store.getAllWorktreeLineage?.() ?? {},
-          store.getAllWorkspaceLineage?.() ?? {},
-          Object.fromEntries(
-            Object.entries(metaById).map(([id, meta]) => [
-              worktreeWorkspaceKey(id),
-              meta.instanceId
-            ])
-          )
-        )
+        worktrees: projectCurrentHostWorktreeLineage({
+          worktrees: detected,
+          currentFleet,
+          store,
+          executionHostId: getRepoExecutionHostId(repo)
+        })
       }
     }
     // Why capture before the scan: listing can mutate metadata synchronously before its first
@@ -220,18 +219,17 @@ export class RuntimeManagedWorktreeQueries {
       )
       return scan.ok ? result : applyMetadataFallbackVisibility(result)
     })
+    const currentFleet = await this.deps.listResolved()
     return {
       repoId: repo.id,
       authoritative: scan.ok,
       source: scan.ok ? 'git' : 'metadata-fallback',
-      worktrees: projectResolvedWorktreeLineage(
-        detected,
-        store.getAllWorktreeLineage?.() ?? {},
-        store.getAllWorkspaceLineage?.() ?? {},
-        Object.fromEntries(
-          Object.entries(metaById).map(([id, meta]) => [worktreeWorkspaceKey(id), meta.instanceId])
-        )
-      )
+      worktrees: projectCurrentHostWorktreeLineage({
+        worktrees: detected,
+        currentFleet,
+        store,
+        executionHostId: expectedHostId
+      })
     }
   }
 
@@ -252,25 +250,12 @@ export class RuntimeManagedWorktreeQueries {
     sourceDefaultsSupported = true,
     providedSettings?: ReturnType<RuntimeStore['getSettings']>
   ): Map<string, WorktreeVisibilitySourceMatcher> {
-    const checkoutPathsByRepoId = new Map<string, string[]>()
-    for (const worktree of worktrees) {
-      const checkoutPaths = checkoutPathsByRepoId.get(worktree.repoId) ?? []
-      checkoutPaths.push(worktree.path)
-      checkoutPathsByRepoId.set(worktree.repoId, checkoutPaths)
-    }
     const visibilityDefaults = this.visibilityDefaults(sourceDefaultsSupported, providedSettings)
-    return new Map(
-      (this.deps.getStore()?.getRepos() ?? [])
-        .filter((repo) => checkoutPathsByRepoId.has(repo.id))
-        .map((repo) => [
-          repo.id,
-          createWorktreeVisibilitySourceMatcher(
-            [repo.path, ...(checkoutPathsByRepoId.get(repo.id) ?? [])],
-            resolveCustomWorktreeVisibilitySources(repo, visibilityDefaults),
-            resolveConfiguredWorktreeBasePaths(repo)
-          )
-        ])
-    )
+    return buildRuntimeVisibilityMatchers({
+      store: this.deps.getStore(),
+      worktrees,
+      visibilityDefaults
+    })
   }
 
   private toDetected(
@@ -310,33 +295,21 @@ export class RuntimeManagedWorktreeQueries {
     retiredNamesByRepo: Record<string, readonly string[]>
     retiredNameTiersByRepo: Record<string, number>
   }> {
-    const store = this.deps.getStore()
-    if (!store?.getRetiredWorktreeNameRegistry || !store.mergeRetiredWorktreeNames) {
-      return { retiredNamesByRepo: {}, retiredNameTiersByRepo: {} }
-    }
-    const repo = await this.deps.resolveRepo(repoSelector)
-    const settings = store.getSettings()
-    const registry = await getRetiredNameRegistryForRepo(
-      store as never,
-      repo,
-      store.getRepos(),
-      settings
+    return listRuntimeRetiredWorktreeNames(
+      this.deps.getStore(),
+      this.deps.resolveRepo,
+      repoSelector
     )
-    return {
-      retiredNamesByRepo: { [repo.id]: registry.names },
-      retiredNameTiersByRepo: { [repo.id]: registry.exhaustedTiers }
-    }
   }
 
   private visibilityDefaults(
     sourceDefaultsSupported: boolean,
     providedSettings?: ReturnType<RuntimeStore['getSettings']>
   ) {
-    const defaults =
-      providedSettings !== undefined
-        ? providedSettings.worktreeVisibilityDefaults
-        : this.deps.getStore()?.getSettings().worktreeVisibilityDefaults
-    return sourceDefaultsSupported || !defaults ? defaults : { external: defaults.external }
+    return resolveRuntimeVisibilityDefaults(
+      this.deps.getStore(),
+      sourceDefaultsSupported,
+      providedSettings
+    )
   }
 }
-/* eslint-disable max-lines -- Why: the authoritative and fallback managed-worktree query paths must share one projection boundary; splitting them would risk lineage drift. */

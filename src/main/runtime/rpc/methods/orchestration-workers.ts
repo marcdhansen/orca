@@ -8,7 +8,6 @@ import { WorkerStartParams } from './orchestration-worker-start-schema'
 import {
   createExistingWorktreeWorkerTerminal,
   createWorkerWorktree,
-  monitorWorkerSetup,
   requireWorkerAuthority,
   type WorkerEffect,
   type WorkerSetupReceipt
@@ -26,7 +25,14 @@ import {
   isWorkerStartTimeoutWithinTimerLimit,
   resolveWorkerStartReadinessTimeoutMs
 } from '../../../../shared/orchestration-timing-budgets'
-import { isAgentPromptStalledError } from '../../agent-prompt-submission-verification'
+import {
+  finishReadyWorkerStart,
+  recoverStalledWorkerPrompt
+} from './orchestration-worker-prompt-recovery'
+import {
+  buildWorkerStartOptions,
+  validateExplicitWorkerTerminal
+} from './orchestration-worker-start-options'
 
 export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
   defineMethod({
@@ -97,40 +103,28 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
         : requestedWorktree === 'current'
           ? await runtime.showManagedTerminalWorkspace(`id:${coordinatorTerminal.worktreeId}`)
           : await runtime.showManagedTerminalWorkspace(requestedWorktree)
-      let explicitTerminal
       if (params.terminal) {
-        explicitTerminal = await runtime.showTerminal(params.terminal)
-        if (explicitTerminal.worktreeId !== resolvedWorktree?.id) {
-          throw new OrchestrationError(
-            'terminal_worktree_mismatch',
-            `Terminal ${params.terminal} does not belong to worktree ${resolvedWorktree?.id}.`
-          )
-        }
-        if (!(await runtime.isTerminalRunningAgent(params.terminal))) {
-          throw new OrchestrationError(
-            'agent_unconfigured',
-            `Terminal ${params.terminal} is not running a recognized agent.`
-          )
-        }
+        await validateExplicitWorkerTerminal({
+          runtime,
+          terminalHandle: params.terminal,
+          worktreeId: resolvedWorktree?.id
+        })
       }
 
-      const startOptions = {
-        worktree: requestedWorktree,
-        resolvedWorktreeId: resolvedWorktree?.id ?? null,
-        name: params.name ?? null,
-        repo: params.repo ?? creationWorktree?.repoId ?? null,
-        baseBranch: params.baseBranch ?? null,
-        terminal: params.terminal ?? null,
-        agent: agent ?? null,
+      const startOptions = buildWorkerStartOptions({
+        requestedWorktree,
+        resolvedWorktreeId: resolvedWorktree?.id,
+        creationRepoId: creationWorktree?.repoId,
+        name: params.name,
+        repo: params.repo,
+        baseBranch: params.baseBranch,
+        terminal: params.terminal,
+        agent,
         launch: launch.receipt,
         timeoutMs: readinessTimeoutMs,
-        setup: createsWorktree ? (params.setup ?? 'run') : 'not_applicable',
-        setupSource: createsWorktree
-          ? params.setup
-            ? 'explicit_request'
-            : 'orchestration_default'
-          : 'existing_worktree'
-      }
+        setup: params.setup,
+        createsWorktree
+      })
       const started = db.createStartingWorkerDispatch({
         creator: resolveDispatchCreator(runtime, params.from),
         maxDepth: runtime.getNestedWorkerMaxDepth(),
@@ -148,9 +142,7 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
         )
       }
       let terminalHandle = params.terminal
-      let terminalRevealWarning: string | undefined
-      let workerProcessIncarnation: string | undefined
-      let dispatchInputSubmittedAt: number | undefined
+      const deliveryState: { warning?: string; incarnation?: string; submittedAt?: number } = {}
       let failedStage = 'terminal_create'
       let setupReceipt: WorkerSetupReceipt = {
         requested: 'not_applicable',
@@ -160,6 +152,20 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
         startupPolicy: 'start-immediately',
         state: 'not_applicable'
       }
+      const finishReady = (worker: { state: string; stage: string }) =>
+        finishReadyWorkerStart({
+          runtime,
+          db,
+          runId: run.id,
+          taskId: task.id,
+          dispatchId: started.dispatch.id,
+          worker,
+          setup: setupReceipt,
+          launch: launch.receipt,
+          timeoutMs: readinessTimeoutMs,
+          effects,
+          warning: deliveryState.warning
+        })
       try {
         if (creationWorktree) {
           failedStage = 'worktree_create'
@@ -195,7 +201,7 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
             effects
           })
           terminalHandle = terminal.handle
-          terminalRevealWarning = terminal.warning
+          deliveryState.warning = terminal.warning
         } else {
           effects.push({
             kind: 'terminal',
@@ -238,7 +244,7 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
           )
         }
         const terminalAuthority = requireWorkerAuthority(runtime, terminalHandle)
-        workerProcessIncarnation = terminalAuthority.processIncarnation
+        deliveryState.incarnation = terminalAuthority.processIncarnation
         const capability = db.prepareStartingWorkerAuthority({
           dispatchId: started.dispatch.id,
           handle: terminalHandle,
@@ -261,7 +267,7 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
           devMode: params.devMode,
           cliCommand: runtime.getTerminalOrchestrationCliCommand(terminalHandle)
         })
-        dispatchInputSubmittedAt = Date.now()
+        deliveryState.submittedAt = Date.now()
         await runtime.sendTerminalAgentPrompt(terminalHandle, preamble)
         effects.push({
           kind: 'dispatch_input',
@@ -270,60 +276,21 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
           state: 'accepted'
         })
         const worker = db.markWorkerDispatchReady(started.dispatch.id, effects)
-        monitorWorkerSetup({
+        return finishReady(worker)
+      } catch (error) {
+        const recovered = recoverStalledWorkerPrompt({
+          error,
           runtime,
           db,
-          runId: run.id,
-          dispatchId: started.dispatch.id,
-          setupReceipt,
-          effects
-        })
-        return {
-          runId: run.id,
+          terminalHandle,
           taskId: task.id,
           dispatchId: started.dispatch.id,
-          state: worker.state,
-          stage: worker.stage,
-          setup: setupReceipt,
-          launch: launch.receipt,
-          timeoutMs: readinessTimeoutMs,
-          effects,
-          residualResources: [],
-          ...(terminalRevealWarning ? { warning: terminalRevealWarning } : {})
-        }
-      } catch (error) {
-        if (isAgentPromptStalledError(error) && terminalHandle) {
-          const evidence =
-            workerProcessIncarnation && dispatchInputSubmittedAt
-              ? runtime.getOrchestrationPromptDeliveryEvidence({
-                  terminalHandle,
-                  taskId: task.id,
-                  dispatchId: started.dispatch.id,
-                  processIncarnation: workerProcessIncarnation,
-                  submittedAt: dispatchInputSubmittedAt
-                })
-              : null
-          if (evidence) {
-            effects.push({
-              kind: 'dispatch_input',
-              role: 'agent',
-              id: terminalHandle,
-              state: evidence
-            })
-            const worker = db.markWorkerDispatchReady(started.dispatch.id, effects, evidence)
-            return {
-              runId: run.id,
-              taskId: task.id,
-              dispatchId: started.dispatch.id,
-              state: worker.state,
-              stage: worker.stage,
-              setup: setupReceipt,
-              launch: launch.receipt,
-              timeoutMs: readinessTimeoutMs,
-              effects,
-              residualResources: []
-            }
-          }
+          processIncarnation: deliveryState.incarnation,
+          submittedAt: deliveryState.submittedAt,
+          effects
+        })
+        if (recovered) {
+          return finishReady(recovered)
         }
         return failWorkerStartWithReceipt({
           db,
@@ -339,4 +306,3 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
     }
   })
 ]
-/* eslint-disable max-lines -- Why: worker-start receipt transitions and correlated prompt recovery must remain auditable in one transaction handler. */

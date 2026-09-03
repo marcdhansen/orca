@@ -2,8 +2,8 @@ import type { AgentLaunchPreferences } from '../../../../shared/agent-session-ho
 import type { TuiAgent } from '../../../../shared/tui-agent'
 import type { OrcaRuntimeService } from '../../orca-runtime'
 import type { OrchestrationDb } from '../../orchestration/db'
-import { worktreeWorkspaceKey } from '../../../../shared/workspace-scope'
-import { OrchestrationError } from '../../orchestration/orchestration-error'
+import { assertCreatedWorkerAncestry } from './orchestration-worker-ancestry'
+export { isUnknownWorkerStartOutcome } from './orchestration-worker-start-outcome'
 
 export type WorkerEffect = {
   kind: 'worktree' | 'terminal' | 'setup' | 'dispatch_input'
@@ -171,32 +171,17 @@ export async function createWorkerWorktree(args: {
       ? await runtime.showManagedWorktree(`id:${created.worktree.id}`)
       : (created.worktree as Awaited<ReturnType<OrcaRuntimeService['showManagedWorktree']>>)
   if (requestedWorktree === 'new-child') {
-    const ancestry = authoritative.workspaceLineage
-    if (
-      ancestry?.origin !== 'orchestration' ||
-      ancestry.childWorkspaceKey !== worktreeWorkspaceKey(created.worktree.id) ||
-      ancestry.parentWorkspaceKey !== worktreeWorkspaceKey(coordinatorWorktree.id) ||
-      ancestry.taskId !== args.taskId ||
-      ancestry.orchestrationRunId !== args.runId ||
-      ancestry.coordinatorHandle !== params.from
-    ) {
-      effects.push({
-        kind: 'worktree',
-        action: 'created_unlinked_child',
-        id: created.worktree.id
-      })
-      db.recordWorkerStage({
-        dispatchId,
-        stage: 'worktree_created',
-        worktreeId: created.worktree.id,
-        effects,
-        residualResources: effects
-      })
-      throw new OrchestrationError(
-        'created_unlinked_child',
-        'Created child worktree is missing authoritative orchestration ancestry.'
-      )
-    }
+    assertCreatedWorkerAncestry({
+      db,
+      dispatchId,
+      runId: args.runId,
+      taskId: args.taskId,
+      coordinatorHandle: params.from,
+      childWorktreeId: created.worktree.id,
+      parentWorktreeId: coordinatorWorktree.id,
+      workspaceLineage: authoritative.workspaceLineage,
+      effects
+    })
   }
   effects.push({
     kind: 'worktree',
@@ -311,19 +296,3 @@ export function monitorWorkerSetup(args: {
     })
     .catch(() => undefined)
 }
-
-export function isUnknownWorkerStartOutcome(error: unknown, stage: string): boolean {
-  const code =
-    error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string'
-      ? (error as { code: string }).code
-      : ''
-  if (code === 'operation_unknown') {
-    return true
-  }
-  if (stage !== 'worktree_create') {
-    return false
-  }
-  const message = error instanceof Error ? error.message : String(error)
-  return /connection|disconnect|timed?\s*out|runtime changed|outcome unknown/i.test(message)
-}
-/* eslint-disable max-lines -- Why: worker worktree, setup-terminal, and ancestry validation form one auditable resource-creation transaction. */
