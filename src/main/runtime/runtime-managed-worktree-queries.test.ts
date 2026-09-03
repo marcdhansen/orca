@@ -51,6 +51,94 @@ function queries(store: RuntimeStore): RuntimeManagedWorktreeQueries {
 }
 
 describe('RuntimeManagedWorktreeQueries.listDetected', () => {
+  it('revalidates a referenced cross-repo parent instead of trusting a warm stale fleet', async () => {
+    const childRepo = { ...folderRepo({ id: 'child-repo', path: '/child' }), kind: 'git' as const }
+    const parentRepo = {
+      ...folderRepo({ id: 'parent-repo', path: '/parent' }),
+      kind: 'git' as const
+    }
+    const childId = 'child-repo::/child/worktree'
+    const parentId = 'parent-repo::/parent/deleted'
+    const childMeta = metadata({ hostId: 'local', instanceId: 'child-instance' })
+    const staleParentMeta = metadata({ hostId: 'local', instanceId: 'parent-instance' })
+    const workspaceLineage = {
+      childWorkspaceKey: `worktree:${childId}`,
+      childInstanceId: 'child-instance',
+      parentWorkspaceKey: `worktree:${parentId}`,
+      parentInstanceId: 'parent-instance',
+      origin: 'orchestration' as const,
+      capture: { source: 'orchestration-context' as const, confidence: 'inferred' as const },
+      createdAt: 1
+    }
+    const store = {
+      getRepos: () => [childRepo, parentRepo],
+      getRepo: (id: string) => (id === parentRepo.id ? parentRepo : childRepo),
+      getFolderWorkspaces: () => [],
+      getProjectGroups: () => [],
+      getAllWorktreeMeta: () => ({ [childId]: childMeta, [parentId]: staleParentMeta }),
+      getWorktreeMeta: (id: string) => ({ [childId]: childMeta, [parentId]: staleParentMeta })[id],
+      setWorktreeMeta: vi.fn((_id, updates) => metadata(updates)),
+      getAllWorktreeLineage: () => ({}),
+      getAllWorkspaceLineage: () => ({ [workspaceLineage.childWorkspaceKey]: workspaceLineage }),
+      getSettings: () => settings
+    } as unknown as RuntimeStore
+    const listResolved = vi.fn(
+      async () =>
+        [
+          { id: parentId, repoId: parentRepo.id, hostId: 'local', instanceId: 'parent-instance' }
+        ] as never
+    )
+    let parentScanCacheWarm = true
+    const invalidateRepoScan = vi.fn((repoId: string) => {
+      if (repoId === parentRepo.id) {
+        parentScanCacheWarm = false
+      }
+    })
+    const scanRepo = vi.fn(async (repo: Repo) => ({
+      ok: true as const,
+      worktrees:
+        repo.id === childRepo.id
+          ? [
+              {
+                path: '/child/worktree',
+                head: 'abc',
+                branch: 'feature',
+                isBare: false,
+                isMainWorktree: false
+              }
+            ]
+          : parentScanCacheWarm
+            ? [
+                {
+                  path: '/parent/deleted',
+                  head: 'stale',
+                  branch: 'deleted',
+                  isBare: false,
+                  isMainWorktree: false
+                }
+              ]
+            : []
+    }))
+    const subject = new RuntimeManagedWorktreeQueries({
+      getStore: () => store,
+      listResolved,
+      resolveRepo: async () => childRepo,
+      selectRepos: () => [childRepo],
+      scanRepo,
+      invalidateRepoScan
+    })
+
+    const result = await subject.listDetected(childRepo)
+
+    expect(
+      (result.worktrees[0] as (typeof result.worktrees)[0] & { workspaceLineage: unknown })
+        .workspaceLineage
+    ).toBeNull()
+    expect(scanRepo.mock.calls.map(([repo]) => repo.id)).toEqual(['child-repo', 'parent-repo'])
+    expect(invalidateRepoScan).toHaveBeenCalledExactlyOnceWith('parent-repo')
+    expect(listResolved).not.toHaveBeenCalled()
+  })
+
   it("does not project another host's folder metadata", async () => {
     const local = folderRepo()
     const remote = folderRepo({ connectionId: 'build-box', displayName: 'Remote app' })

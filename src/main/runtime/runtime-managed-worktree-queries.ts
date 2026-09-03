@@ -12,7 +12,7 @@ import {
   isLegacyRepoForExternalWorktreeVisibility,
   toDetectedWorktree
 } from '../../shared/worktree/ownership'
-import { projectCurrentHostWorktreeLineage } from './runtime-worktree-lineage-projection'
+import { projectWithCurrentReferencedParents } from './runtime-worktree-lineage-projection'
 import {
   createWorktreeVisibilitySourceMatcher,
   resolveCustomWorktreeVisibilitySources,
@@ -42,6 +42,7 @@ type Dependencies = {
   resolveRepo(selector: string): Promise<Repo>
   selectRepos(selector: string): Repo[]
   scanRepo(repo: Repo): Promise<RuntimeWorktreeScanResult>
+  invalidateRepoScan?(repoId: string): void
 }
 
 /**
@@ -137,7 +138,6 @@ export class RuntimeManagedWorktreeQueries {
     const visibilityDefaults = this.visibilityDefaults(sourceDefaultsSupported)
     const visibilitySettings = { ...settings, worktreeVisibilityDefaults: visibilityDefaults }
     if (isFolderRepo(repo)) {
-      const currentFleet = await this.deps.listResolved()
       const worktrees = listRuntimeFolderWorkspaces(store, repo)
       const metaById = store.getAllWorktreeMeta()
       const repoOwnerCount = store.getRepos().filter((candidate) => candidate.id === repo.id).length
@@ -160,11 +160,13 @@ export class RuntimeManagedWorktreeQueries {
         repoId: repo.id,
         authoritative: true,
         source: 'git',
-        worktrees: projectCurrentHostWorktreeLineage({
+        worktrees: await projectWithCurrentReferencedParents({
           worktrees: detected,
-          currentFleet,
+          childRepoId: repo.id,
           store,
-          executionHostId: getRepoExecutionHostId(repo)
+          executionHostId: getRepoExecutionHostId(repo),
+          scanRepo: this.deps.scanRepo,
+          invalidateRepoScan: this.deps.invalidateRepoScan
         })
       }
     }
@@ -219,16 +221,17 @@ export class RuntimeManagedWorktreeQueries {
       )
       return scan.ok ? result : applyMetadataFallbackVisibility(result)
     })
-    const currentFleet = await this.deps.listResolved()
     return {
       repoId: repo.id,
       authoritative: scan.ok,
       source: scan.ok ? 'git' : 'metadata-fallback',
-      worktrees: projectCurrentHostWorktreeLineage({
+      worktrees: await projectWithCurrentReferencedParents({
         worktrees: detected,
-        currentFleet,
+        childRepoId: repo.id,
         store,
-        executionHostId: expectedHostId
+        executionHostId: expectedHostId,
+        scanRepo: this.deps.scanRepo,
+        invalidateRepoScan: this.deps.invalidateRepoScan
       })
     }
   }
