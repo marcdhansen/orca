@@ -21,7 +21,7 @@ import type {
 export function formatTerminalList(
   result: WithAnnotatedHostScope<RuntimeTerminalListResult>
 ): string {
-  const scope = formatListingHostScope(result.hostScope)
+  const scope = `${formatListingHostScope(result.hostScope)}\n${formatTerminalInventoryCompleteness(result.hostScope)}`
   if (result.terminals.length === 0) {
     return `No terminals listed.\n${scope}`
   }
@@ -37,6 +37,21 @@ export function formatTerminalList(
   return result.truncated
     ? `${bodyWithScope}\ntruncated: showing ${result.terminals.length} of ${result.totalCount}`
     : bodyWithScope
+}
+
+// Pagination and cross-host inventory completeness are independent. Missing host support is
+// unverifiable, never evidence that an empty or untruncated page covered every host.
+function formatTerminalInventoryCompleteness(
+  scope: WithAnnotatedHostScope<RuntimeTerminalListResult>['hostScope']
+): string {
+  if (scope?.complete === undefined) {
+    return 'inventory: unverifiable — this host does not report inventory completeness'
+  }
+  const observed =
+    scope.observedAt === undefined
+      ? ''
+      : ` (observed at ${new Date(scope.observedAt).toISOString()})`
+  return `inventory: ${scope.complete ? 'complete' : 'incomplete'}${observed}`
 }
 
 function formatTerminalVisualLayouts(
