@@ -3,7 +3,10 @@ import { buildResourceReservationBinding } from '../../../../shared/resource-res
 import type { ResourceReservationRequest } from '../../../../shared/resource-reservation-binding'
 import type { OrcaRuntimeService } from '../../orca-runtime'
 import { WorktreeCreate } from './worktree-create-schemas'
-import { replayReservedManagedWorktree } from './worktree-create-reservation'
+import {
+  recordWorktreeReservationCreateReceiptOrRollback,
+  replayReservedManagedWorktree
+} from './worktree-create-reservation'
 
 const REQUEST: ResourceReservationRequest = {
   key: 'key-1',
@@ -151,5 +154,45 @@ describe('worktree.create reservation schema', () => {
     })
 
     expect(parsed.success).toBe(false)
+  })
+})
+
+describe('worktree.create reservation receipt persistence', () => {
+  it('rolls back a created worktree when receipt persistence fails', async () => {
+    const persistenceError = new Error('receipt disk full')
+    const removeManagedWorktree = vi.fn().mockResolvedValue({ removed: true })
+
+    await expect(
+      recordWorktreeReservationCreateReceiptOrRollback(
+        {
+          recordWorktreeReservationCreateReceipt: vi.fn(() => {
+            throw persistenceError
+          }),
+          removeManagedWorktree
+        } as never,
+        { worktreeId: 'repo-1::/tmp/wt', hostId: 'local', receipt: { version: 1, warnings: [] } }
+      )
+    ).rejects.toBe(persistenceError)
+    expect(removeManagedWorktree).toHaveBeenCalledWith(
+      'id:repo-1::/tmp/wt',
+      true,
+      false,
+      true,
+      'local'
+    )
+  })
+
+  it('preserves both receipt and rollback failures', async () => {
+    await expect(
+      recordWorktreeReservationCreateReceiptOrRollback(
+        {
+          recordWorktreeReservationCreateReceipt: vi.fn(() => {
+            throw new Error('receipt disk full')
+          }),
+          removeManagedWorktree: vi.fn().mockRejectedValue(new Error('rollback failed'))
+        } as never,
+        { worktreeId: 'repo-1::/tmp/wt', receipt: { version: 1, warnings: [] } }
+      )
+    ).rejects.toBeInstanceOf(AggregateError)
   })
 })

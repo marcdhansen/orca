@@ -23,7 +23,10 @@ import {
   WorktreeTeardownMissingTerminalsParams
 } from './worktree-schemas'
 import { WORKTREE_CATALOG_METHODS } from './worktree-catalog-methods'
-import { replayReservedManagedWorktree } from './worktree-create-reservation'
+import {
+  recordWorktreeReservationCreateReceiptOrRollback,
+  replayReservedManagedWorktree
+} from './worktree-create-reservation'
 import { buildResourceReservationBinding } from '../../../../shared/resource-reservation-binding'
 
 export const WORKTREE_METHODS: RpcMethod[] = [
@@ -137,10 +140,10 @@ export const WORKTREE_METHODS: RpcMethod[] = [
                   : undefined
             }
             if (params.reservation) {
-              runtime.recordWorktreeReservationCreateReceipt(
-                result.worktree.id,
-                result.worktree.identity?.executionHostId ?? result.worktree.hostId,
-                {
+              await recordWorktreeReservationCreateReceiptOrRollback(runtime, {
+                worktreeId: result.worktree.id,
+                hostId: result.worktree.identity?.executionHostId ?? result.worktree.hostId,
+                receipt: {
                   version: 1,
                   warnings: response.warnings,
                   ...(response.warning !== undefined ? { warning: response.warning } : {}),
@@ -151,7 +154,7 @@ export const WORKTREE_METHODS: RpcMethod[] = [
                     ? { agentTerminalHandle: response.agentTerminalHandle }
                     : {})
                 }
-              )
+              })
             }
             return response
           } catch (error) {
