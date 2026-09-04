@@ -42,6 +42,11 @@ export const ResourceReservationRequestSchema = z.object({
   issuer: z.string().min(1).max(128).optional()
 })
 
+/** Complete host-stamped binding schema used at durable trust boundaries. */
+export const ResourceReservationBindingSchema = ResourceReservationRequestSchema.extend({
+  boundAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)
+})
+
 export function buildResourceReservationBinding(
   request: ResourceReservationRequest,
   options: { boundAt: number }
