@@ -47,6 +47,12 @@ export const ResourceReservationBindingSchema = ResourceReservationRequestSchema
   boundAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)
 })
 
+/** Binding accepted by terminal-only authority stores. Keep the generic schema broad because
+ * worktree reservation persistence legitimately uses the other discriminator. */
+export const TerminalReservationBindingSchema = ResourceReservationBindingSchema.extend({
+  resourceKind: z.literal('terminal')
+})
+
 export function buildResourceReservationBinding(
   request: ResourceReservationRequest,
   options: { boundAt: number }
