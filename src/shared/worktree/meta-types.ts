@@ -13,6 +13,7 @@ import type { TuiAgent } from '../tui-agent'
 import type { OrcaWorkspaceLayout } from '../global-settings-types'
 import type { DiffComment, MobileDiffReviewState } from '../diff-comment-types'
 import type { ResourceReservationBinding } from '../resource-reservation-binding'
+import type { WorktreeReservationCreateReceipt } from './reservation-create-receipt'
 
 // ─── Worktree metadata (persisted user-authored fields only) ─────────
 export type WorktreeMeta = {
@@ -95,4 +96,6 @@ export type WorktreeMeta = {
   cliProvenance?: CliWorkspaceProvenance
   /** See {@link Worktree.reservation}. System-owned; meta updates can never change it. */
   reservation?: ResourceReservationBinding
+  /** Durable non-derivable response metadata for exact reservation replay. */
+  reservationCreateReceipt?: WorktreeReservationCreateReceipt
 }

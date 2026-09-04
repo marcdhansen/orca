@@ -143,8 +143,12 @@ export async function buildWorktreeCreateParams(args: {
       // inside an Orca worktree. Cwd keeps CLI-created children nestable and
       // lets create infer the repo for the common current-workspace case.
       cwdParentWorktree = await resolveCurrentWorktreeSelector(cwd, client)
-    } catch {
-      cwdParentWorktree = undefined
+    } catch (error) {
+      if (error instanceof RuntimeClientError && error.code === 'selector_not_found') {
+        cwdParentWorktree = undefined
+      } else {
+        throw error
+      }
     }
   }
   const linearIssueLink = getOptionalLinearIssueLinkFlag(flags, 'linear-issue')

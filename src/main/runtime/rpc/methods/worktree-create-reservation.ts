@@ -6,7 +6,10 @@ import { ResourceReservationConflictError } from '../../resource-reservation-con
 /** Returns the workspace an earlier create already bound to this key, or null when the key is
  *  unused. Throws on a reused key whose binding disagrees — a conflict is never a silent replay. */
 export async function replayReservedManagedWorktree(
-  runtime: Pick<OrcaRuntimeService, 'findManagedWorktreeReservation' | 'showReservedManagedWorktree'>,
+  runtime: Pick<
+    OrcaRuntimeService,
+    'findManagedWorktreeReservation' | 'showReservedManagedWorktree'
+  >,
   request: ResourceReservationRequest
 ): Promise<RuntimeWorktreeCreateResult | null> {
   const lookup = runtime.findManagedWorktreeReservation(request)
@@ -24,12 +27,21 @@ export async function replayReservedManagedWorktree(
     lookup.hostId,
     lookup.instanceId
   )
+  const receipt = worktree.reservationCreateReceipt
+  if (!receipt || receipt.version !== 1) {
+    throw new Error(
+      `Reserved worktree ${lookup.worktreeId} has no valid durable create receipt for reservation replay`
+    )
+  }
   return {
     worktree,
     lineage: worktree.lineage ?? null,
     ...(worktree.workspaceLineage !== undefined
       ? { workspaceLineage: worktree.workspaceLineage }
       : {}),
-    warnings: []
+    warnings: receipt.warnings,
+    ...(receipt.warning !== undefined ? { warning: receipt.warning } : {}),
+    ...(receipt.startupTerminal ? { startupTerminal: receipt.startupTerminal } : {}),
+    ...(receipt.agentTerminalHandle ? { agentTerminalHandle: receipt.agentTerminalHandle } : {})
   }
 }
