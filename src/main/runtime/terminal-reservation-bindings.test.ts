@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -61,6 +61,55 @@ describe('terminal reservation bindings', () => {
       outcome: 'replay',
       binding
     })
+  })
+
+  it('rejects malformed persisted bindings instead of laundering them into runtime state', () => {
+    const profile = mkdtempSync(join(tmpdir(), 'orca-terminal-reservations-'))
+    writeFileSync(
+      join(profile, 'terminal-reservations.json'),
+      JSON.stringify([{ handle: 'term_a', binding: { ...REQUEST, boundAt: -1 } }])
+    )
+
+    expect(() => new TerminalReservationBindings(profile)).toThrow(
+      'Invalid terminal reservation store at entry 0'
+    )
+  })
+
+  it.each([
+    [
+      'handle',
+      [
+        { handle: 'term_a', binding: { ...REQUEST, boundAt: 1 } },
+        { handle: 'term_a', binding: { ...REQUEST, key: 'key-2', boundAt: 2 } }
+      ]
+    ],
+    [
+      'key',
+      [
+        { handle: 'term_a', binding: { ...REQUEST, boundAt: 1 } },
+        { handle: 'term_b', binding: { ...REQUEST, boundAt: 2 } }
+      ]
+    ]
+  ])('rejects a duplicate persisted %s', (kind, entries) => {
+    const profile = mkdtempSync(join(tmpdir(), 'orca-terminal-reservations-'))
+    writeFileSync(join(profile, 'terminal-reservations.json'), JSON.stringify(entries))
+
+    expect(() => new TerminalReservationBindings(profile)).toThrow(`duplicate ${kind}`)
+  })
+
+  it('keeps existing state and persistence target when reconfiguration hydration fails', () => {
+    const originalProfile = mkdtempSync(join(tmpdir(), 'orca-terminal-reservations-'))
+    const corruptProfile = mkdtempSync(join(tmpdir(), 'orca-terminal-reservations-'))
+    const registry = new TerminalReservationBindings(originalProfile)
+    const binding = buildResourceReservationBinding(REQUEST, { boundAt: 1 })
+    registry.claim('term_a', binding)
+    writeFileSync(join(corruptProfile, 'terminal-reservations.json'), JSON.stringify([null]))
+
+    expect(() => registry.configurePersistence(corruptProfile)).toThrow()
+    expect(registry.get('term_a')).toEqual(binding)
+
+    registry.retire('term_a')
+    expect(new TerminalReservationBindings(originalProfile).get('term_a')).toBeUndefined()
   })
 
   it('retires an explicitly destroyed terminal claim durably', () => {

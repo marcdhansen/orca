@@ -2,12 +2,18 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import {
   describeResourceReservationConflict,
+  ResourceReservationBindingSchema,
   resourceReservationBindingMatchesRequest,
   type ResourceReservationBinding,
   type ResourceReservationRequest
 } from '../../shared/resource-reservation-binding'
+import { z } from 'zod'
 
 const TERMINAL_RESERVATIONS_FILE = 'terminal-reservations.json'
+const TerminalReservationEntrySchema = z.object({
+  handle: z.string().min(1).max(256),
+  binding: ResourceReservationBindingSchema
+})
 
 export type TerminalReservationBindResult =
   | { outcome: 'bound' }
@@ -27,8 +33,10 @@ export class TerminalReservationBindings {
   }
 
   configurePersistence(profileStorageDirectory: string): void {
-    this.storagePath = join(profileStorageDirectory, TERMINAL_RESERVATIONS_FILE)
-    this.hydrate()
+    const storagePath = join(profileStorageDirectory, TERMINAL_RESERVATIONS_FILE)
+    const [byHandle, handleByKey] = this.hydrate(storagePath)
+    this.storagePath = storagePath
+    this.replaceState(byHandle, handleByKey)
   }
 
   /** Atomically claims a key before creation, or returns its immutable prior binding. */
@@ -91,33 +99,45 @@ export class TerminalReservationBindings {
     return { outcome: 'replay', binding: existing }
   }
 
-  private hydrate(): void {
-    if (!this.storagePath) {
-      return
-    }
+  private hydrate(
+    storagePath: string
+  ): [Map<string, ResourceReservationBinding>, Map<string, string>] {
     let parsed: unknown
     try {
-      parsed = JSON.parse(readFileSync(this.storagePath, 'utf8'))
+      parsed = JSON.parse(readFileSync(storagePath, 'utf8'))
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return
+        return [new Map(), new Map()]
       }
       throw error
     }
     if (!Array.isArray(parsed)) {
-      throw new Error(`Invalid terminal reservation store: ${this.storagePath}`)
+      throw new Error(`Invalid terminal reservation store: ${storagePath}`)
     }
-    for (const entry of parsed) {
-      const { handle, binding } = (entry ?? {}) as {
-        handle?: unknown
-        binding?: ResourceReservationBinding
+    const byHandle = new Map<string, ResourceReservationBinding>()
+    const handleByKey = new Map<string, string>()
+    for (const [index, entry] of parsed.entries()) {
+      const result = TerminalReservationEntrySchema.safeParse(entry)
+      if (!result.success) {
+        throw new Error(
+          `Invalid terminal reservation store at entry ${index}: ${storagePath}: ${result.error.message}`
+        )
       }
-      if (typeof handle !== 'string' || !binding || typeof binding.key !== 'string') {
-        throw new Error(`Invalid terminal reservation entry: ${this.storagePath}`)
+      const { handle, binding } = result.data
+      if (byHandle.has(handle)) {
+        throw new Error(
+          `Invalid terminal reservation store at entry ${index}: duplicate handle "${handle}": ${storagePath}`
+        )
       }
-      this.byHandle.set(handle, binding)
-      this.handleByKey.set(binding.key, handle)
+      if (handleByKey.has(binding.key)) {
+        throw new Error(
+          `Invalid terminal reservation store at entry ${index}: duplicate key "${binding.key}": ${storagePath}`
+        )
+      }
+      byHandle.set(handle, binding)
+      handleByKey.set(binding.key, handle)
     }
+    return [byHandle, handleByKey]
   }
 
   private remove(handle: string, key: string): void {
@@ -135,8 +155,12 @@ export class TerminalReservationBindings {
   ): void {
     this.byHandle.clear()
     this.handleByKey.clear()
-    for (const [handle, binding] of byHandle) this.byHandle.set(handle, binding)
-    for (const [key, handle] of handleByKey) this.handleByKey.set(key, handle)
+    for (const [handle, binding] of byHandle) {
+      this.byHandle.set(handle, binding)
+    }
+    for (const [key, handle] of handleByKey) {
+      this.handleByKey.set(key, handle)
+    }
   }
 
   private persist(entriesByHandle: ReadonlyMap<string, ResourceReservationBinding>): void {
