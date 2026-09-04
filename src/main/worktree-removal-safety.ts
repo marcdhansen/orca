@@ -27,7 +27,8 @@ const ORCA_OWNED_PROVENANCE_META_KEYS = [
   'automationProvenance',
   'cliProvenance',
   'creatorProvenance',
-  'reservation'
+  'reservation',
+  'reservationCreateReceipt'
 ] as const
 type UnregisteredOrcaCleanupMeta = Pick<
   WorktreeMeta,

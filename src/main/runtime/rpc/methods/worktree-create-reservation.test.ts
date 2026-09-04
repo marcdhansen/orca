@@ -17,7 +17,12 @@ const BINDING = buildResourceReservationBinding(REQUEST, { boundAt: 5 })
 
 function runtimeWith(
   lookup: ReturnType<OrcaRuntimeService['findManagedWorktreeReservation']>,
-  worktree: unknown = { id: 'repo-1::/tmp/wt', reservation: BINDING, lineage: null }
+  worktree: unknown = {
+    id: 'repo-1::/tmp/wt',
+    reservation: BINDING,
+    lineage: null,
+    reservationCreateReceipt: { version: 1, warnings: [] }
+  }
 ) {
   return {
     findManagedWorktreeReservation: vi.fn(() => lookup),
@@ -54,6 +59,52 @@ describe('worktree.create reservation replay', () => {
     )
     expect(result?.worktree.reservation).toEqual(BINDING)
     expect(result?.warnings).toEqual([])
+  })
+
+  it('replays durable startup-terminal and agent-handle response metadata', async () => {
+    const startupTerminal = { spawned: true, handle: 'term_agent', surface: 'background' as const }
+    const runtime = runtimeWith(
+      {
+        outcome: 'replay',
+        worktreeId: 'repo-1::/tmp/wt',
+        hostId: 'local',
+        instanceId: 'instance-1',
+        binding: BINDING
+      },
+      {
+        id: 'repo-1::/tmp/wt',
+        reservation: BINDING,
+        lineage: null,
+        reservationCreateReceipt: {
+          version: 1,
+          warnings: [],
+          startupTerminal,
+          agentTerminalHandle: 'term_agent'
+        }
+      }
+    )
+
+    await expect(replayReservedManagedWorktree(runtime, REQUEST)).resolves.toMatchObject({
+      startupTerminal,
+      agentTerminalHandle: 'term_agent'
+    })
+  })
+
+  it('fails loudly when a bound worktree lacks its durable replay receipt', async () => {
+    const runtime = runtimeWith(
+      {
+        outcome: 'replay',
+        worktreeId: 'repo-1::/tmp/wt',
+        hostId: 'local',
+        instanceId: 'instance-1',
+        binding: BINDING
+      },
+      { id: 'repo-1::/tmp/wt', reservation: BINDING, lineage: null }
+    )
+
+    await expect(replayReservedManagedWorktree(runtime, REQUEST)).rejects.toThrow(
+      'no valid durable create receipt'
+    )
   })
 
   it('refuses a reused key whose binding disagrees rather than replaying it', async () => {

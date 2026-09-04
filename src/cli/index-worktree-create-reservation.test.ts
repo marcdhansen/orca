@@ -41,7 +41,7 @@ vi.mock('child_process', async () => {
 })
 
 import { main } from './index'
-import { RuntimeRpcFailureError } from './runtime-client'
+import { RuntimeClientError, RuntimeRpcFailureError } from './runtime-client'
 import { RESOURCE_RESERVATION_ATTRIBUTION_RUNTIME_CAPABILITY } from '../shared/protocol-version'
 import { buildWorktree, okFixture, queueFixtures } from './test-fixtures'
 import { useWorktreeAwarenessEnvironment } from './index-test-harness'
@@ -222,6 +222,23 @@ describe('orca worktree create reservation binding', () => {
     await main([...CREATE_ARGS, ...unsafe, '--json'], '/tmp/elsewhere')
 
     expect(callMock).not.toHaveBeenCalled()
+    expect(process.exitCode).toBe(1)
+  })
+
+  it('propagates cwd selector infrastructure failures instead of reporting a missing repo', async () => {
+    callMock.mockRejectedValueOnce(
+      new RuntimeClientError('runtime_unavailable', 'runtime transport exploded')
+    )
+    silenceOutput()
+
+    await main(['worktree', 'create', '--name', 'child', '--json'], '/tmp/managed-or-not')
+
+    const output = JSON.parse(String(vi.mocked(console.log).mock.calls.at(-1)?.[0]))
+    expect(output).toMatchObject({
+      ok: false,
+      error: { code: 'runtime_unavailable', message: 'runtime transport exploded' }
+    })
+    expect(output.error.message).not.toContain('Missing repo selector')
     expect(process.exitCode).toBe(1)
   })
 })
