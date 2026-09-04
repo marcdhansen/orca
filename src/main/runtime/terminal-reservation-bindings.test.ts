@@ -75,6 +75,30 @@ describe('terminal reservation bindings', () => {
     )
   })
 
+  it('rejects a worktree binding persisted in the terminal-only store', () => {
+    const profile = mkdtempSync(join(tmpdir(), 'orca-terminal-reservations-'))
+    writeFileSync(
+      join(profile, 'terminal-reservations.json'),
+      JSON.stringify([
+        { handle: 'term_a', binding: { ...REQUEST, resourceKind: 'worktree', boundAt: 1 } }
+      ])
+    )
+
+    expect(() => new TerminalReservationBindings(profile)).toThrow(
+      'Invalid terminal reservation store at entry 0'
+    )
+  })
+
+  it('rejects a worktree binding at the live terminal authority boundary', () => {
+    const registry = new TerminalReservationBindings()
+    const wrongKind = { ...REQUEST, resourceKind: 'worktree' as const, boundAt: 1 }
+
+    expect(() => registry.claim('term_a', wrongKind)).toThrow(
+      'Invalid terminal reservation binding'
+    )
+    expect(registry.get('term_a')).toBeUndefined()
+  })
+
   it.each([
     [
       'handle',

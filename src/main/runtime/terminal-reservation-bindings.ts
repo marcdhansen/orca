@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import {
   describeResourceReservationConflict,
-  ResourceReservationBindingSchema,
+  TerminalReservationBindingSchema,
   resourceReservationBindingMatchesRequest,
   type ResourceReservationBinding,
   type ResourceReservationRequest
@@ -12,7 +12,7 @@ import { z } from 'zod'
 const TERMINAL_RESERVATIONS_FILE = 'terminal-reservations.json'
 const TerminalReservationEntrySchema = z.object({
   handle: z.string().min(1).max(256),
-  binding: ResourceReservationBindingSchema
+  binding: TerminalReservationBindingSchema
 })
 
 export type TerminalReservationBindResult =
@@ -41,6 +41,10 @@ export class TerminalReservationBindings {
 
   /** Atomically claims a key before creation, or returns its immutable prior binding. */
   claim(handle: string, binding: ResourceReservationBinding): TerminalReservationBindResult {
+    const validation = TerminalReservationBindingSchema.safeParse(binding)
+    if (!validation.success) {
+      throw new Error(`Invalid terminal reservation binding: ${validation.error.message}`)
+    }
     const existing = this.inspect(handle, binding)
     if (existing) {
       return existing
