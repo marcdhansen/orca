@@ -6,7 +6,11 @@ import {
   projectRemoteAppStatus,
   resolveDesktopWindowStatus
 } from '../../shared/cli-app-status-projection'
-import { RuntimeRpcFailureError, type RuntimeRpcSuccess } from './types'
+import {
+  isRuntimePermissionDeniedError,
+  RuntimeRpcFailureError,
+  type RuntimeRpcSuccess
+} from './types'
 
 export { projectRemoteAppStatus, resolveDesktopWindowStatus }
 
@@ -62,8 +66,29 @@ export async function getCliStatus(
         state: graphState
       }
     })
-  } catch {
+  } catch (error) {
     const running = isProcessRunning(metadata.pid)
+    // Why: waiting never clears a permission problem, so this must not report
+    // 'starting'. Gated on liveness — a dead pid means a leftover endpoint, which
+    // the stale_bootstrap fallback below already describes correctly.
+    if (running && isRuntimePermissionDeniedError(error)) {
+      return buildCliStatusResponse({
+        app: {
+          running: true,
+          pid: metadata.pid
+        },
+        runtime: {
+          state: 'permission_denied',
+          reachable: false,
+          runtimeId: null
+        },
+        graph: {
+          // Why: 'not_running' would claim the graph stopped, which a live pid
+          // contradicts. We were refused, so it is unreachable, not absent.
+          state: 'unavailable'
+        }
+      })
+    }
     return buildCliStatusResponse({
       app: {
         running,
@@ -99,7 +124,9 @@ function isProcessRunning(pid: number | null | undefined): boolean {
   try {
     process.kill(pid, 0)
     return true
-  } catch {
-    return false
+  } catch (error) {
+    // Why: EPERM means the process exists but is inaccessible, not dead. Any
+    // other errno, ESRCH included, is treated as absent.
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
   }
 }

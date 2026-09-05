@@ -103,6 +103,9 @@ export type CliRuntimeState =
   | 'ready'
   | 'graph_not_ready'
   | 'stale_bootstrap'
+  // Why: the OS refused the connection before the runtime ever saw it. Distinct
+  // from 'starting' because no waiting clears an ownership or ACL problem.
+  | 'permission_denied'
 
 export type CliStatusResult = {
   // Why: every field below describes ONE machine. When the CLI targets a paired server the
