@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { validateGitExecArgs } from '../../relay/git-exec-validator'
 import { getSshGitProviderMock, getActiveMultiplexerMock } from './worktrees-test-module-mocks'
 import { handlers, setupWorktreeHandlers, store } from './worktrees-test-harness'
+import { materializeWorktreePushTargetRemoteSsh } from './worktree-remote'
+import type { SshGitProvider } from '../providers/ssh-git-provider'
 
 vi.mock('electron', async () =>
   (await import('./worktrees-test-module-mocks')).electronModuleMock()
@@ -36,6 +38,9 @@ vi.mock('./worktree-symlinks', async () =>
   (await import('./worktrees-test-module-mocks')).worktreeSymlinksModuleMock()
 )
 vi.mock('./ssh', async () => (await import('./worktrees-test-module-mocks')).sshModuleMock())
+vi.mock('../ssh/ssh-target-registry', async () =>
+  (await import('./worktrees-test-module-mocks')).sshTargetRegistryModuleMock()
+)
 vi.mock('../hooks', async () => (await import('./worktrees-test-module-mocks')).hooksModuleMock())
 vi.mock('../setup-runner-script-text', async (importOriginal) =>
   (await import('./worktrees-test-module-mocks')).setupRunnerScriptTextModuleMock(
@@ -87,7 +92,10 @@ describe('registerWorktreeHandlers', () => {
     setupWorktreeHandlers()
   })
 
-  it('adds the fork remote for an SSH fork-PR worktree through git.exec', async () => {
+  // Was "adds the fork remote ... through git.exec": create used to mint the fork
+  // remote unconditionally. It now defers to first sync (#17828) -- split in two so
+  // each half stays true to a single claim: create stays a no-op, sync still mints.
+  it('defers minting the fork remote for an SSH fork-PR worktree until first sync', async () => {
     const repo = {
       id: 'repo-ssh',
       path: '/remote/repo',
@@ -106,6 +114,9 @@ describe('registerWorktreeHandlers', () => {
       }
       if (args[0] === 'remote' && args.length === 1) {
         return { stdout: 'origin\n', stderr: '' }
+      }
+      if (args[0] === 'show-ref') {
+        throw Object.assign(new Error('missing exact ref'), { code: 1 })
       }
       return { stdout: '', stderr: '' }
     })
@@ -141,11 +152,13 @@ describe('registerWorktreeHandlers', () => {
       }
     })
 
-    expect(exec).toHaveBeenCalledWith(
+    expect(exec).not.toHaveBeenCalledWith(
       ['remote', 'add', 'pr-contributor-orca', 'https://github.com/contributor/orca.git'],
       '/remote/repo'
     )
-    expect(provider.fetchRemoteTrackingRef).toHaveBeenCalledWith(
+    // fetchRemoteTrackingRef IS called once here, but for create's unrelated
+    // base-ref refresh (origin/main) -- not for the fork remote, which defers.
+    expect(provider.fetchRemoteTrackingRef).not.toHaveBeenCalledWith(
       '/remote/repo',
       'pr-contributor-orca',
       'contributor/fix',
@@ -157,58 +170,58 @@ describe('registerWorktreeHandlers', () => {
         pushTarget: {
           remoteName: 'pr-contributor-orca',
           branchName: 'contributor/fix',
-          remoteUrl: 'https://github.com/contributor/orca.git',
-          remoteCreated: true
+          remoteUrl: 'https://github.com/contributor/orca.git'
         }
       })
     )
   })
 
-  it('names the relay upgrade when an older host still rejects the fork remote', async () => {
-    const repo = {
-      id: 'repo-ssh',
-      path: '/remote/repo',
-      displayName: 'ssh',
-      badgeColor: '#000',
-      addedAt: 0,
-      connectionId: 'conn-1',
-      worktreeBaseRef: 'origin/main'
+  // Companion to the deferral test above: `materializeWorktreePushTargetRemoteSsh` is
+  // exactly what `git:push`/`git:pull`'s SSH dispatch calls before syncing, so this is
+  // "first sync" without needing the sync IPC handlers registered in this harness.
+  it('mints the fork remote for an SSH fork-PR worktree on first sync', async () => {
+    const exec = vi.fn().mockImplementation(async (args: string[]) => {
+      validateGitExecArgs(args)
+      if (args[0] === 'remote' && args[1] === 'get-url') {
+        throw new Error('No such remote')
+      }
+      if (args[0] === 'remote' && args.length === 1) {
+        return { stdout: 'origin\n', stderr: '' }
+      }
+      return { stdout: '', stderr: '' }
+    })
+    const fetchRemoteTrackingRef = vi.fn().mockResolvedValue(undefined)
+    const markRemoteOrcaCreated = vi.fn().mockResolvedValue(undefined)
+    const target = {
+      remoteName: 'pr-contributor-orca',
+      branchName: 'contributor/fix',
+      remoteUrl: 'https://github.com/contributor/orca.git'
     }
-    const provider = {
-      exec: vi.fn().mockImplementation(async (args: string[]) => {
-        if (args[0] === 'remote' && args[1] === 'add') {
-          throw new Error('Destructive git remote operations are not allowed via exec')
-        }
-        if (args[0] === 'remote' && args[1] === 'get-url') {
-          return { stdout: 'git@github.com:stablyai/orca.git\n', stderr: '' }
-        }
-        if (args[0] === 'remote' && args.length === 1) {
-          return { stdout: 'origin\n', stderr: '' }
-        }
-        return { stdout: '', stderr: '' }
-      }),
-      fetchRemoteTrackingRef: vi.fn().mockResolvedValue(undefined),
-      addWorktree: vi.fn().mockResolvedValue(undefined),
-      listWorktrees: vi.fn().mockResolvedValue([])
-    }
-    const mux = { request: vi.fn().mockResolvedValue(undefined), notify: vi.fn() }
-    store.getRepos.mockReturnValue([repo])
-    store.getRepo.mockReturnValue(repo)
-    getSshGitProviderMock.mockReturnValue(provider)
-    getActiveMultiplexerMock.mockReturnValue(mux)
 
-    await expect(
-      handlers['worktrees:create'](null, {
-        repoId: 'repo-ssh',
-        name: 'contributor-fix',
-        branchNameOverride: 'contributor/fix',
-        pushTarget: {
-          remoteName: 'pr-contributor-orca',
-          branchName: 'contributor/fix',
-          remoteUrl: 'https://github.com/contributor/orca.git'
-        }
-      })
-    ).rejects.toThrow('Reconnect to deploy the latest relay')
-    expect(provider.addWorktree).not.toHaveBeenCalled()
+    const result = await materializeWorktreePushTargetRemoteSsh(
+      { exec, fetchRemoteTrackingRef, markRemoteOrcaCreated } as unknown as SshGitProvider,
+      '/remote/repo',
+      target
+    )
+
+    expect(result).toEqual({ ...target, remoteCreated: true })
+    expect(exec).toHaveBeenCalledWith(
+      ['remote', 'add', 'pr-contributor-orca', 'https://github.com/contributor/orca.git'],
+      '/remote/repo'
+    )
+    expect(fetchRemoteTrackingRef).toHaveBeenCalledWith(
+      '/remote/repo',
+      'pr-contributor-orca',
+      'contributor/fix',
+      'refs/remotes/pr-contributor-orca/contributor/fix'
+    )
+    expect(markRemoteOrcaCreated).toHaveBeenCalledWith('/remote/repo', 'pr-contributor-orca')
   })
+
+  // The relay-upgrade-messaging, fetch-failure rollback, and sibling-remote-preserved
+  // cases used to be exercised here because create minted the remote unconditionally.
+  // That code (prepareWorktreePushTargetSsh) is unchanged -- it just no longer runs at
+  // create time for a fork remote, only from materializeWorktreePushTargetRemoteSsh on
+  // first sync. Coverage for all three moved with it to
+  // worktree-remote-push-target-materialization.test.ts, which calls that function directly.
 })

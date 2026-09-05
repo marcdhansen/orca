@@ -4,6 +4,7 @@ import {
   type AiVaultListResult,
   type AiVaultSession
 } from '../../../../shared/ai-vault-types'
+import { describeAiVaultScanError } from '../../../../shared/ai-vault-scan-error-message'
 import {
   ALL_EXECUTION_HOSTS_SCOPE,
   requestedExecutionHostScope,
@@ -60,7 +61,8 @@ export function useAiVaultSessionRefresh(
   const sessions = scanResult?.sessions ?? EMPTY_AI_VAULT_SESSIONS
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const requestTokenRef = useRef(crypto.randomUUID())
+  const requestTokenRef = useRef<string>(undefined!)
+  requestTokenRef.current ??= crypto.randomUUID()
   const refreshIdRef = useRef(0)
   const refreshInFlightRef = useRef(false)
   const pendingRefreshRef = useRef(false)
@@ -68,7 +70,8 @@ export function useAiVaultSessionRefresh(
   const pendingBackgroundRef = useRef(true)
   const lastAppliedScanRef = useRef<{ scopeKey: string; scannedAt: string } | null>(null)
   const mountedRef = useRef(true)
-  const publicationGateRef = useRef(new AiVaultSessionPublicationGate())
+  const publicationGateRef = useRef<AiVaultSessionPublicationGate>(undefined!)
+  publicationGateRef.current ??= new AiVaultSessionPublicationGate()
   const scanScopeKey = `${aiVaultSessionResultCacheKey(executionHostScope, scopePaths)}\n${sessionLimit}`
   const scopePathsRef = useRef<readonly string[]>(scopePaths)
   scopePathsRef.current = scopePaths
@@ -193,7 +196,7 @@ export function useAiVaultSessionRefresh(
           refreshIdRef.current === refreshId &&
           scanKey === currentScanScopeKey()
         ) {
-          setError(err instanceof Error ? err.message : String(err))
+          setError(describeAiVaultScanError(err instanceof Error ? err.message : String(err)))
         }
       } finally {
         refreshInFlightRef.current = false
