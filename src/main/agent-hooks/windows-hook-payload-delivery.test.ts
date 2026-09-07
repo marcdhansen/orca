@@ -87,12 +87,14 @@ type HookRun = { exitCode: number | null; stdout: string; stderr: string; timedO
 function runHookCommand(
   executable: string,
   args: string[],
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  options: { shell?: boolean } = {}
 ): Promise<HookRun> {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
+      shell: options.shell ?? false,
       env
     })
     let stdout = ''
@@ -193,13 +195,23 @@ describe.skipIf(process.platform !== 'win32')('Windows managed hook payload deli
       ORCA_PANE_KEY: PANE_KEY
     })
 
+    // Why (#19187): the cmd leg used to be `spawn('cmd.exe', ['/d','/c', registeredCommand])`.
+    // Node applies MSVCRT quoting to an args array, escaping any `"` in the command as `\"`;
+    // cmd.exe does not decode backslash escapes, so a quoted command arrives with four quotes on
+    // the line, trips cmd's "old behaviour" strip (leading quote and last quote removed) and
+    // dispatches a token starting with a backslash. That fails, and the launcher's own
+    // `|| echo {}` reports exit 0 — a false pass for any quoted command. `shell: true` spawns it
+    // the way a shell-spawning consumer does (`%ComSpec% /d /s /c "<command>"`, verbatim), so the
+    // harness cannot drift from the consumer the way a hand-rolled argv can.
     const shells = [
-      { name: 'cmd.exe', executable: 'cmd.exe', args: ['/d', '/c', registeredCommand] },
-      { name: 'Git Bash', executable: findGitBash(), args: ['-c', registeredCommand] }
+      { name: 'cmd.exe', executable: registeredCommand, args: [] as string[], shell: true },
+      { name: 'Git Bash', executable: findGitBash(), args: ['-c', registeredCommand], shell: false }
     ]
     for (const shell of shells) {
       const before = listener.posts.length
-      const result = await runHookCommand(shell.executable, shell.args, env)
+      const result = await runHookCommand(shell.executable, shell.args, env, {
+        shell: shell.shell
+      })
       expect(result.timedOut, `${shell.name} timed out`).toBe(false)
       expect(result.exitCode, `${shell.name} exit code`).toBe(0)
 
