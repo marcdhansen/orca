@@ -32,7 +32,7 @@ vi.mock('os', async (importOriginal) => {
 })
 
 import { ClaudeHookService } from '../claude/hook-service'
-import { WINDOWS_CMD_SAFE_PATH } from './installer-utils'
+import { wrapWindowsDirectCmdHookCommand } from './windows-direct-cmd-hook-command'
 import { getConfigPath, getWindowsManagedLifecycleHook } from '../claude/hook-settings'
 import { findGitBash } from './windows-git-bash-path.test-fixture'
 
@@ -179,9 +179,12 @@ describe.skipIf(process.platform !== 'win32')('Windows managed hook payload deli
     // Why: assert nothing about the launcher's shape here — this test's whole value is
     // that it fails for any launcher that loses the payload, named conhost or not.
     const registeredCommand = settings.hooks.PreToolUse[0].hooks[0].command
-    // ...with one exception: a cmd-safe profile must reach the script with no interpreter in
+    // ...with one exception: a supported profile must reach the script with no interpreter in
     // front of it, or #18875's per-event PowerShell start-up has quietly come back.
-    if (WINDOWS_CMD_SAFE_PATH.test(join(home, '.orca', 'agent-hooks', 'claude-hook.cmd'))) {
+    // Why (#19187): this gate was `WINDOWS_CMD_SAFE_PATH`, which excluded a space — so on a
+    // profile-scoped, spaced TEMP the no-PowerShell assertion silently dropped, on exactly the
+    // machines where the launcher had come back. Ask the module whether it serves the path.
+    if (wrapWindowsDirectCmdHookCommand(join(home, '.orca', 'agent-hooks', 'claude-hook.cmd'))) {
       expect(registeredCommand).not.toMatch(/powershell|-EncodedCommand/i)
     }
 
