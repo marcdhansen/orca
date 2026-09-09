@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { PtyProcessInfo } from '../providers/types'
 import type { RuntimeTerminalCreate } from '../../shared/runtime-types'
 import type { ResourceReservationRequest } from '../../shared/resource-reservation-binding'
@@ -21,15 +24,28 @@ const RESERVATION: ResourceReservationRequest = {
   issuer: 'openloop'
 }
 
-function createRuntimeForDedupe(listProcesses = vi.fn(async (): Promise<PtyProcessInfo[]> => [])) {
+function createRuntimeForDedupe(
+  listProcesses = vi.fn(async (): Promise<PtyProcessInfo[]> => []),
+  terminalReservations = new TerminalReservationBindings()
+) {
+  const handleByPtyId = new Map<string, string>()
   const runtime = Object.create(OrcaRuntimeService.prototype) as OrcaRuntimeService
   Object.assign(runtime, {
     terminalCreateIdempotency: new RemoteRuntimeTerminalCreateIdempotency(),
-    terminalReservations: new TerminalReservationBindings(),
+    terminalReservations,
     ptyController: { listProcesses },
     resolveTerminalWorkspaceLaunchScope: vi.fn(async (selector: string) => ({
       id: selector.startsWith('id:') ? selector.slice(3) : selector
-    }))
+    })),
+    adoptControllerTerminalHandle: vi.fn((ptyId: string, handle: string) => {
+      handleByPtyId.set(ptyId, handle)
+    }),
+    recordPtyWorktree: vi.fn((ptyId: string, worktreeId: string, state: { title?: string }) => ({
+      ptyId,
+      worktreeId,
+      title: state.title ?? null
+    })),
+    issuePtyHandle: vi.fn((pty: { ptyId: string }) => handleByPtyId.get(pty.ptyId))
   })
   return runtime
 }
@@ -93,6 +109,61 @@ describe('terminal create reservation binding', () => {
     const [created, replayed] = await Promise.all([first, reconnect])
     expect(replayed.handle).toBe(created.handle)
     expect(create).toHaveBeenCalledTimes(1)
+  })
+
+  it('reconciles a persisted reservation after restart even when the caller omits the hint', async () => {
+    const profile = mkdtempSync(join(tmpdir(), 'orca-terminal-reservation-'))
+    try {
+      const liveSessions: PtyProcessInfo[] = []
+      const firstRuntime = createRuntimeForDedupe(
+        vi.fn(async () => liveSessions),
+        new TerminalReservationBindings(profile)
+      )
+      const create = vi.fn<CreateRun>(async (_selector, handle) => {
+        liveSessions.push({
+          id: 'worktree-1@@session-a',
+          cwd: '/workspace',
+          title: 'pwsh',
+          worktreeId: 'worktree-1',
+          terminalHandle: handle
+        })
+        return createdTerminal(handle ?? 'missing')
+      })
+      const first = await firstRuntime.dedupeTerminalCreate(
+        'device-a',
+        'id:worktree-1',
+        'mutation-1',
+        false,
+        create,
+        RESERVATION
+      )
+
+      const retryInventory = vi.fn(async () => liveSessions)
+      const restartedRuntime = createRuntimeForDedupe(
+        retryInventory,
+        new TerminalReservationBindings(profile)
+      )
+      const retrySpawn = vi.fn<CreateRun>()
+      const replayed = await restartedRuntime.dedupeTerminalCreate(
+        'device-b',
+        'id:worktree-1',
+        'mutation-2',
+        false,
+        retrySpawn,
+        RESERVATION
+      )
+
+      expect(replayed).toMatchObject({
+        handle: first.handle,
+        ptyId: 'worktree-1@@session-a',
+        reservation: first.reservation
+      })
+      expect(retryInventory).toHaveBeenCalledTimes(1)
+      expect(retrySpawn).not.toHaveBeenCalled()
+      expect(create).toHaveBeenCalledTimes(1)
+    } finally {
+      rmSync(profile, { recursive: true, force: true })
+    }
   })
 
   it('ignores a fresh transport mutation id so a reserved retry is not a second terminal', async () => {

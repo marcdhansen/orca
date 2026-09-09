@@ -70,7 +70,9 @@ export class OrcaRuntimeWithTerminalCreateDeduplication extends OrcaRuntimeWithC
         workspace.id,
         identityKey,
         async () => {
-          if (reconcileExisting) {
+          // A reservation is the durable replay contract. Enforce reconciliation here so a
+          // schema-valid caller cannot accidentally weaken it by omitting the transport hint.
+          if (reservation || reconcileExisting) {
             const adopted = await this.reconcileRemoteTerminalCreate(
               workspace.id,
               preAllocatedHandle,
