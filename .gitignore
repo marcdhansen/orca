@@ -169,3 +169,9 @@ tests/e2e/.cross-version-checkouts/
 # IS committed). Also keeps oxfmt/oxlint, which honor this file, from walking
 # vendored gems.
 /mobile/vendor/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
