@@ -23,6 +23,7 @@ import type { RetiredNameRegistry } from './worktree/retired-name-registry'
 import type { WorkspaceLineage, WorktreeLineage } from './worktree/lineage-types'
 import type { WorktreeMeta } from './worktree/meta-types'
 import type { WorkspaceSessionState } from './workspace-session-state-types'
+import type { ModelCapacityRecoveryLedger } from './model-capacity-recovery'
 
 export type LegacyPaneKeyAliasEntry = {
   ptyId: string
@@ -114,4 +115,6 @@ export type PersistedState = {
   featureInteractionTelemetryBuckets?: FeatureInteractionTelemetryBucketState
   /** Main-owned reset mutation journal. Never expose this through renderer settings APIs. */
   codexResetCreditAttemptLedger?: CodexResetCreditAttemptLedger
+  /** Main-owned, redacted Codex capacity-recovery journal. */
+  modelCapacityRecoveryLedger?: ModelCapacityRecoveryLedger
 }
