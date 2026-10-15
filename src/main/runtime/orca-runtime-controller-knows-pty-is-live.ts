@@ -7,6 +7,7 @@ import {
   buildTerminalSendPayload
 } from './terminal-send-payload'
 import { buildAgentPromptPasteBytes } from '../../shared/agent-prompt-injection'
+import type { CapacityRecoveryObservation } from './agent-prompt-submission-runtime'
 
 export class OrcaRuntimeWithControllerKnowsPtyIsLive extends OrcaRuntimeWithResolveTerminalPane {
   protected controllerKnowsPtyIsLive(ptyId: string): boolean {
@@ -87,7 +88,9 @@ export class OrcaRuntimeWithControllerKnowsPtyIsLive extends OrcaRuntimeWithReso
         throw new Error('invalid_terminal_send')
       }
       await assertTerminalInputWithinLimitWithYield(action.text)
-      await this.writeTerminalAction(pty.pty.ptyId, action, payload, options)
+      await this.agentPromptSubmissionRuntime.serializeInput(pty.pty.ptyId, () =>
+        this.writeTerminalAction(pty.pty.ptyId, action, payload, options)
+      )
       return {
         handle,
         accepted: true,
@@ -112,7 +115,9 @@ export class OrcaRuntimeWithControllerKnowsPtyIsLive extends OrcaRuntimeWithReso
       throw new Error('terminal_not_writable')
     }
 
-    await this.writeTerminalAction(leaf.ptyId, action, payload, options)
+    await this.agentPromptSubmissionRuntime.serializeInput(leaf.ptyId, () =>
+      this.writeTerminalAction(leaf.ptyId!, action, payload, options)
+    )
 
     return {
       handle,
@@ -138,20 +143,22 @@ export class OrcaRuntimeWithControllerKnowsPtyIsLive extends OrcaRuntimeWithReso
       }
       await assertTerminalInputWithinLimitWithYield(payload)
       const generation = this.getPtyLifecycleGeneration(pty.pty.ptyId)
-      const submits = await this.serializeAgentPromptSubmission(
+      const submits = await this.agentPromptSubmissionRuntime.submitOwnedPrompt(
         pty.pty.ptyId,
-        generation,
-        async () => {
-          this.assertLiveTerminalHandleTargetsPty(handle, pty.pty.ptyId)
-          this.assertAgentPromptGeneration(pty.pty.ptyId, generation)
-          return await this.writeTerminalAgentPrompt(
-            handle,
-            pty.pty.ptyId,
-            generation,
-            payload,
-            options
-          )
-        }
+        prompt,
+        `${handle}\u0000${pty.pty.ptyId}\u0000${generation}`,
+        () =>
+          this.serializeAgentPromptSubmission(pty.pty.ptyId, generation, async () => {
+            this.assertLiveTerminalHandleTargetsPty(handle, pty.pty.ptyId)
+            this.assertAgentPromptGeneration(pty.pty.ptyId, generation)
+            return await this.writeTerminalAgentPrompt(
+              handle,
+              pty.pty.ptyId,
+              generation,
+              payload,
+              options
+            )
+          })
       )
       const bytesWritten = Buffer.byteLength(payload, 'utf8') + submits
       return { handle, accepted: true, bytesWritten }
@@ -168,12 +175,50 @@ export class OrcaRuntimeWithControllerKnowsPtyIsLive extends OrcaRuntimeWithReso
       throw new Error('terminal_not_writable')
     }
     const generation = this.getPtyLifecycleGeneration(leaf.ptyId)
-    const submits = await this.serializeAgentPromptSubmission(leaf.ptyId, generation, async () => {
-      this.assertLiveTerminalHandleTargetsPty(handle, leaf.ptyId!)
-      this.assertAgentPromptGeneration(leaf.ptyId!, generation)
-      return await this.writeTerminalAgentPrompt(handle, leaf.ptyId!, generation, payload, options)
-    })
+    const submits = await this.agentPromptSubmissionRuntime.submitOwnedPrompt(
+      leaf.ptyId,
+      prompt,
+      `${handle}\u0000${leaf.ptyId}\u0000${generation}`,
+      () =>
+        this.serializeAgentPromptSubmission(leaf.ptyId!, generation, async () => {
+          this.assertLiveTerminalHandleTargetsPty(handle, leaf.ptyId!)
+          this.assertAgentPromptGeneration(leaf.ptyId!, generation)
+          return await this.writeTerminalAgentPrompt(
+            handle,
+            leaf.ptyId!,
+            generation,
+            payload,
+            options
+          )
+        })
+    )
     const bytesWritten = Buffer.byteLength(payload, 'utf8') + submits
     return { handle, accepted: true, bytesWritten }
+  }
+
+  async recoverTerminalAgentPromptCapacityFailure(
+    handle: string,
+    observation: CapacityRecoveryObservation
+  ): Promise<'replayed' | 'attention' | 'ignored'> {
+    const pty = this.getLivePtyForHandle(handle)
+    const ptyId = pty?.pty.ptyId ?? this.getLiveLeafForHandle(handle).leaf.ptyId
+    if (!ptyId) {
+      throw new Error('terminal_not_writable')
+    }
+    const generation = this.getPtyLifecycleGeneration(ptyId)
+    const identity = `${handle}\u0000${ptyId}\u0000${generation}`
+    if (observation.identity !== identity) {
+      return this.agentPromptSubmissionRuntime.recover(ptyId, observation, async () => undefined)
+    }
+    return this.agentPromptSubmissionRuntime.recover(ptyId, observation, async (exactInput) => {
+      this.assertLiveTerminalHandleTargetsPty(handle, ptyId)
+      this.assertAgentPromptGeneration(ptyId, generation)
+      await this.writeTerminalAgentPrompt(
+        handle,
+        ptyId,
+        generation,
+        buildAgentPromptPasteBytes(exactInput)
+      )
+    })
   }
 }

@@ -10,6 +10,7 @@ import {
 import type { StoreRuntimeState } from './store-runtime-state'
 import type { StateSerializationSecretHandlingOperations } from './state-serialization-secret-handling'
 import type { BackupRecoveryRotationOperations } from './backup-recovery-rotation'
+import type { ModelCapacityRecoveryLedger } from '../../../shared/model-capacity-recovery'
 
 type PrimaryStateWriteOperationsRuntime = Pick<
   StoreRuntimeState,
@@ -110,6 +111,28 @@ export class PrimaryStateWriteOperations {
       // handing a scarce-credit mutation to the provider.
       this[primaryStateWriteOperationsContext].runtime.state.codexResetCreditAttemptLedger =
         previous
+      throw error
+    }
+  }
+
+  getModelCapacityRecoveryLedger(): ModelCapacityRecoveryLedger {
+    return structuredClone(
+      this[primaryStateWriteOperationsContext].runtime.state.modelCapacityRecoveryLedger ?? {}
+    )
+  }
+
+  replaceModelCapacityRecoveryLedgerAndFlush(ledger: ModelCapacityRecoveryLedger): void {
+    if (this[primaryStateWriteOperationsContext].runtime.writesFrozen) {
+      throw new Error('Cannot persist model-capacity recovery while writes are frozen')
+    }
+    const previous =
+      this[primaryStateWriteOperationsContext].runtime.state.modelCapacityRecoveryLedger
+    this[primaryStateWriteOperationsContext].runtime.state.modelCapacityRecoveryLedger =
+      structuredClone(ledger)
+    try {
+      this[primaryStateWriteOperationsContext].runtime.flushOrThrow()
+    } catch (error) {
+      this[primaryStateWriteOperationsContext].runtime.state.modelCapacityRecoveryLedger = previous
       throw error
     }
   }

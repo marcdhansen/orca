@@ -41,6 +41,7 @@ import { RuntimeWorkspaceSessionController } from './runtime-workspace-session-c
 import { RuntimeAiVaultCommands } from './runtime-ai-vault-commands'
 import { ClaudeAgentTeamsService } from './claude-agent-teams-service'
 import { teardownFolderWorkspacePtys } from './folder-workspace-pty-teardown'
+import { AgentPromptSubmissionRuntime } from './agent-prompt-submission-runtime'
 
 export class OrcaRuntimeWithPreservedBranchCleanup extends OrcaRuntimeWithTerminalDrivers {
   protected readonly preservedBranchCleanup = new RuntimePreservedBranchCleanup(() =>
@@ -110,6 +111,21 @@ export class OrcaRuntimeWithPreservedBranchCleanup extends OrcaRuntimeWithTermin
   protected readonly agentSessionCreateOperations = new Map<string, AgentSessionCreateOperation>()
 
   protected readonly agentPromptSubmissionTailByPtyId = new Map<string, Promise<void>>()
+
+  protected readonly agentPromptSubmissionRuntime = (() => {
+    const runtime = new AgentPromptSubmissionRuntime(() => {
+      if (!this.store) {
+        return null
+      }
+      const candidate = this.requireStore()
+      return typeof candidate.getModelCapacityRecoveryLedger === 'function' &&
+        typeof candidate.replaceModelCapacityRecoveryLedgerAndFlush === 'function'
+        ? candidate
+        : null
+    })
+    runtime.hydrate()
+    return runtime
+  })()
 
   protected readonly agentPromptLifecycleByPtyId = new Map<
     string,
