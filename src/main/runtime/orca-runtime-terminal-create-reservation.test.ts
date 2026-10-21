@@ -167,10 +167,23 @@ describe('terminal create reservation binding', () => {
   })
 
   it('ignores a fresh transport mutation id so a reserved retry is not a second terminal', async () => {
-    const runtime = createRuntimeForDedupe()
-    const create = vi.fn<CreateRun>(async (_selector, handle) =>
-      createdTerminal(handle ?? 'missing')
-    )
+    // Why: the in-flight idempotency map drops its entry the instant the first create settles
+    // (no TTL, unlike dedupeWorktreeCreate), so this is the only guard for a sequential replay in
+    // the same process. The spawned terminal must be visible to reconcile the way a real PTY
+    // controller would list it, or a second `create` call reads as a harmless no-op instead of
+    // the duplicate spawn it actually is (a prior version of this test made exactly that mistake).
+    const liveSessions: PtyProcessInfo[] = []
+    const runtime = createRuntimeForDedupe(vi.fn(async () => liveSessions))
+    const create = vi.fn<CreateRun>(async (_selector, handle) => {
+      liveSessions.push({
+        id: 'worktree-1@@session-a',
+        cwd: '/workspace',
+        title: 'pwsh',
+        worktreeId: 'worktree-1',
+        terminalHandle: handle
+      })
+      return createdTerminal(handle ?? 'missing')
+    })
 
     const first = await runtime.dedupeTerminalCreate(
       'device-a',
@@ -191,6 +204,7 @@ describe('terminal create reservation binding', () => {
 
     expect(retry.handle).toBe(first.handle)
     expect(retry.reservation).toEqual(first.reservation)
+    expect(create).toHaveBeenCalledTimes(1)
   })
 
   it('refuses a reused key whose ownership generation moved on', async () => {
