@@ -120,6 +120,29 @@ describe('orchestration.check --dispatch pins an admitted worker to its own Disp
     })
   })
 
+  it('fences a --dispatch pointing at an already-settled (completed) dispatch', async () => {
+    const { dispatchId } = admitWorker()
+    db.completeDispatch(dispatchId)
+
+    await expect(check({ dispatch: dispatchId })).rejects.toMatchObject({ code: 'consumer_fenced' })
+  })
+
+  it('fences a stale --dispatch whose recorded process incarnation no longer matches (post-restart)', async () => {
+    const { dispatchId } = admitWorker()
+    // Simulate the dispatch row recording an OLDER process incarnation than the one the
+    // runtime now reports for this handle (the harness mocks getTerminalProcessIncarnation
+    // as `runtime_test:term_worker:1`) -- e.g. the worker's process restarted without a
+    // reattach. isDispatchProcessCurrent must then disagree, and isDispatchMessageSender's
+    // fallback must not rescue it since a process_incarnation IS recorded (just stale).
+    reattachDispatchConsumer(db, {
+      dispatchId,
+      paneKey: WORKER_PANE,
+      processIncarnation: 'runtime_test:term_worker:0-stale'
+    })
+
+    await expect(check({ dispatch: dispatchId })).rejects.toMatchObject({ code: 'consumer_fenced' })
+  })
+
   it('leaves unpinned --run routing (a sub-run coordinator reading its own sub-run) untouched', async () => {
     admitWorker()
     const subRunId = bindUnrelatedSubRunToWorkerPane()
